@@ -1,0 +1,23 @@
+# Environment & secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Runtime data (SQLite, generated Excel, lock files)
+data/demo.db
+data/demo_output.xlsx
+data/demo_output.xlsx.lock
+data/demo_export.xlsx
+
+# OS
+.DS_Store
+
+# IDE / tools
+.claude/
+
+# Archives
+Archive.zip

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Supervisor Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body class="theme-dark" style="padding: 18px;">
+    <div class="card panel" style="max-width: 1100px; margin: 0 auto;">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Supervisor Dashboard</div>
+          <div class="panel-sub">Sessions + KPIs (demo-grade)</div>
+        </div>
+        <a class="badge badge-soft" href="/" target="_blank" rel="noreferrer">OPEN CALL UI</a>
+      </div>
+
+      <div class="transcript transcript-final" style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+        <button id="refreshBtn" class="secondary-btn" type="button">Refresh</button>
+        <a id="exportLink" class="secondary-btn" href="/api/export/demo.xlsx" target="_blank" rel="noreferrer">Download Excel Report</a>
+        <button id="reindexBtn" class="secondary-btn" type="button">Reindex Knowledge</button>
+      </div>
+
+      <div class="transcript transcript-final" id="metricsBox">Loading metrics…</div>
+
+      <div class="transcript transcript-final" style="overflow:auto;">
+        <table id="sessionsTable" style="width:100%; border-collapse: collapse;">
+          <thead>
+            <tr>
+              <th style="text-align:left; padding:8px;">Session</th>
+              <th style="text-align:left; padding:8px;">Customer</th>
+              <th style="text-align:left; padding:8px;">Step</th>
+              <th style="text-align:left; padding:8px;">Stress</th>
+              <th style="text-align:left; padding:8px;">Last Activity</th>
+              <th style="text-align:left; padding:8px;">Disposition</th>
+              <th style="text-align:left; padding:8px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="transcript transcript-partial" id="adminStatus">Ready.</div>
+    </div>
+
+    <script src="/static/admin.js" defer></script>
+  </body>
+</html>

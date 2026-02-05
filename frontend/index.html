@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>TuringEdge Voice Agent Demo (Collections)</title>
+
+    <!-- Font: Inter (enterprise UI default) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Main stylesheet -->
+    <link rel="stylesheet" href="/static/styles.css?v=chat6" />
+
+    <!-- Basic preconnects (safe, optional) -->
+    <link rel="preconnect" href="https://api.sarvam.ai" crossorigin />
+  </head>
+
+  <body class="theme-dark">
+    <div class="app-shell">
+      <!-- Top bar -->
+      <header class="topbar console-topbar" role="banner">
+        <div class="topbar-left">
+          <div class="brand" aria-label="TuringEdge">
+            <img
+              id="brandLogo"
+              class="brand-logo"
+              src="/static/assets/actual_logo_te.png"
+              alt="TuringEdge"
+              width="160"
+              height="44"
+              loading="eager"
+              decoding="async"
+              onerror="this.onerror=null;this.src='/static/actual_logo_te.png';"
+            />
+          </div>
+        </div>
+
+        <div class="topbar-middle">
+          <div class="titleblock">
+            <div class="headline console-title">TuringEdge — AI Collections Call Console</div>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <div class="controls" aria-label="Session controls">
+            <div class="status-pill" aria-live="polite">
+              <div id="statusDot" class="status-dot"></div>
+              <div class="status-text">
+                <div class="status-label">SESSION STATUS</div>
+                <div id="statusText" class="status-value">Disconnected</div>
+              </div>
+            </div>
+
+            <button id="themeToggle" class="icon-btn" type="button" aria-label="Toggle theme">
+              <span class="icon" aria-hidden="true">◐</span>
+            </button>
+
+            <button id="toggleBtn" class="primary-btn" type="button">Start Call</button>
+            <button id="muteBtn" class="secondary-btn" type="button" disabled>Mute Mic</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="card monitor-card" aria-label="Live call audio monitor">
+        <div class="monitor-header">
+          <div class="monitor-title">Live Call Audio Monitor</div>
+          <div class="monitor-metrics">
+            <div class="monitor-metric">Language: <span id="languageValue">en-IN</span></div>
+            <div class="monitor-metric">Barge-in: <span id="bargeStatus">Idle</span></div>
+            <div class="monitor-metric">Latency: <span id="latencyValue">—</span></div>
+          </div>
+        </div>
+        <canvas id="pcmCanvas" class="signal-canvas monitor-canvas" width="1200" height="70"></canvas>
+      </section>
+
+      <!-- Main grid -->
+      <main class="grid console-grid" role="main">
+        <section class="card panel transcript-card" aria-label="Live conversation transcript">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Live Conversation Transcript</div>
+              <div class="panel-sub">Live chat</div>
+            </div>
+            <div class="badge">LIVE</div>
+          </div>
+
+          <div class="chat-stream" id="chatStream">
+            <div class="chat-empty" id="chatEmpty">Conversation will appear here.</div>
+          </div>
+          <div class="panel-foot">Audio runs only while the session is active.</div>
+        </section>
+
+        <aside class="card panel intel-card" aria-label="Customer & Loan Intelligence">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Customer &amp; Loan Intelligence</div>
+              <div class="panel-sub">Context loaded from Excel</div>
+            </div>
+            <a class="badge badge-soft" href="/admin" target="_blank" rel="noreferrer">SUPERVISOR</a>
+          </div>
+
+          <div class="intel-section">
+            <div class="intel-title">Customer</div>
+            <div class="intel-row">
+              <label class="intel-label" for="customerSelect">Customer</label>
+              <div class="intel-field">
+                <select id="customerSelect" class="demo-select intel-select">
+                  <option value="">Loading…</option>
+                </select>
+                <button id="reloadCustomersBtn" class="secondary-btn btn-sm" type="button">Reload</button>
+              </div>
+            </div>
+            <div class="intel-row">
+              <div class="intel-label">Name</div>
+              <div id="customerNameValue" class="intel-value">—</div>
+            </div>
+            <div class="intel-row">
+              <div class="intel-label">Phone</div>
+              <div id="customerPhoneValue" class="intel-value">—</div>
+            </div>
+            <div class="intel-row">
+              <div class="intel-label">City</div>
+              <div id="customerCityValue" class="intel-value">—</div>
+            </div>
+          </div>
+
+          <div class="intel-section">
+            <div class="intel-title">Loan Details</div>
+            <div class="intel-row">
+              <div class="intel-label">Loan ID</div>
+              <div id="loanIdValue" class="intel-value">—</div>
+            </div>
+            <div class="intel-row">
+              <div class="intel-label">Amount Due</div>
+              <div id="loanAmountValue" class="intel-value">—</div>
+            </div>
+            <div class="intel-row">
+              <div class="intel-label">Due Date</div>
+              <div id="loanDueValue" class="intel-value">—</div>
+            </div>
+            <div class="intel-row">
+              <div class="intel-label">DPD</div>
+              <div class="intel-value"><span id="dpdBadge" class="dpd-badge">DPD —</span></div>
+            </div>
+          </div>
+
+          <div class="intel-section">
+            <div class="intel-title">AI Call Status</div>
+            <div class="intel-row">
+              <div class="intel-label">Intent detected</div>
+              <div id="intentValue" class="intel-value">—</div>
+            </div>
+            <div class="intel-row">
+              <div class="intel-label">Risk</div>
+              <div id="riskValue" class="intel-value">—</div>
+            </div>
+            <div class="intel-row">
+              <div class="intel-label">Promise to Pay</div>
+              <div id="promiseValue" class="intel-value">Not captured</div>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      <footer class="footer" role="contentinfo">
+        <div class="footer-left">TuringEdge — Enterprise Voice Agent Demo (Collections)</div>
+        <div class="footer-right">Audio runs only while the session is active.</div>
+      </footer>
+    </div>
+
+    <!-- App logic -->
+    <script src="/static/app.js?v=chat6" defer></script>
+  </body>
+</html>
