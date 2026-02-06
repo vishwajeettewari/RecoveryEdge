@@ -1,16 +1,32 @@
 const refreshBtn = document.getElementById("refreshBtn");
 const reindexBtn = document.getElementById("reindexBtn");
+const exportLink = document.getElementById("exportLink");
 const metricsBox = document.getElementById("metricsBox");
 const sessionsTable = document.getElementById("sessionsTable");
 const adminStatus = document.getElementById("adminStatus");
+const adminTokenInput = document.getElementById("adminTokenInput");
+const saveTokenBtn = document.getElementById("saveTokenBtn");
+const metricSessionsToday = document.getElementById("metricSessionsToday");
+const metricPtpCount = document.getElementById("metricPtpCount");
+const metricCallbackCount = document.getElementById("metricCallbackCount");
+const metricEscalations = document.getElementById("metricEscalations");
+const metricAht = document.getElementById("metricAht");
+const ADMIN_TOKEN_KEY = "te_admin_token";
 
 function setStatus(msg) {
   if (!adminStatus) return;
-  adminStatus.textContent = msg || "";
+  const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  adminStatus.textContent = `[${ts}] ${msg || ""}`;
 }
 
 async function fetchJson(path, opts) {
-  const res = await fetch(path, opts || {});
+  const options = { ...(opts || {}) };
+  options.headers = { ...(options.headers || {}) };
+  const token = (adminTokenInput && adminTokenInput.value ? adminTokenInput.value : "").trim();
+  if (token) {
+    options.headers.Authorization = `Bearer ${token}`;
+  }
+  const res = await fetch(path, options);
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(`${res.status}: ${txt}`);
@@ -20,12 +36,18 @@ async function fetchJson(path, opts) {
 
 function renderMetrics(m) {
   if (!metricsBox) return;
+  if (metricSessionsToday) metricSessionsToday.textContent = String(m.sessions_today ?? 0);
+  if (metricPtpCount) metricPtpCount.textContent = String(m.ptp_count ?? 0);
+  if (metricCallbackCount) metricCallbackCount.textContent = String(m.callback_count ?? 0);
+  if (metricEscalations) metricEscalations.textContent = String(m.escalations ?? 0);
+  if (metricAht) {
+    metricAht.textContent =
+      m.avg_handle_seconds == null ? "n/a" : Number(m.avg_handle_seconds).toFixed(1);
+  }
   metricsBox.textContent =
-    `sessions_today=${m.sessions_today} ` +
-    `ptp_count=${m.ptp_count} ` +
-    `callback_count=${m.callback_count} ` +
-    `escalations=${m.escalations} ` +
-    `avg_handle_seconds=${m.avg_handle_seconds === null ? "n/a" : m.avg_handle_seconds.toFixed(2)}`;
+    `Live: ${m.sessions_today ?? 0} sessions, ${m.ptp_count ?? 0} PTP, ` +
+    `${m.callback_count ?? 0} callbacks, ${m.escalations ?? 0} escalations. ` +
+    `AHT ${m.avg_handle_seconds == null ? "n/a" : Number(m.avg_handle_seconds).toFixed(2)}s`;
 }
 
 function renderSessions(sessions) {
@@ -45,17 +67,13 @@ function renderSessions(sessions) {
     ];
     cells.forEach((c) => {
       const td = document.createElement("td");
-      td.style.padding = "8px";
-      td.style.borderTop = "1px solid rgba(255,255,255,0.08)";
       td.textContent = c;
       tr.appendChild(td);
     });
 
     const tdAction = document.createElement("td");
-    tdAction.style.padding = "8px";
-    tdAction.style.borderTop = "1px solid rgba(255,255,255,0.08)";
     const btn = document.createElement("button");
-    btn.className = "secondary-btn";
+    btn.className = "secondary-btn btn-sm";
     btn.type = "button";
     btn.textContent = "Close";
     btn.onclick = async () => {
@@ -102,5 +120,54 @@ async function reindex() {
 if (refreshBtn) refreshBtn.addEventListener("click", refresh);
 if (reindexBtn) reindexBtn.addEventListener("click", reindex);
 
+if (adminTokenInput) {
+  try {
+    adminTokenInput.value = localStorage.getItem(ADMIN_TOKEN_KEY) || "";
+  } catch (e) {
+    // ignore
+  }
+}
+
+if (saveTokenBtn) {
+  saveTokenBtn.addEventListener("click", () => {
+    if (!adminTokenInput) return;
+    try {
+      localStorage.setItem(ADMIN_TOKEN_KEY, adminTokenInput.value || "");
+      setStatus("Token saved.");
+    } catch (e) {
+      setStatus("Unable to save token.");
+    }
+  });
+}
+
+if (exportLink) {
+  exportLink.addEventListener("click", async (event) => {
+    event.preventDefault();
+    try {
+      setStatus("Preparing export…");
+      const headers = {};
+      const token = (adminTokenInput && adminTokenInput.value ? adminTokenInput.value : "").trim();
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch("/api/export/demo.xlsx", { headers });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`${res.status}: ${txt}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "demo.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setStatus("Export downloaded.");
+    } catch (e) {
+      setStatus(`Export error: ${e.message}`);
+    }
+  });
+}
+
 refresh();
-setInterval(refresh, 1000);
+setInterval(refresh, 3000);

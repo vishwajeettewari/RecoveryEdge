@@ -71,8 +71,9 @@ def _get_demo_singletons() -> Dict[str, object]:
     pay_base_url = get_env("DEMO_PAY_BASE_URL", "https://pay.example/demo")
 
     retention_days = int(get_env("PHI_RETENTION_DAYS", "30") or "30")
+    metrics_tz = get_env("METRICS_TIMEZONE", "Asia/Kolkata") or "Asia/Kolkata"
 
-    audit = SQLiteAuditStore(db_path, retention_days=retention_days)
+    audit = SQLiteAuditStore(db_path, retention_days=retention_days, metrics_tz=metrics_tz)
     sink = ExcelOutcomeSink(output_path)
     sink.ensure_workbook()
     source = ExcelCustomerSource(customers_path)
@@ -81,8 +82,8 @@ def _get_demo_singletons() -> Dict[str, object]:
     # Best-effort reindex on startup for demos (fast for small docs).
     try:
         knowledge.reindex()
-    except Exception:
-        pass
+    except Exception as exc:
+        log_event(logger, "knowledge_reindex_startup_error", error=str(exc))
 
     _demo_state.update(
         {
@@ -199,10 +200,15 @@ async def api_knowledge_reindex(request: Request):
 
 
 class WebSocketSender:
+    _CONTROL_MAX = 500
+    _AUDIO_MAX = 300
+    _CONTROL_BURST = 3
+
     def __init__(self, websocket: WebSocket) -> None:
         self.websocket = websocket
-        self._queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
-        self._counter = 0
+        self._control_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self._CONTROL_MAX)
+        self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=self._AUDIO_MAX)
+        self._control_burst = 0
         self._task: Optional[asyncio.Task] = None
         self._closed = asyncio.Event()
 
@@ -220,29 +226,53 @@ class WebSocketSender:
     async def send_json(self, payload: dict) -> None:
         if self.websocket.application_state != WebSocketState.CONNECTED:
             return
-        self._counter += 1
-        await self._queue.put((0, self._counter, "text", json.dumps(payload)))
+        msg = json.dumps(payload)
+        if self._control_queue.full():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                _ = self._control_queue.get_nowait()
+        with contextlib.suppress(asyncio.QueueFull):
+            self._control_queue.put_nowait(msg)
 
     async def send_bytes(self, data: bytes) -> None:
         if self.websocket.application_state != WebSocketState.CONNECTED:
             return
-        self._counter += 1
-        await self._queue.put((1, self._counter, "bytes", data))
+        if self._audio_queue.full():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                _ = self._audio_queue.get_nowait()
+        with contextlib.suppress(asyncio.QueueFull):
+            self._audio_queue.put_nowait(data)
+
+    def _pick_ready_item(self) -> Optional[tuple[str, object]]:
+        if self._control_burst < self._CONTROL_BURST:
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._control_burst += 1
+                return ("text", self._control_queue.get_nowait())
+        with contextlib.suppress(asyncio.QueueEmpty):
+            self._control_burst = 0
+            return ("bytes", self._audio_queue.get_nowait())
+        with contextlib.suppress(asyncio.QueueEmpty):
+            self._control_burst += 1
+            return ("text", self._control_queue.get_nowait())
+        with contextlib.suppress(asyncio.QueueEmpty):
+            self._control_burst = 0
+            return ("bytes", self._audio_queue.get_nowait())
+        return None
 
     async def _send_loop(self) -> None:
         try:
             while not self._closed.is_set():
                 if self.websocket.application_state != WebSocketState.CONNECTED:
                     break
-                try:
-                    priority, _, kind, payload = await asyncio.wait_for(self._queue.get(), timeout=0.5)
-                except asyncio.TimeoutError:
+                item = self._pick_ready_item()
+                if item is None:
+                    await asyncio.sleep(0.01)
                     continue
+                kind, payload = item
                 try:
                     if kind == "text":
-                        await self.websocket.send_text(payload)
+                        await self.websocket.send_text(str(payload))
                     else:
-                        await self.websocket.send_bytes(payload)
+                        await self.websocket.send_bytes(bytes(payload))
                 except (RuntimeError, WebSocketDisconnect):
                     break
         finally:
@@ -326,7 +356,7 @@ async def voice_socket(websocket: WebSocket) -> None:
     )
 
     api_key = get_env("SARVAM_API_KEY")
-    stt_api_key = get_env("SAARIKA_API_KEY")
+    stt_api_key = get_env("SAARIKA_API_KEY", api_key)
     llm_api_key = get_env("SARVAM_LLM_API_KEY", api_key)
     tts_api_key = get_env("BULBUL_API_KEY", api_key)
     if not stt_api_key:
@@ -368,12 +398,12 @@ async def voice_socket(websocket: WebSocket) -> None:
     log_audio_chunks = get_env_bool("LOG_TTS_CHUNKS", False)
     greeting_text = get_env(
         "GREETING_TEXT",
-        "Hello, this is KreditBee collections calling about your overdue payment. Is now a good time to talk?",
+        "Hello, this is TuringEdge collections calling about your overdue payment. Is now a good time to talk?",
     )
     enable_greeting = get_env_bool("ENABLE_GREETING", True)
     max_history_turns = int(get_env("MAX_HISTORY_TURNS", "10"))
     session_store_path = get_env("SESSION_STORE_PATH")
-    dynamic_stt_language = get_env_bool("STT_DYNAMIC_LANGUAGE", False)
+    dynamic_stt_language = get_env_bool("STT_DYNAMIC_LANGUAGE", True)
     preview_partials = get_env_bool("PREVIEW_PARTIALS", True)
     preview_after_ms = int(get_env("PREVIEW_AFTER_MS", "300"))
     llm_timeout_s = float(get_env("LLM_STREAM_TIMEOUT_S", "20"))
@@ -479,12 +509,15 @@ async def voice_socket(websocket: WebSocket) -> None:
         await websocket.close()
         return
 
+    session_started = False
     try:
         while True:
             message = await websocket.receive()
             if message.get("type") == "websocket.disconnect":
                 break
             if message.get("bytes") is not None:
+                if not session_started:
+                    continue
                 await session.handle_audio(message["bytes"])
                 continue
             if message.get("text"):
@@ -495,6 +528,9 @@ async def voice_socket(websocket: WebSocket) -> None:
                 msg_type = data.get("type")
 
                 if msg_type == "start":
+                    if session_started:
+                        await sender.send_json({"type": "started"})
+                        continue
                     # UI may send session context together with start.
                     ctx = _extract_context_from_payload(data)
                     if not ctx.get("customer_id"):
@@ -507,6 +543,7 @@ async def voice_socket(websocket: WebSocket) -> None:
                     if hasattr(session, "start_greeting"):
                         await session.start_greeting()
                     sessions[session._session_id] = session.get_snapshot()
+                    session_started = True
                     continue
 
                 if msg_type == "stop":
@@ -517,12 +554,17 @@ async def voice_socket(websocket: WebSocket) -> None:
                     continue
 
                 if msg_type == "audio_started":
+                    if not session_started:
+                        continue
                     log_event(logger, "audio_started", session_id=session._session_id)
                     audit.record_event(event_type="audio_started", session_id=session._session_id, payload={})
                     continue
 
                 # Allow typed/text input from the UI (e.g., the yellow input block)
                 if msg_type in {"text", "user_text", "chat"}:
+                    if not session_started:
+                        await sender.send_json({"type": "error", "message": "Start the session before sending text."})
+                        continue
                     text = (data.get("text") or "").strip()
                     if text:
                         if hasattr(session, "handle_text"):
@@ -544,10 +586,39 @@ async def voice_socket(websocket: WebSocket) -> None:
                     continue
 
 
+                if msg_type == "set_disposition":
+                    disp = str(data.get("disposition") or "").strip()
+                    if disp and hasattr(session, "_wf_state"):
+                        session._wf_state.disposition = disp
+                        log_event(logger, "manual_disposition", session_id=session._session_id, disposition=disp)
+                        await sender.send_json({"type": "disposition_set", "disposition": disp})
+                        sessions[session._session_id] = session.get_snapshot()
+                    continue
+
                 if msg_type == "action":
-                    await sender.send_json(
-                        {"type": "action_error", "name": data.get("name"), "ok": False, "error": "Actions are disabled in this demo."}
-                    )
+                    if not session_started:
+                        await sender.send_json(
+                            {"type": "action_error", "name": data.get("name"), "ok": False, "error": "Start the session before taking actions."}
+                        )
+                        continue
+                    name = str(data.get("name") or "").strip()
+                    payload = data.get("payload")
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    if not name:
+                        await sender.send_json(
+                            {"type": "action_error", "name": name, "ok": False, "error": "Missing action name."}
+                        )
+                        continue
+                    try:
+                        result = await session.handle_action(name=name, payload=payload)
+                    except Exception as exc:
+                        await sender.send_json(
+                            {"type": "action_error", "name": name, "ok": False, "error": str(exc)}
+                        )
+                        continue
+                    await sender.send_json({"type": "action_result", "name": name, "ok": True, "result": result})
+                    sessions[session._session_id] = session.get_snapshot()
                     continue
     except WebSocketDisconnect:
         pass
@@ -557,14 +628,14 @@ async def voice_socket(websocket: WebSocket) -> None:
         # Final snapshot + outcome.
         try:
             sessions[session._session_id] = session.get_snapshot()
-        except Exception:
-            pass
+        except Exception as exc:
+            log_event(logger, "session_snapshot_error", session_id=session._session_id, error=str(exc))
         await session.stop()
         await sender.close()
         try:
             session_objs.pop(session._session_id, None)
-        except Exception:
-            pass
+        except Exception as exc:
+            log_event(logger, "session_registry_remove_error", session_id=session._session_id, error=str(exc))
         try:
             audit.upsert_outcome(
                 session_id=session._session_id,
@@ -581,8 +652,8 @@ async def voice_socket(websocket: WebSocket) -> None:
                 ptp_date=session.get_snapshot().get("ptp_date"),
                 callback_time=session.get_snapshot().get("callback_time"),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            log_event(logger, "session_finalize_persist_error", session_id=session._session_id, error=str(exc))
         log_event(logger, "ws_close")
 
 

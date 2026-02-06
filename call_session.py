@@ -82,6 +82,20 @@ class CallSession:
         self._chat_history = [{"role": "system", "content": SYSTEM_PROMPT}]
         self._session_id = f"cli-{id(self)}"
         self._session_store = SessionStore(session_store_path, self._session_id) if session_store_path else None
+        self._dynamic_stt_language = dynamic_stt_language
+        self._pending_stt_language: Optional[str] = None
+        self._preview_partials = preview_partials
+        self._preview_after_s = max(0, int(preview_after_ms)) / 1000.0
+        self._llm_timeout_s = float(llm_timeout_s)
+        self._tts_timeout_s = float(tts_timeout_s)
+        self._stt_connect_timeout_s = float(stt_connect_timeout_s)
+        self._use_sdk = bool(use_sdk)
+        self._tts_stream_chunk_chars = max(1, int(tts_stream_chunk_chars))
+        self._tts_stream_flush_punct = bool(tts_stream_flush_punct)
+        self._tts_min_buffer_size = max(0, int(tts_min_buffer_size))
+        self._tts_max_chunk_length = max(0, int(tts_max_chunk_length))
+        self._tts_output_audio_codec = tts_output_audio_codec
+        self._tts_output_audio_bitrate = tts_output_audio_bitrate
 
         if self._session_store:
             prior = self._session_store.load()
@@ -108,6 +122,15 @@ class CallSession:
         self._has_sent_audio = False
         self._flush_min_gap_s = max(0.05, self._stt_flush_interval) if self._stt_flush_interval > 0 else 0.2
         self._last_stt_ts = time.time()
+        self._last_transcript_text = ""
+        self._preview_active = False
+        self._cancel_lock = asyncio.Lock()
+        self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=max(1, int(audio_queue_max)))
+        self._tts_playing = asyncio.Event()
+        self._speaker_task: Optional[asyncio.Task] = None
+        self._mic_task: Optional[asyncio.Task] = None
+        self._stt_task: Optional[asyncio.Task] = None
+        self._gen_task: Optional[asyncio.Task] = None
 
     async def run(self) -> None:
         # CHANGE: STT connect timeout for robustness.
@@ -307,7 +330,7 @@ class CallSession:
                     self._append_history("user", text)
                     self._gen_task = asyncio.create_task(
                         self._run_fixed_turn(
-                            assistant_text="Are you aware that your KreditBee payment is overdue?",
+                            assistant_text="Are you aware that your TuringEdge payment is overdue?",
                             intent="confirm_awareness",
                             language=language,
                         ),
@@ -633,7 +656,7 @@ class CallSession:
         lang = self._facts.get("language_preference")
 
         parts = [
-            "You are a KreditBee collections voice agent.",
+            "You are a TuringEdge collections voice agent.",
             f"The conversation has {'already' if self._has_greeted else 'not yet'} started with an initial greeting.",
             "Do NOT repeat the greeting once it has happened.",
             "Never use placeholders like [Customer's Name]. If a value is unknown, ask ONE short question to obtain it, then use it consistently.",
@@ -831,7 +854,7 @@ class CallSession:
         if next_step == "confirm_identity":
             lines.append("Ask: 'May I confirm your name?' (ONE time only).")
         elif next_step == "confirm_awareness":
-            lines.append("Ask ONCE: 'Are you aware your KreditBee payment is overdue?' If user says yes, do NOT ask again.")
+            lines.append("Ask ONCE: 'Are you aware your TuringEdge payment is overdue?' If user says yes, do NOT ask again.")
         elif next_step == "ask_payment_plan":
             lines.append("Do NOT ask awareness again. Ask: 'Can you pay now, or what date can you make the payment by?'")
         elif next_step == "confirm_ptp":

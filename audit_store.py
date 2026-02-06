@@ -4,13 +4,16 @@ import json
 import os
 import sqlite3
 import time
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 class SQLiteAuditStore:
-    def __init__(self, path: str, retention_days: int = 30) -> None:
+    def __init__(self, path: str, retention_days: int = 30, metrics_tz: str = "Asia/Kolkata") -> None:
         self.path = path
         self.retention_days = max(1, int(retention_days))
+        self.metrics_tz = metrics_tz or "Asia/Kolkata"
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         self._init_db()
         self._purge_old()
@@ -69,6 +72,14 @@ class SQLiteAuditStore:
         try:
             conn.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
             conn.execute("DELETE FROM violations WHERE ts < ?", (cutoff,))
+            conn.execute(
+                """
+                DELETE FROM outcomes
+                WHERE COALESCE(end_ts, start_ts, 0) > 0
+                  AND COALESCE(end_ts, start_ts, 0) < ?
+                """,
+                (cutoff,),
+            )
             conn.commit()
         finally:
             conn.close()
@@ -158,8 +169,12 @@ class SQLiteAuditStore:
             conn.close()
 
     def metrics(self) -> Dict[str, Any]:
-        now = time.time()
-        day_start = now - (now % 86400)
+        try:
+            tz = ZoneInfo(self.metrics_tz)
+        except ZoneInfoNotFoundError:
+            tz = ZoneInfo("UTC")
+        now = datetime.now(tz)
+        day_start = datetime(now.year, now.month, now.day, tzinfo=tz).timestamp()
         conn = self._connect()
         try:
             sessions_today = conn.execute(
@@ -203,4 +218,3 @@ class SQLiteAuditStore:
             return [dict(r) for r in rows]
         finally:
             conn.close()
-

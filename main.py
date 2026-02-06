@@ -61,12 +61,12 @@ async def _run() -> None:
 
     greeting_text = get_env(
         "GREETING_TEXT",
-        "Hello! This is Anushka from KreditBee collections, calling about your overdue payment. Is now a good time to talk?",
+        "Hello! This is Anushka from TuringEdge collections, calling about your overdue payment. Is now a good time to talk?",
     )
     enable_greeting = get_env_bool("ENABLE_GREETING", True)
     max_history_turns = int(get_env("MAX_HISTORY_TURNS", "10"))
     session_store_path = get_env("SESSION_STORE_PATH")
-    dynamic_stt_language = get_env_bool("STT_DYNAMIC_LANGUAGE", False)
+    dynamic_stt_language = get_env_bool("STT_DYNAMIC_LANGUAGE", True)
     preview_partials = get_env_bool("PREVIEW_PARTIALS", True)
     preview_after_ms = int(get_env("PREVIEW_AFTER_MS", "300"))
     llm_timeout_s = float(get_env("LLM_STREAM_TIMEOUT_S", "20"))

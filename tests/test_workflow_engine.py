@@ -1,4 +1,6 @@
 import unittest
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from workflow_engine import WorkflowEngine, WorkflowState
 
@@ -38,7 +40,256 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertTrue(st.ptp_date)
         self.assertEqual(eng.compute_next_step(st), "closing")
 
+    def test_dnd_override(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True)
+        st.current_step = "confirm_identity"
+        eng.update_from_user("please do not call again", st)
+        self.assertEqual(st.disposition, "dnd_requested")
+        self.assertEqual(st.current_step, "closing")
+
+    def test_wrong_party(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True)
+        st.current_step = "confirm_identity"
+        eng.update_from_user("wrong number", st)
+        self.assertEqual(st.disposition, "wrong_party")
+        self.assertEqual(st.current_step, "closing")
+
+    def test_consent_refusal(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState()
+        st.current_step = "consent"
+        eng.update_from_user("no", st)
+        self.assertEqual(st.disposition, "consent_refused")
+        self.assertEqual(st.current_step, "closing")
+
+    def test_consent_requires_explicit_yes(self):
+        eng = WorkflowEngine()
+        st = WorkflowState()
+        st.current_step = "consent"
+        eng.update_from_user("can you repeat that", st)
+        self.assertIsNone(st.consent)
+        self.assertEqual(st.current_step, "consent")
+
+    def test_retry_limit_identity(self):
+        eng = WorkflowEngine(enable_advanced=True, max_retries=2)
+        st = WorkflowState(consent=True)
+        eng.update_from_assistant("Am I speaking with Rahul?", st)
+        eng.update_from_assistant("Am I speaking with Rahul?", st)
+        eng.update_from_assistant("Am I speaking with Rahul?", st)
+        step = eng.compute_next_step(st)
+        self.assertEqual(step, "closing")
+        self.assertEqual(st.disposition, "identity_not_confirmed")
+
+    def test_strict_date_time_parse(self):
+        now = datetime(2026, 2, 5, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        eng = WorkflowEngine(enable_advanced=True, now_fn=lambda: now)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("I will pay on 06/02/2026", st)
+        self.assertEqual(st.ptp_date, "2026-02-06")
+
+        st2 = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st2.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("I will pay on 01/02/2026", st2)
+        self.assertIsNone(st2.ptp_date)
+        self.assertEqual(st2.last_transition_reason, "invalid_ptp_date")
+        self.assertEqual(st2.current_step, "ask_ptp_or_callback")
+
+        st3 = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st3.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("call me at 23:30", st3)
+        self.assertIsNone(st3.callback_time)
+        self.assertEqual(st3.last_transition_reason, "invalid_callback_time")
+        self.assertEqual(st3.current_step, "ask_ptp_or_callback")
+
+    def test_no_money_sets_callback_prompt(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("I have no money", st)
+        self.assertTrue(st.callback_requested)
+        self.assertEqual(st.last_transition_reason, "hardship")
+        self.assertEqual(st.current_step, "ask_ptp_or_callback")
+
+    def test_hardship_detection(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("I lost my job last month", st)
+        self.assertTrue(st.hardship_detected)
+        self.assertEqual(st.last_transition_reason, "hardship")
+
+    def test_no_step_bound_consent_only(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState()
+        st.current_step = "consent"
+        eng.update_from_user("no", st, reply_to_step_id="consent")
+        self.assertFalse(st.consent)
+        self.assertIn(st.disposition, {"no_consent", "consent_refused"})
+        self.assertFalse(st.refusal_detected)
+        self.assertEqual(st.no_count, 0)
+
+    def test_no_step_bound_awareness_not_refusal(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True)
+        st.current_step = "confirm_awareness"
+        eng.update_from_user("no", st, reply_to_step_id="confirm_awareness")
+        self.assertTrue(st.awareness_confirmed)
+        self.assertFalse(st.refusal_detected)
+        self.assertEqual(st.no_count, 0)
+
+    def test_hard_refusal_detected_in_ask_ptp_or_callback(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("I cannot make payment, no money", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertTrue(st.refusal_detected)
+        self.assertEqual(st.refusal_strength, "hard")
+        self.assertEqual(st.refusal_reason, "inability")
+        self.assertEqual(st.no_count, 1)
+        self.assertTrue(st.callback_requested)
+
+    def test_soft_refusal_detected_in_ask_ptp_or_callback(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("not yet, maybe later", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertTrue(st.refusal_detected)
+        self.assertEqual(st.refusal_strength, "soft")
+        self.assertEqual(st.refusal_reason, "inability")
+        self.assertEqual(st.no_count, 1)
+
+    def test_refusal_then_valid_ptp_advances_flow(self):
+        now = datetime(2026, 2, 5, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        eng = WorkflowEngine(enable_advanced=True, now_fn=lambda: now)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("I won't be able to pay", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertTrue(st.refusal_detected)
+        eng.update_from_user("I will pay on 06/02/2026", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertEqual(st.ptp_date, "2026-02-06")
+        self.assertEqual(st.current_step, "closing")
+        self.assertTrue(st.refusal_detected)
+
+    def test_retry_exceeded_closes_when_no_commitment(self):
+        eng = WorkflowEngine(enable_advanced=True, max_retries=2)
+        st = WorkflowState(
+            consent=True,
+            identity_confirmed=True,
+            awareness_confirmed=True,
+            payment_made=False,
+            refusal_detected=True,
+            refusal_strength="hard",
+            refusal_reason="inability",
+            no_count=3,
+        )
+        for _ in range(3):
+            eng.update_from_assistant("When can you make the payment?", st)
+        step = eng.compute_next_step(st)
+        self.assertEqual(step, "closing")
+        self.assertEqual(st.disposition, "refusal_unresolved")
+        self.assertEqual(st.last_transition_reason, "retry_exceeded")
+
+    def test_conflict_paid_then_cannot_pay_resolves_to_unpaid(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True)
+        st.current_step = "ask_payment_made"
+        eng.update_from_user("I already paid", st, reply_to_step_id="ask_payment_made")
+        self.assertTrue(st.payment_made)
+        eng.update_from_user("I cannot make payment", st, reply_to_step_id="ask_payment_made")
+        self.assertFalse(st.payment_made)
+        self.assertTrue(st.refusal_detected)
+
+    def test_mixed_yes_then_havent_made_resolves_to_unpaid(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True)
+        st.current_step = "ask_payment_made"
+        eng.update_from_user("Yes, I am waiting. I haven't made it.", st, reply_to_step_id="ask_payment_made")
+        self.assertFalse(st.payment_made)
+        self.assertEqual(st.current_step, "ask_ptp_or_callback")
+
+    def test_reference_step_unpaid_correction_exits_utr_loop(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(
+            consent=True,
+            identity_confirmed=True,
+            awareness_confirmed=True,
+            payment_made=True,
+        )
+        st.current_step = "ask_reference_number"
+        eng.update_from_user(
+            "I haven't made the payment.",
+            st,
+            reply_to_step_id="ask_reference_number",
+        )
+        self.assertFalse(st.payment_made)
+        self.assertEqual(st.current_step, "ask_ptp_or_callback")
+
+    def test_uncertain_commitment_sets_uncertainty_reason(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("I'm not sure right now", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertEqual(st.last_transition_reason, "uncertain_commitment")
+        self.assertTrue(st.callback_requested)
+        self.assertEqual(st.current_step, "ask_ptp_or_callback")
+
+    def test_relative_tomorrow_phrase_normalizes_to_iso(self):
+        now = datetime(2026, 2, 5, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        eng = WorkflowEngine(enable_advanced=True, now_fn=lambda: now)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("Let's say by tomorrow.", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertEqual(st.ptp_date, "2026-02-06")
+
+    def test_relative_day_after_tomorrow_phrase_normalizes_to_iso(self):
+        now = datetime(2026, 2, 5, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        eng = WorkflowEngine(enable_advanced=True, now_fn=lambda: now)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("day after tomorrow", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertEqual(st.ptp_date, "2026-02-07")
+
+    def test_in_days_phrase_sets_ptp_not_callback_time(self):
+        now = datetime(2026, 2, 5, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        eng = WorkflowEngine(enable_advanced=True, now_fn=lambda: now)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("I can pay in 10 days.", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertEqual(st.ptp_date, "2026-02-15")
+        self.assertIsNone(st.callback_time)
+        self.assertEqual(st.current_step, "closing")
+
+    def test_right_is_treated_as_yes_for_consent(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState()
+        st.current_step = "consent"
+        eng.update_from_user("Right", st, reply_to_step_id="consent")
+        self.assertTrue(st.consent)
+
+    def test_not_aware_does_not_force_unpaid_in_payment_step(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True)
+        st.current_step = "ask_payment_made"
+        eng.update_from_user("I was not even aware of that.", st, reply_to_step_id="ask_payment_made")
+        self.assertIsNone(st.payment_made)
+
+    def test_callback_time_implicit_hour_parses(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("I think it's 9.", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertEqual(st.callback_time, "09:00")
+
+    def test_callback_range_infers_pm_hour(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("Call me back between 2 and 3.", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertEqual(st.callback_time, "14:00")
+
 
 if __name__ == "__main__":
     unittest.main()
-

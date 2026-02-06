@@ -1,7 +1,7 @@
 # Human-Like Conversation Features Implementation
 
 ## Overview
-This document describes the comprehensive human-like conversation enhancements implemented in the KreditBee Collections Agent to make interactions more natural and empathetic while maintaining compliance.
+This document describes the comprehensive human-like conversation enhancements implemented in the TuringEdge Collections Agent to make interactions more natural and empathetic while maintaining compliance.
 
 ## Features Implemented
 

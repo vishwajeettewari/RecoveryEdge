@@ -3,47 +3,50 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#071325" />
     <meta name="color-scheme" content="dark light" />
-    <title>TuringEdge Voice Agent Demo (Collections)</title>
+    <title>Collections Intelligence Platform</title>
 
-    <!-- Font: Inter (enterprise UI default) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&family=Sora:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
 
-    <!-- Main stylesheet -->
-    <link rel="stylesheet" href="/static/styles.css?v=chat6" />
-
-    <!-- Basic preconnects (safe, optional) -->
+    <link rel="stylesheet" href="/static/styles.css?v=chat13" />
     <link rel="preconnect" href="https://api.sarvam.ai" crossorigin />
   </head>
 
   <body class="theme-dark">
+    <div class="bg-grid" aria-hidden="true"></div>
+    <div class="bg-orb bg-orb-a" aria-hidden="true"></div>
+    <div class="bg-orb bg-orb-b" aria-hidden="true"></div>
+
     <div class="app-shell">
-      <!-- Top bar -->
       <header class="topbar console-topbar" role="banner">
         <div class="topbar-left">
-          <div class="brand" aria-label="TuringEdge">
+          <div class="brand">
             <img
               id="brandLogo"
               class="brand-logo"
               src="/static/assets/actual_logo_te.png"
               alt="TuringEdge"
-              width="160"
-              height="44"
+              width="180"
+              height="52"
               loading="eager"
               decoding="async"
               onerror="this.onerror=null;this.src='/static/actual_logo_te.png';"
             />
+            <div class="brand-meta">AI Collections Platform</div>
           </div>
         </div>
 
         <div class="topbar-middle">
           <div class="titleblock">
-            <div class="headline console-title">TuringEdge — AI Collections Call Console</div>
+            <div class="kicker">Live Operations</div>
+            <h1 class="headline console-title">AI Voice Collections Platform</h1>
+            <div class="subhead">Real-time voice AI for supervised debt recovery — compliant, empathetic, and outcome-driven.</div>
           </div>
         </div>
 
@@ -52,7 +55,7 @@
             <div class="status-pill" aria-live="polite">
               <div id="statusDot" class="status-dot"></div>
               <div class="status-text">
-                <div class="status-label">SESSION STATUS</div>
+                <div class="status-label">Session State</div>
                 <div id="statusText" class="status-value">Disconnected</div>
               </div>
             </div>
@@ -62,53 +65,96 @@
             </button>
 
             <button id="toggleBtn" class="primary-btn" type="button">Start Call</button>
-            <button id="muteBtn" class="secondary-btn" type="button" disabled>Mute Mic</button>
+            <button id="muteBtn" class="secondary-btn ghost" type="button" disabled>Mute Mic</button>
           </div>
         </div>
       </header>
 
       <section class="card monitor-card" aria-label="Live call audio monitor">
         <div class="monitor-header">
-          <div class="monitor-title">Live Call Audio Monitor</div>
+          <div>
+            <div class="monitor-title">Live Audio Monitor</div>
+            <div class="panel-sub">Real-time waveform, language detection, and call quality metrics</div>
+          </div>
           <div class="monitor-metrics">
-            <div class="monitor-metric">Language: <span id="languageValue">en-IN</span></div>
-            <div class="monitor-metric">Barge-in: <span id="bargeStatus">Idle</span></div>
-            <div class="monitor-metric">Latency: <span id="latencyValue">—</span></div>
+            <div class="monitor-metric">Language <span id="languageValue">Multilingual</span></div>
+            <div class="monitor-metric">Barge-in <span id="bargeStatus" class="muted">Idle</span></div>
+            <div class="monitor-metric">Latency <span id="latencyValue">—</span></div>
           </div>
         </div>
-        <canvas id="pcmCanvas" class="signal-canvas monitor-canvas" width="1200" height="70"></canvas>
+        <canvas id="pcmCanvas" class="signal-canvas monitor-canvas" width="1200" height="74"></canvas>
       </section>
 
-      <!-- Main grid -->
+      <section class="card hud-card" aria-label="Live session snapshot">
+        <div class="hud-grid">
+          <div class="hud-metric">
+            <div class="hud-label">Session</div>
+            <div id="hudState" class="hud-value">Disconnected</div>
+          </div>
+          <div class="hud-metric">
+            <div class="hud-label">Duration</div>
+            <div id="hudDuration" class="hud-value">00:00</div>
+          </div>
+          <div class="hud-metric">
+            <div class="hud-label">Exchanges</div>
+            <div id="hudTurns" class="hud-value">0</div>
+          </div>
+          <div class="hud-metric">
+            <div class="hud-label">Interruptions</div>
+            <div id="hudInterruptions" class="hud-value">0</div>
+          </div>
+          <div class="hud-metric">
+            <div class="hud-label">Language</div>
+            <div id="hudLanguage" class="hud-value">hi-IN</div>
+          </div>
+          <div class="hud-metric">
+            <div class="hud-label">Workflow Step</div>
+            <div id="hudLastEvent" class="hud-value">Ready</div>
+          </div>
+        </div>
+
+        <div class="hud-actions">
+          <button id="autoScrollBtn" class="secondary-btn btn-sm" type="button" aria-pressed="true">Auto-scroll: On</button>
+          <button id="clearChatBtn" class="secondary-btn btn-sm" type="button">Clear Transcript</button>
+        </div>
+      </section>
+
       <main class="grid console-grid" role="main">
         <section class="card panel transcript-card" aria-label="Live conversation transcript">
           <div class="panel-head">
             <div>
-              <div class="panel-title">Live Conversation Transcript</div>
-              <div class="panel-sub">Live chat</div>
+              <div class="panel-title">Live Conversation</div>
+              <div class="panel-sub">Real-time transcript with borrower and agent speech turns</div>
             </div>
-            <div class="badge">LIVE</div>
+            <div class="transcript-head-actions">
+              <div class="badge">Live</div>
+              <div id="turnBadge" class="badge badge-soft">0 turns</div>
+            </div>
           </div>
 
           <div class="chat-stream" id="chatStream">
             <div class="chat-empty" id="chatEmpty">Conversation will appear here.</div>
           </div>
-          <div class="panel-foot">Audio runs only while the session is active.</div>
+          <div id="typingIndicator" class="typing-indicator" style="display:none;">
+            <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+            <span class="typing-label">Agent is responding...</span>
+          </div>
+          <div class="panel-foot">Audio streaming and transcript updates run only while session is active.</div>
         </section>
 
-        <aside class="card panel intel-card" aria-label="Customer & Loan Intelligence">
+        <aside class="card panel intel-card" aria-label="Customer and loan intelligence">
           <div class="panel-head">
             <div>
-              <div class="panel-title">Customer &amp; Loan Intelligence</div>
-              <div class="panel-sub">Context loaded from Excel</div>
+              <div class="panel-title">Borrower Intelligence</div>
+              <div class="panel-sub">Live context and compliance status</div>
             </div>
-            <a class="badge badge-soft" href="/admin" target="_blank" rel="noreferrer">SUPERVISOR</a>
+            <a class="badge badge-soft" href="/admin" target="_blank" rel="noreferrer">Supervisor</a>
           </div>
 
           <div class="intel-section">
             <div class="intel-title">Customer</div>
             <div class="intel-row">
-              <label class="intel-label" for="customerSelect">Customer</label>
+              <label class="intel-label" for="customerSelect">Select</label>
               <div class="intel-field">
                 <select id="customerSelect" class="demo-select intel-select">
                   <option value="">Loading…</option>
@@ -151,9 +197,25 @@
           </div>
 
           <div class="intel-section">
-            <div class="intel-title">AI Call Status</div>
+            <div class="intel-title">Workflow Progress</div>
+            <div class="workflow-steps" id="workflowSteps">
+              <div class="wf-step" data-step="consent"><span class="wf-dot"></span> Consent</div>
+              <div class="wf-step" data-step="confirm_identity"><span class="wf-dot"></span> Identity</div>
+              <div class="wf-step" data-step="confirm_awareness"><span class="wf-dot"></span> Awareness</div>
+              <div class="wf-step" data-step="ask_payment_made"><span class="wf-dot"></span> Payment Status</div>
+              <div class="wf-step" data-step="ask_ptp_or_callback"><span class="wf-dot"></span> Commitment</div>
+              <div class="wf-step" data-step="closing"><span class="wf-dot"></span> Closing</div>
+            </div>
+          </div>
+
+          <div class="intel-section">
+            <div class="intel-title">Agent State</div>
             <div class="intel-row">
-              <div class="intel-label">Intent detected</div>
+              <div class="intel-label">Sentiment</div>
+              <div id="sentimentValue" class="intel-value sentiment-neutral">Neutral</div>
+            </div>
+            <div class="intel-row">
+              <div class="intel-label">Intent</div>
               <div id="intentValue" class="intel-value">—</div>
             </div>
             <div class="intel-row">
@@ -165,16 +227,35 @@
               <div id="promiseValue" class="intel-value">Not captured</div>
             </div>
           </div>
+
+          <div class="intel-section">
+            <div class="intel-title">Quick Disposition</div>
+            <div class="disposition-actions" id="dispositionActions">
+              <button class="disp-btn disp-ptp" data-disp="ptp" type="button" disabled>PTP Captured</button>
+              <button class="disp-btn disp-callback" data-disp="callback" type="button" disabled>Callback Set</button>
+              <button class="disp-btn disp-paid" data-disp="paid" type="button" disabled>Already Paid</button>
+              <button class="disp-btn disp-escalate" data-disp="escalate" type="button" disabled>Escalate</button>
+            </div>
+          </div>
+
+          <div class="intel-section compliance-section">
+            <div class="intel-title">Compliance</div>
+            <div class="compliance-flags">
+              <div class="compliance-item" id="compConsent"><span class="comp-icon">&#9675;</span> Recording Consent</div>
+              <div class="compliance-item" id="compIdentity"><span class="comp-icon">&#9675;</span> Identity Verified</div>
+              <div class="compliance-item" id="compDisclosure"><span class="comp-icon">&#9675;</span> Purpose Disclosed</div>
+              <div class="compliance-item" id="compNoPII"><span class="comp-icon">&#10003;</span> No PII Requested</div>
+            </div>
+          </div>
         </aside>
       </main>
 
       <footer class="footer" role="contentinfo">
-        <div class="footer-left">TuringEdge — Enterprise Voice Agent Demo (Collections)</div>
-        <div class="footer-right">Audio runs only while the session is active.</div>
+        <div class="footer-left">TuringEdge AI Collections Platform</div>
+        <div class="footer-right">RBI-compliant voice collections with live supervision and audit trail.</div>
       </footer>
     </div>
 
-    <!-- App logic -->
-    <script src="/static/app.js?v=chat6" defer></script>
+    <script src="/static/app.js?v=chat11" defer></script>
   </body>
 </html>

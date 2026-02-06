@@ -1,0 +1,4 @@
+{
+    "appService.defaultWebAppToDeploy": "/subscriptions/83e353e9-4e43-45d2-b08e-a6b17257f78e/resourceGroups/ClientDemos/providers/Microsoft.Web/sites/investment-voice-agent",
+    "appService.deploySubpath": "."
+}

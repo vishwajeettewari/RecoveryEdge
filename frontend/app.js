@@ -2,6 +2,9 @@ const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
 const toggleBtn = document.getElementById("toggleBtn");
 const muteBtn = document.getElementById("muteBtn");
+const autoScrollBtn = document.getElementById("autoScrollBtn");
+const clearChatBtn = document.getElementById("clearChatBtn");
+const turnBadge = document.getElementById("turnBadge");
 const chatStream =
   document.getElementById("chatStream") || document.querySelector(".chat-stream");
 const chatEmpty =
@@ -11,6 +14,12 @@ const micMeterFill = document.getElementById("micMeterFill");
 const bargeStatus = document.getElementById("bargeStatus");
 const languageValue = document.getElementById("languageValue");
 const latencyValue = document.getElementById("latencyValue");
+const hudState = document.getElementById("hudState");
+const hudDuration = document.getElementById("hudDuration");
+const hudTurns = document.getElementById("hudTurns");
+const hudInterruptions = document.getElementById("hudInterruptions");
+const hudLanguage = document.getElementById("hudLanguage");
+const hudLastEvent = document.getElementById("hudLastEvent");
 
 // Customer intelligence panel values
 const customerNameValue = document.getElementById("customerNameValue");
@@ -27,6 +36,15 @@ const promiseValue = document.getElementById("promiseValue");
 // Demo controls (customer selection only)
 const customerSelect = document.getElementById("customerSelect");
 const reloadCustomersBtn = document.getElementById("reloadCustomersBtn");
+
+// Enterprise UI elements
+const typingIndicator = document.getElementById("typingIndicator");
+const sentimentValue = document.getElementById("sentimentValue");
+const workflowSteps = document.getElementById("workflowSteps");
+const dispositionActions = document.getElementById("dispositionActions");
+const compConsent = document.getElementById("compConsent");
+const compIdentity = document.getElementById("compIdentity");
+const compDisclosure = document.getElementById("compDisclosure");
 
 // Theme toggle (works even if the button structure changes)
 const themeToggleEl =
@@ -67,9 +85,20 @@ let lastChatAt = { user: 0, assistant: 0 };
 let lastChatNorm = { user: "", assistant: "" };
 const useTimelineEvents = true;
 const timelineBubbles = new Map();
+let autoScrollEnabled = true;
+let sessionStartedAtMs = 0;
+let sessionTimer = null;
+let turnCount = 0;
+let interruptionCount = 0;
+const countedAssistantTurns = new Set();
 
 // Theme
 let currentTheme = "dark";
+let parallaxRaf = null;
+let parallaxTargetX = 0;
+let parallaxTargetY = 0;
+let parallaxCurrentX = 0;
+let parallaxCurrentY = 0;
 
 // Waveform
 let analyserNode = null;
@@ -118,6 +147,59 @@ function statusColorFor(state) {
   }
 }
 
+function formatClockTime(ts) {
+  if (!ts) return "—";
+  try {
+    return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  } catch (e) {
+    return "—";
+  }
+}
+
+function formatDuration(ms) {
+  const total = Math.max(0, Math.floor((ms || 0) / 1000));
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+function updateHudDuration() {
+  if (!hudDuration) return;
+  if (!running || !sessionStartedAtMs) {
+    hudDuration.textContent = "00:00";
+    return;
+  }
+  hudDuration.textContent = formatDuration(Date.now() - sessionStartedAtMs);
+}
+
+function setHudLastEvent(text) {
+  if (!hudLastEvent) return;
+  hudLastEvent.textContent = (text || "Ready").toString().slice(0, 48);
+}
+
+function setAutoScroll(enabled) {
+  autoScrollEnabled = !!enabled;
+  if (!autoScrollBtn) return;
+  autoScrollBtn.setAttribute("aria-pressed", autoScrollEnabled ? "true" : "false");
+  autoScrollBtn.textContent = autoScrollEnabled ? "Auto-scroll: On" : "Auto-scroll: Off";
+}
+
+function scrollChatToBottom(force = false) {
+  if (!chatStream) return;
+  if (force || autoScrollEnabled) {
+    chatStream.scrollTop = chatStream.scrollHeight;
+  }
+}
+
+function updateTurnUi() {
+  if (hudTurns) hudTurns.textContent = String(turnCount);
+  if (turnBadge) turnBadge.textContent = `${turnCount} ${turnCount === 1 ? "turn" : "turns"}`;
+}
+
+function updateInterruptionUi() {
+  if (hudInterruptions) hudInterruptions.textContent = String(interruptionCount);
+}
+
 function applyTheme(theme) {
   currentTheme = theme === "light" ? "light" : "dark";
   document.documentElement.setAttribute("data-theme", currentTheme);
@@ -150,6 +232,12 @@ function applyTheme(theme) {
     );
     themeToggleEl.title =
       currentTheme === "light" ? "Switch to dark" : "Switch to light";
+    themeToggleEl.setAttribute("aria-label", themeToggleEl.title);
+    const iconNode = themeToggleEl.querySelector(".icon");
+    if (iconNode) {
+      iconNode.textContent = currentTheme === "light" ? "☼" : "◐";
+    }
+    themeToggleEl.classList.toggle("is-light", currentTheme === "light");
   }
 
   cachedAccent = null; // refresh waveform stroke color
@@ -183,6 +271,68 @@ function initTheme() {
       applyTheme(currentTheme === "dark" ? "light" : "dark");
     });
   }
+}
+
+function writeParallaxVars(x, y) {
+  const rx = Math.max(-14, Math.min(14, x));
+  const ry = Math.max(-14, Math.min(14, y));
+  document.documentElement.style.setProperty("--parallax-x", `${rx.toFixed(2)}px`);
+  document.documentElement.style.setProperty("--parallax-y", `${ry.toFixed(2)}px`);
+  document.documentElement.style.setProperty("--parallax-tilt-x", `${(ry * -0.08).toFixed(2)}deg`);
+  document.documentElement.style.setProperty("--parallax-tilt-y", `${(rx * 0.08).toFixed(2)}deg`);
+}
+
+function tickParallax() {
+  parallaxCurrentX += (parallaxTargetX - parallaxCurrentX) * 0.11;
+  parallaxCurrentY += (parallaxTargetY - parallaxCurrentY) * 0.11;
+  writeParallaxVars(parallaxCurrentX, parallaxCurrentY);
+
+  const dx = Math.abs(parallaxTargetX - parallaxCurrentX);
+  const dy = Math.abs(parallaxTargetY - parallaxCurrentY);
+  if (dx < 0.02 && dy < 0.02) {
+    parallaxRaf = null;
+    return;
+  }
+  parallaxRaf = requestAnimationFrame(tickParallax);
+}
+
+function queueParallax() {
+  if (parallaxRaf) return;
+  parallaxRaf = requestAnimationFrame(tickParallax);
+}
+
+function initParallax() {
+  const prefersReducedMotion =
+    window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const isCoarsePointer =
+    window.matchMedia &&
+    window.matchMedia("(pointer: coarse)").matches;
+
+  if (prefersReducedMotion || isCoarsePointer) {
+    writeParallaxVars(0, 0);
+    return;
+  }
+
+  const onPointerMove = (event) => {
+    const w = Math.max(window.innerWidth || 1, 1);
+    const h = Math.max(window.innerHeight || 1, 1);
+    const nx = event.clientX / w - 0.5;
+    const ny = event.clientY / h - 0.5;
+    parallaxTargetX = nx * 18;
+    parallaxTargetY = ny * 16;
+    queueParallax();
+  };
+
+  const reset = () => {
+    parallaxTargetX = 0;
+    parallaxTargetY = 0;
+    queueParallax();
+  };
+
+  window.addEventListener("pointermove", onPointerMove, { passive: true });
+  window.addEventListener("pointerleave", reset, { passive: true });
+  window.addEventListener("blur", reset, { passive: true });
 }
 
 function attachAnalyserToWaveform() {
@@ -360,22 +510,33 @@ function setStatus(state, label) {
   statusDot.style.background = color;
   statusDot.style.boxShadow = `0 0 12px ${color}99`;
   statusText.textContent = label || currentState;
+  if (hudState) hudState.textContent = (label || currentState || "ready").toString();
+  setHudLastEvent(`state:${label || currentState}`);
 }
 
-function createChatBubble(role, text, isLive = false) {
+function createChatBubble(role, text, isLive = false, ts = Date.now()) {
   if (!chatStream) return null;
   const bubble = document.createElement("div");
   bubble.className = `chat-bubble ${role}${isLive ? " live" : ""}`;
 
+  const meta = document.createElement("div");
+  meta.className = "chat-meta";
+
   const label = document.createElement("div");
   label.className = "chat-role";
-  label.textContent = role === "agent" ? "Agent:" : "User:";
+  label.textContent = role === "agent" ? "Agent" : "User";
+
+  const timeNode = document.createElement("div");
+  timeNode.className = "chat-time";
+  timeNode.textContent = formatClockTime(ts);
 
   const body = document.createElement("div");
   body.className = "chat-text";
   body.textContent = text || "";
 
-  bubble.appendChild(label);
+  meta.appendChild(label);
+  meta.appendChild(timeNode);
+  bubble.appendChild(meta);
   bubble.appendChild(body);
   return bubble;
 }
@@ -399,7 +560,7 @@ function upsertTimelineBubble({ key, role, text, ts, interrupted }) {
   if (!key) return null;
   let bubble = timelineBubbles.get(key);
   if (!bubble) {
-    bubble = createChatBubble(role, text || "", false);
+    bubble = createChatBubble(role, text || "", false, ts || Date.now());
     if (!bubble) return null;
     bubble.dataset.key = key;
     insertBubbleByTs(bubble, ts);
@@ -407,6 +568,8 @@ function upsertTimelineBubble({ key, role, text, ts, interrupted }) {
   } else {
     const body = bubble.querySelector(".chat-text");
     if (body && text != null) body.textContent = text;
+    const timeNode = bubble.querySelector(".chat-time");
+    if (timeNode && ts) timeNode.textContent = formatClockTime(ts);
     if (ts && Number(bubble.dataset.ts || 0) !== ts) {
       bubble.dataset.ts = String(ts);
       bubble.remove();
@@ -417,17 +580,17 @@ function upsertTimelineBubble({ key, role, text, ts, interrupted }) {
     bubble.classList.add("interrupted");
   }
   if (chatEmpty) chatEmpty.style.display = "none";
-  chatStream.scrollTop = chatStream.scrollHeight;
+  scrollChatToBottom();
   return bubble;
 }
 
-function appendChatBubble(role, text, isLive = false) {
+function appendChatBubble(role, text, isLive = false, ts = Date.now()) {
   if (!chatStream) return null;
-  const bubble = createChatBubble(role, text, isLive);
+  const bubble = createChatBubble(role, text, isLive, ts);
   if (!bubble) return null;
   if (chatEmpty) chatEmpty.style.display = "none";
   chatStream.appendChild(bubble);
-  chatStream.scrollTop = chatStream.scrollHeight;
+  scrollChatToBottom();
   return bubble;
 }
 
@@ -435,7 +598,7 @@ function updateLiveBubble(role, text) {
   if (!chatStream) return;
   let bubble = role === "agent" ? agentLiveBubble : userLiveBubble;
   if (!bubble) {
-    bubble = appendChatBubble(role, "", true);
+    bubble = appendChatBubble(role, "", true, Date.now());
     if (!bubble) return;
     if (role === "agent") agentLiveBubble = bubble;
     else userLiveBubble = bubble;
@@ -443,7 +606,7 @@ function updateLiveBubble(role, text) {
   const body = bubble.querySelector(".chat-text");
   if (body) body.textContent = text || "";
   if (chatEmpty) chatEmpty.style.display = "none";
-  chatStream.scrollTop = chatStream.scrollHeight;
+  scrollChatToBottom();
 }
 
 function clearLiveBubble(role) {
@@ -480,10 +643,12 @@ function commitLiveBubble(role, text) {
     bubble.classList.remove("live");
     const body = bubble.querySelector(".chat-text");
     if (body) body.textContent = finalText;
+    const timeNode = bubble.querySelector(".chat-time");
+    if (timeNode) timeNode.textContent = formatClockTime(now);
     if (role === "agent") agentLiveBubble = null;
     else userLiveBubble = null;
   } else {
-    appendChatBubble(role, finalText, false);
+    appendChatBubble(role, finalText, false, now);
   }
   if (chatEmpty) chatEmpty.style.display = "none";
 }
@@ -506,6 +671,66 @@ function setText(el, value) {
   el.textContent = value == null || value === "" ? "—" : value;
 }
 
+function updateWorkflowSteps(currentStep, stateData) {
+  if (!workflowSteps) return;
+  const stepOrder = ["consent", "confirm_identity", "confirm_awareness", "ask_payment_made", "ask_ptp_or_callback", "closing"];
+  const currentIdx = stepOrder.indexOf(currentStep || "consent");
+  const steps = workflowSteps.querySelectorAll(".wf-step");
+  steps.forEach((el) => {
+    const step = el.dataset.step;
+    const idx = stepOrder.indexOf(step);
+    el.classList.remove("completed", "active");
+    if (idx < currentIdx) {
+      el.classList.add("completed");
+    } else if (idx === currentIdx) {
+      el.classList.add("active");
+    }
+  });
+}
+
+function updateComplianceFlags(stateData) {
+  const s = stateData || {};
+  if (compConsent) {
+    const consented = s.consent === true;
+    compConsent.classList.toggle("comp-pass", consented);
+    const icon = compConsent.querySelector(".comp-icon");
+    if (icon) icon.innerHTML = consented ? "&#10003;" : "&#9675;";
+  }
+  if (compIdentity) {
+    const confirmed = !!s.identity_confirmed;
+    compIdentity.classList.toggle("comp-pass", confirmed);
+    const icon = compIdentity.querySelector(".comp-icon");
+    if (icon) icon.innerHTML = confirmed ? "&#10003;" : "&#9675;";
+  }
+  if (compDisclosure) {
+    const aware = !!s.awareness_confirmed;
+    compDisclosure.classList.toggle("comp-pass", aware);
+    const icon = compDisclosure.querySelector(".comp-icon");
+    if (icon) icon.innerHTML = aware ? "&#10003;" : "&#9675;";
+  }
+}
+
+function updateSentiment(emotionData) {
+  if (!sentimentValue) return;
+  const stress = emotionData.stress_level || 0;
+  const sent = emotionData.sentiment || "neutral";
+  let label = "Neutral";
+  let cls = "sentiment-neutral";
+  if (stress > 0.7) { label = "High Stress"; cls = "sentiment-stressed"; }
+  else if (stress > 0.4) { label = "Tense"; cls = "sentiment-negative"; }
+  else if (sent === "positive" || stress < 0.15) { label = "Cooperative"; cls = "sentiment-positive"; }
+  else { label = "Neutral"; cls = "sentiment-neutral"; }
+  sentimentValue.textContent = label;
+  sentimentValue.className = "intel-value " + cls;
+}
+
+function enableDispositionButtons(enable) {
+  if (!dispositionActions) return;
+  dispositionActions.querySelectorAll(".disp-btn").forEach((btn) => {
+    btn.disabled = !enable;
+  });
+}
+
 function renderCustomerContext() {
   const ctx = currentContext || {};
   setText(customerNameValue, ctx.customer_name || ctx.customerName || ctx.name);
@@ -525,6 +750,8 @@ function renderCustomerContext() {
     promiseValue.textContent = ptp ? `Captured (${ptp})` : "Not captured";
   }
   setText(intentValue, ctx.intent || ctx.last_intent || "—");
+  const lang = ctx.language_preference || ctx.language || "hi-IN";
+  if (hudLanguage) hudLanguage.textContent = lang;
 }
 
 function commitAssistantBuffer() {
@@ -684,13 +911,51 @@ async function teardownAudio() {
 }
 
 function handleServerEvent(payload) {
+  setHudLastEvent(payload && payload.type ? payload.type : "event");
+
   if (payload.type === "context_received" || payload.type === "context_updated") {
-    currentContext = payload.context || payload.facts || currentContext;
+    const incoming = payload.context || payload.facts || {};
+    if (incoming && typeof incoming === "object") {
+      currentContext = { ...(currentContext || {}), ...incoming };
+    }
     if (currentContext.language_preference && languageValue) {
       languageValue.textContent = currentContext.language_preference;
     }
+    if (currentContext.language_preference && hudLanguage) {
+      hudLanguage.textContent = currentContext.language_preference;
+    }
     renderCustomerContext();
     updateStartButtonState();
+    // Enterprise: Update workflow & compliance
+    if (currentContext.workflow_state || currentContext.current_step) {
+      const ws = currentContext.workflow_state || currentContext;
+      updateWorkflowSteps(ws.current_step || currentContext.current_step, ws);
+      updateComplianceFlags(ws);
+    }
+    return;
+  }
+
+  if (payload.type === "workflow_update") {
+    const ws = payload.state || payload;
+    updateWorkflowSteps(ws.current_step, ws);
+    updateComplianceFlags(ws);
+    if (ws.current_step && hudLastEvent) {
+      const stepLabels = {
+        consent: "Requesting Consent",
+        confirm_identity: "Confirming Identity",
+        confirm_awareness: "Confirming Awareness",
+        ask_payment_made: "Checking Payment",
+        ask_reference_number: "Getting Reference",
+        ask_ptp_or_callback: "Securing Commitment",
+        closing: "Closing Call",
+      };
+      hudLastEvent.textContent = stepLabels[ws.current_step] || ws.current_step;
+    }
+    return;
+  }
+
+  if (payload.type === "emotion_state") {
+    updateSentiment(payload);
     return;
   }
 
@@ -698,10 +963,56 @@ function handleServerEvent(payload) {
     return;
   }
 
+  if (payload.type === "vad_speech_start") {
+    if (currentState !== "speaking") {
+      setStatus("listening", "listening");
+    }
+    return;
+  }
+
+  if (payload.type === "vad_speech_end") {
+    if (currentState === "listening") {
+      setStatus("thinking", "thinking");
+    }
+    return;
+  }
+
+  if (payload.type === "backchannel") {
+    if (payload.text) {
+      updateLiveBubble("agent", payload.text);
+    }
+    return;
+  }
+
+  if (payload.type === "interrupt_acknowledged") {
+    if (bargeStatus) {
+      bargeStatus.textContent = "Acknowledged";
+      setTimeout(() => {
+        bargeStatus.textContent = "Idle";
+      }, 600);
+    }
+    return;
+  }
+
+  if (payload.type === "knowledge_used" || payload.type === "supervisor_update") {
+    return;
+  }
+
+  if (payload.type === "action_result" || payload.type === "action_error") {
+    return;
+  }
+
   if (payload.type === "status") {
     setStatus(payload.state || "ready", payload.state);
     if ((payload.state || "") === "speaking") {
       if (!useTimelineEvents) commitAssistantBuffer();
+      if (typingIndicator) typingIndicator.style.display = "none";
+    }
+    if ((payload.state || "") === "thinking") {
+      if (typingIndicator) typingIndicator.style.display = "flex";
+    }
+    if ((payload.state || "") === "listening") {
+      if (typingIndicator) typingIndicator.style.display = "none";
     }
     return;
   }
@@ -719,6 +1030,9 @@ function handleServerEvent(payload) {
     }
     if (payload.language && languageValue) {
       languageValue.textContent = payload.language;
+    }
+    if (payload.language && hudLanguage) {
+      hudLanguage.textContent = payload.language;
     }
     return;
   }
@@ -758,6 +1072,9 @@ function handleServerEvent(payload) {
     if (payload.language && languageValue) {
       languageValue.textContent = payload.language;
     }
+    if (payload.language && hudLanguage) {
+      hudLanguage.textContent = payload.language;
+    }
     return;
   }
 
@@ -789,6 +1106,15 @@ function handleServerEvent(payload) {
     }
     assistantBuffer = "";
     assistantCommittedThisTurn = true;
+    const turnKey = payload.utterance_id ? `utt:${payload.utterance_id}` : `ts:${payload.ts || Date.now()}`;
+    if (!countedAssistantTurns.has(turnKey)) {
+      countedAssistantTurns.add(turnKey);
+      if (countedAssistantTurns.size > 2000) {
+        countedAssistantTurns.clear();
+      }
+      turnCount += 1;
+      updateTurnUi();
+    }
     return;
   }
 
@@ -809,6 +1135,8 @@ function handleServerEvent(payload) {
       const bubble = timelineBubbles.get(key);
       if (bubble) bubble.classList.add("interrupted");
     }
+    interruptionCount += 1;
+    updateInterruptionUi();
     setTimeout(() => {
       bargeStatus.textContent = "Idle";
       bargeStatus.classList.add("muted");
@@ -944,9 +1272,15 @@ async function startSession() {
   }
 
   running = true;
+  sessionStartedAtMs = Date.now();
+  if (sessionTimer) clearInterval(sessionTimer);
+  sessionTimer = setInterval(updateHudDuration, 1000);
+  updateHudDuration();
+  setHudLastEvent("session_started");
   toggleBtn.textContent = "End Call";
   toggleBtn.classList.add("btn-danger");
   muteBtn.disabled = false;
+  enableDispositionButtons(true);
   setStatus("connecting", "connecting");
 
   ws = new WebSocket(getWsUrl());
@@ -960,6 +1294,7 @@ async function startSession() {
       }
     } catch (err) {
       console.error("Microphone setup failed", err);
+      await stopSession();
       setStatus("disconnected", "mic blocked");
       return;
     }
@@ -1013,6 +1348,12 @@ async function stopSession() {
   if (!running) return;
   running = false;
   muted = false;
+  if (sessionTimer) {
+    clearInterval(sessionTimer);
+    sessionTimer = null;
+  }
+  sessionStartedAtMs = 0;
+  updateHudDuration();
 
   if (toggleBtn) toggleBtn.textContent = "Start Call";
   if (toggleBtn) toggleBtn.classList.remove("btn-danger");
@@ -1024,12 +1365,20 @@ async function stopSession() {
   }
 
   setStatus("disconnected", "disconnected");
+  enableDispositionButtons(false);
+  if (typingIndicator) typingIndicator.style.display = "none";
 
   resetChatStream();
 
   assistantBuffer = "";
   transcriptBuffer = "";
   assistantCommittedThisTurn = false;
+  turnCount = 0;
+  interruptionCount = 0;
+  countedAssistantTurns.clear();
+  updateTurnUi();
+  updateInterruptionUi();
+  setHudLastEvent("session_stopped");
   updateMeter(0);
 
   if (ws) {
@@ -1072,8 +1421,28 @@ if (muteBtn) {
   });
 }
 
+if (autoScrollBtn) {
+  autoScrollBtn.addEventListener("click", () => {
+    setAutoScroll(!autoScrollEnabled);
+    if (autoScrollEnabled) scrollChatToBottom(true);
+  });
+}
+
+if (clearChatBtn) {
+  clearChatBtn.addEventListener("click", () => {
+    resetChatStream();
+    setHudLastEvent("transcript_cleared");
+  });
+}
+
 // Initialize theme toggle
 initTheme();
+initParallax();
+setAutoScroll(true);
+updateTurnUi();
+updateInterruptionUi();
+updateHudDuration();
+if (hudLanguage && languageValue) hudLanguage.textContent = languageValue.textContent || "hi-IN";
 
 // Render an idle waveform immediately (so the area isn't empty before starting)
 if (waveCanvas) startWaveformLoop("idle");
@@ -1101,3 +1470,17 @@ if (reloadCustomersBtn) {
     });
   }
 updateStartButtonState();
+
+// Disposition button handlers
+if (dispositionActions) {
+  dispositionActions.addEventListener("click", (e) => {
+    const btn = e.target.closest(".disp-btn");
+    if (!btn || btn.disabled || !running) return;
+    const disp = btn.dataset.disp;
+    if (!disp) return;
+    wsSend({ type: "set_disposition", disposition: disp });
+    dispositionActions.querySelectorAll(".disp-btn").forEach((b) => b.classList.remove("disp-active"));
+    btn.classList.add("disp-active");
+    setHudLastEvent(`disposition:${disp}`);
+  });
+}
