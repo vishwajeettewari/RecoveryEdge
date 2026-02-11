@@ -8,7 +8,7 @@ import unicodedata
 import uuid
 from datetime import date, datetime, timedelta
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Dict, Optional
 from zoneinfo import ZoneInfo
 
 from audio_io import FRAME_MS
@@ -26,6 +26,10 @@ from audit_store import SQLiteAuditStore
 from excel_sink import ExcelOutcomeSink
 from actions import ActionRouter
 from knowledge_store import SQLiteFTSKnowledgeStore
+from strategy_engine import StrategyEngine
+from compliance_engine import ComplianceEngine
+from followup_service import FollowupService
+from integrations.crm_adapter import CRMAdapter
 from datetime_utils import (
     parse_date_from_text,
     parse_time_from_text,
@@ -167,6 +171,10 @@ class WebCallSession:
         action_router: Optional[ActionRouter] = None,
         knowledge_store: Optional[SQLiteFTSKnowledgeStore] = None,
         session_registry: Optional[dict] = None,
+        strategy_engine: Optional[StrategyEngine] = None,
+        compliance_engine: Optional[ComplianceEngine] = None,
+        followup_service: Optional[FollowupService] = None,
+        crm_adapter: Optional[CRMAdapter] = None,
     ) -> None:
         self.stt = stt_service
         self.llm = llm_service
@@ -271,6 +279,7 @@ class WebCallSession:
         # Lightweight conversation memory for key facts (used to prevent повтор greetings / placeholders).
         self._facts: dict = {
             "customer_id": None,
+            "campaign_id": None,
             "customer_name": None,
             "phone": None,
             "overdue_amount": None,
@@ -310,6 +319,11 @@ class WebCallSession:
         self._action_router = action_router
         self._knowledge_store = knowledge_store
         self._session_registry = session_registry
+        self._strategy_engine = strategy_engine
+        self._compliance_engine = compliance_engine
+        self._followup_service = followup_service
+        self._crm_adapter = crm_adapter
+        self._compliance_flags: Dict[str, int] = {}
         self._log_redact_pii = get_env_bool("LOG_REDACT_PHI", True)
         self._greeting_started = False
         self._greeting_active = False
@@ -707,6 +721,7 @@ class WebCallSession:
         # Accept a few common aliases from the frontend.
         mapping = {
             "customer_id": ["customer_id", "customerId", "id"],
+            "campaign_id": ["campaign_id", "campaignId"],
             "customer_name": ["customer_name", "name", "customerName"],
             "phone": ["phone", "customer_phone", "customerPhone"],
             "overdue_amount": ["overdue_amount", "amount", "overdueAmount"],
@@ -727,6 +742,8 @@ class WebCallSession:
 
         if updated.get("customer_id"):
             self._facts["customer_id"] = str(updated["customer_id"]).strip()
+        if updated.get("campaign_id"):
+            self._facts["campaign_id"] = str(updated["campaign_id"]).strip()
         if updated.get("customer_name"):
             self._facts["customer_name"] = str(updated["customer_name"]).strip()
         if updated.get("phone"):
@@ -804,6 +821,25 @@ class WebCallSession:
                 )
             except Exception as exc:
                 log_event(logger, "audit_log_message_error", session_id=self._session_id, error=str(exc))
+        if role == "assistant" and self._compliance_engine and self._audit_store:
+            try:
+                violations = self._compliance_engine.evaluate_assistant_text(
+                    text=content,
+                    consent=self._wf_state.consent,
+                    identity_confirmed=bool(self._wf_state.identity_confirmed),
+                    current_step=self._wf_state.current_step,
+                )
+                for v in violations:
+                    self._audit_store.record_compliance_violation(
+                        session_id=self._session_id,
+                        rule_code=v.rule_code,
+                        severity=v.severity,
+                        detail=v.detail,
+                        excerpt=v.excerpt,
+                    )
+                    self._compliance_flags[v.rule_code] = int(self._compliance_flags.get(v.rule_code, 0)) + 1
+            except Exception as exc:
+                log_event(logger, "compliance_eval_error", session_id=self._session_id, error=str(exc))
         if self._session_registry is not None:
             try:
                 self._session_registry[self._session_id] = self.get_snapshot()
@@ -1022,12 +1058,30 @@ class WebCallSession:
                 self._audit_store.upsert_outcome(
                     session_id=self._session_id,
                     customer_id=str(self._facts.get("customer_id") or "") or None,
+                    campaign_id=str(self._facts.get("campaign_id") or "") or None,
+                    dpd_bucket=(self._get_strategy_decision().dpd_bucket if self._get_strategy_decision() else None),
                     disposition=self._wf_state.disposition,
                     ptp_date=ptp,
                     callback_time=cb,
                 )
             except Exception as exc:
                 log_event(logger, "audit_commitment_persist_error", session_id=self._session_id, error=str(exc))
+        if self._crm_adapter and (ptp or cb):
+            try:
+                self._crm_adapter.enqueue_outcome(
+                    session_id=self._session_id,
+                    event_type="commitment_update",
+                    payload={
+                        "session_id": self._session_id,
+                        "customer_id": self._facts.get("customer_id"),
+                        "campaign_id": self._facts.get("campaign_id"),
+                        "ptp_date": ptp,
+                        "callback_time": cb,
+                        "disposition": self._wf_state.disposition,
+                    },
+                )
+            except Exception as exc:
+                log_event(logger, "crm_enqueue_commitment_error", session_id=self._session_id, error=str(exc))
 
     def _sync_workflow_from_facts(self) -> None:
         if self._facts.get("ptp_date"):
@@ -1456,9 +1510,11 @@ class WebCallSession:
 
     def get_snapshot(self) -> dict:
         """Safe-ish session snapshot for supervisor/demo views."""
+        strategy = self._get_strategy_decision()
         return {
             "session_id": self._session_id,
             "customer_id": self._facts.get("customer_id"),
+            "campaign_id": self._facts.get("campaign_id"),
             "customer_name": self._facts.get("customer_name"),
             "phone": self._facts.get("phone"),
             "current_step": self._wf_state.current_step,
@@ -1483,7 +1539,14 @@ class WebCallSession:
             "last_user_text": self._redact(self._last_user_text) if self._last_user_text else "",
             "last_assistant_text": self._redact(self._last_assistant_text) if self._last_assistant_text else "",
             "last_activity_ts": round(float(self._last_activity_ts), 3),
+            "dpd_bucket": strategy.dpd_bucket if strategy else None,
+            "strategy_mode": strategy.strategy_mode if strategy else None,
+            "tone_profile": strategy.tone_profile if strategy else None,
+            "compliance_flags": dict(self._compliance_flags),
         }
+
+    def get_timeline(self) -> list:
+        return list(self._event_timeline)
 
     async def handle_action(self, *, name: str, payload: dict) -> dict:
         """Handle UI-triggered demo workflow actions."""
@@ -1550,6 +1613,8 @@ class WebCallSession:
                     self._audit_store.upsert_outcome(
                         session_id=self._session_id,
                         customer_id=customer_id,
+                        campaign_id=str(self._facts.get("campaign_id") or "") or None,
+                        dpd_bucket=(self._get_strategy_decision().dpd_bucket if self._get_strategy_decision() else None),
                         ptp_date=self._wf_state.ptp_date,
                         callback_time=self._wf_state.callback_time,
                         disposition=self._wf_state.disposition,
@@ -1557,7 +1622,61 @@ class WebCallSession:
                     self._audit_store.record_event(event_type="action", session_id=self._session_id, payload={"name": name, "payload": payload, "result": {"ok": True}, "ok": True})
                 except Exception:
                     pass
-            return {"ok": True, "ptp_date": self._wf_state.ptp_date, "callback_time": self._wf_state.callback_time}
+            auto_link = None
+            auto_followups = []
+            auto_send_link = bool(payload.get("auto_send_link", True))
+            if auto_send_link and self._wf_state.ptp_date and self._action_router:
+                try:
+                    auto_link = await self.handle_action(
+                        name="send_payment_link",
+                        payload={
+                            "channel": payload.get("channel") or "whatsapp",
+                            "amount": payload.get("amount") or self._facts.get("overdue_amount"),
+                            "customer_phone": payload.get("customer_phone") or self._facts.get("phone"),
+                            "customer_id": payload.get("customer_id") or self._facts.get("customer_id"),
+                        },
+                    )
+                except Exception as exc:
+                    log_event(logger, "auto_send_link_error", session_id=self._session_id, error=str(exc))
+            if self._followup_service and self._wf_state.ptp_date:
+                try:
+                    auto_followups = self._followup_service.schedule_ptp_followups(
+                        session_id=self._session_id,
+                        customer_id=customer_id,
+                        ptp_date=str(self._wf_state.ptp_date),
+                        phone=str(self._facts.get("phone") or ""),
+                        channel=str(payload.get("channel") or "whatsapp"),
+                    )
+                    if self._audit_store and auto_followups:
+                        self._audit_store.record_event(
+                            event_type="followup_scheduled",
+                            session_id=self._session_id,
+                            payload={"items": auto_followups},
+                        )
+                except Exception as exc:
+                    log_event(logger, "followup_schedule_error", session_id=self._session_id, error=str(exc))
+            if self._crm_adapter:
+                try:
+                    self._crm_adapter.enqueue_outcome(
+                        session_id=self._session_id,
+                        event_type="ptp_saved",
+                        payload={
+                            "session_id": self._session_id,
+                            "customer_id": customer_id,
+                            "campaign_id": self._facts.get("campaign_id"),
+                            "ptp_date": self._wf_state.ptp_date,
+                            "callback_time": self._wf_state.callback_time,
+                        },
+                    )
+                except Exception as exc:
+                    log_event(logger, "crm_enqueue_ptp_error", session_id=self._session_id, error=str(exc))
+            return {
+                "ok": True,
+                "ptp_date": self._wf_state.ptp_date,
+                "callback_time": self._wf_state.callback_time,
+                "payment_link": auto_link,
+                "followups": auto_followups,
+            }
 
         if name == "escalate_ticket":
             category = str(payload.get("category") or "customer_issue")
@@ -1590,10 +1709,25 @@ class WebCallSession:
                     pass
             if self._audit_store:
                 try:
-                    self._audit_store.upsert_outcome(session_id=self._session_id, customer_id=customer_id, escalations_inc=1)
+                    self._audit_store.upsert_outcome(
+                        session_id=self._session_id,
+                        customer_id=customer_id,
+                        campaign_id=str(self._facts.get("campaign_id") or "") or None,
+                        dpd_bucket=(self._get_strategy_decision().dpd_bucket if self._get_strategy_decision() else None),
+                        escalations_inc=1,
+                    )
                     self._audit_store.record_event(event_type="action", session_id=self._session_id, payload={"name": name, "payload": payload, "result": result, "ok": True})
                 except Exception:
                     pass
+            if self._crm_adapter:
+                try:
+                    self._crm_adapter.enqueue_outcome(
+                        session_id=self._session_id,
+                        event_type="escalation",
+                        payload=result,
+                    )
+                except Exception as exc:
+                    log_event(logger, "crm_enqueue_escalation_error", session_id=self._session_id, error=str(exc))
             if self._session_registry is not None:
                 try:
                     self._session_registry[self._session_id] = self.get_snapshot()
@@ -1620,6 +1754,8 @@ class WebCallSession:
                 self._audit_store.upsert_outcome(
                     session_id=self._session_id,
                     customer_id=str(self._facts.get("customer_id") or "") or None,
+                    campaign_id=str(self._facts.get("campaign_id") or "") or None,
+                    dpd_bucket=(self._get_strategy_decision().dpd_bucket if self._get_strategy_decision() else None),
                     disposition=disp,
                     ptp_date=self._wf_state.ptp_date,
                     callback_time=self._wf_state.callback_time,
@@ -1647,6 +1783,22 @@ class WebCallSession:
                 self._session_registry[self._session_id] = self.get_snapshot()
             except Exception:
                 pass
+        if self._crm_adapter:
+            try:
+                self._crm_adapter.enqueue_outcome(
+                    session_id=self._session_id,
+                    event_type="disposition_update",
+                    payload={
+                        "session_id": self._session_id,
+                        "customer_id": self._facts.get("customer_id"),
+                        "campaign_id": self._facts.get("campaign_id"),
+                        "disposition": disp,
+                        "ptp_date": self._wf_state.ptp_date,
+                        "callback_time": self._wf_state.callback_time,
+                    },
+                )
+            except Exception as exc:
+                log_event(logger, "crm_enqueue_disposition_error", session_id=self._session_id, error=str(exc))
         await self.send_event({"type": "supervisor_update", "disposition": disp})
 
     def _should_barge_in_from_vad(self) -> bool:
@@ -2883,6 +3035,7 @@ class WebCallSession:
         """Wrap the customer utterance with strict step instructions for the LLM."""
         amt = self._facts.get("overdue_amount")
         due = self._facts.get("due_date")
+        strategy = self._get_strategy_decision()
         base = [
             "You are a TuringEdge collections agent. Follow the collections workflow strictly.",
             "Ask ONLY ONE clear question.",
@@ -2894,6 +3047,11 @@ class WebCallSession:
             base.append(f"Known overdue amount: INR {amt}. Use it exactly if mentioned.")
         if due:
             base.append(f"Known due date: {due}. Use it exactly if mentioned.")
+        if strategy:
+            base.append(f"DPD strategy bucket: {strategy.dpd_bucket}.")
+            base.append(f"Strategy mode: {strategy.strategy_mode}.")
+            base.append(f"Tone profile: {strategy.tone_profile}.")
+            base.append(strategy.instruction)
 
         if step == "ask_payment_made":
             base.append("Question to ask: Have you made the payment?")
@@ -3542,6 +3700,7 @@ class WebCallSession:
         self._emotional_state = EmotionAnalyzer.analyze(text, self._emotional_state)
 
     def _build_context_system_message(self) -> str:
+        strategy = self._get_strategy_decision()
         name = self._facts.get("customer_name")
         amt = self._facts.get("overdue_amount")
         due = self._facts.get("due_date")
@@ -3581,6 +3740,11 @@ class WebCallSession:
                     f"Respond in {self._language_name(lang)} in native script unless the customer requests another language. "
                     "Never use transliterated Roman script."
                 )
+        if strategy:
+            parts.append(f"DPD bucket: {strategy.dpd_bucket}.")
+            parts.append(f"Strategy mode: {strategy.strategy_mode}.")
+            parts.append(f"Tone profile: {strategy.tone_profile}.")
+            parts.append(strategy.instruction)
         
         # Add conversation history context
         history_turns = len([m for m in self._chat_history if m.get("role") in ("user", "assistant")])
@@ -3640,6 +3804,14 @@ class WebCallSession:
         parts.append("Goal: progress the collection conversation logically, remember what the user just said, and avoid repeating questions already answered.")
         parts.append(self._build_policy_system_message())
         return "\n".join(parts)
+
+    def _get_strategy_decision(self):
+        if not self._strategy_engine:
+            return None
+        try:
+            return self._strategy_engine.classify(self._facts.get("dpd"))
+        except Exception:
+            return None
 
     async def _cancel_generation_locked(self) -> None:
         self._cancel_event.set()

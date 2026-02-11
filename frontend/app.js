@@ -1294,6 +1294,13 @@ async function startSession() {
       }
     } catch (err) {
       console.error("Microphone setup failed", err);
+      const isSecure = location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      if (!isSecure) {
+        alert("Microphone access requires HTTPS. Redirecting to secure version…");
+        location.replace("https:" + location.href.substring(location.protocol.length));
+        return;
+      }
+      alert("Microphone access denied or unavailable. Please allow microphone permission and try again.");
       await stopSession();
       setStatus("disconnected", "mic blocked");
       return;

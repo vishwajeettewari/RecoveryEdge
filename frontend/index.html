@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#071325" />
     <meta name="color-scheme" content="dark light" />
+    <script>
+      // Force HTTPS — required for getUserMedia (microphone access)
+      if (location.protocol === "http:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+        location.replace("https:" + location.href.substring(location.protocol.length));
+      }
+    </script>
     <title>Collections Intelligence Platform</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -14,7 +20,7 @@
       rel="stylesheet"
     />
 
-    <link rel="stylesheet" href="/static/styles.css?v=chat13" />
+    <link rel="stylesheet" href="/static/styles.css?v=__STATIC_VER__" />
     <link rel="preconnect" href="https://api.sarvam.ai" crossorigin />
   </head>
 
@@ -256,6 +262,6 @@
       </footer>
     </div>
 
-    <script src="/static/app.js?v=chat11" defer></script>
+    <script src="/static/app.js?v=__STATIC_VER__" defer></script>
   </body>
 </html>

@@ -3,9 +3,16 @@ import logging
 import threading
 from typing import AsyncGenerator
 
-import sounddevice as sd
+# Import sounddevice only when needed
+try:
+    import sounddevice as sd
+    SOUNDDEVICE_AVAILABLE = True
+except ImportError:
+    sd = None
+    SOUNDDEVICE_AVAILABLE = False
 
 from audio_utils import rms_energy
+
 SAMPLE_RATE = 16000
 CHANNELS = 1
 SAMPLE_WIDTH_BYTES = 2  # int16
@@ -20,6 +27,9 @@ _output_stream_lock = threading.Lock()
 
 
 def _ensure_output_stream():
+    if not SOUNDDEVICE_AVAILABLE:
+        raise RuntimeError("sounddevice not available in this environment")
+    
     global _output_stream
     if _output_stream is None:
         _output_stream = sd.RawOutputStream(
@@ -33,19 +43,29 @@ def _ensure_output_stream():
     return _output_stream
 
 
-def _write_audio(pcm_bytes: bytes) -> None:
+async def _write_audio(pcm_bytes: bytes) -> None:
+    if not SOUNDDEVICE_AVAILABLE:
+        raise RuntimeError("sounddevice not available in this environment")
+    
     stream = _ensure_output_stream()
     with _output_stream_lock:
         stream.write(pcm_bytes)
 
 
 async def play_audio(pcm_bytes: bytes) -> None:
+    if not SOUNDDEVICE_AVAILABLE:
+        # In web environments, audio is handled differently
+        return
+        
     if not pcm_bytes:
         return
     await asyncio.to_thread(_write_audio, pcm_bytes)
 
 
 async def mic_stream() -> AsyncGenerator[bytes, None]:
+    if not SOUNDDEVICE_AVAILABLE:
+        raise RuntimeError("sounddevice not available in this environment")
+        
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=50)
 

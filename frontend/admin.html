@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&family=Sora:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=chat13" />
+    <link rel="stylesheet" href="/static/styles.css?v=__STATIC_VER__" />
   </head>
 
   <body class="theme-dark admin-page">
@@ -24,7 +24,7 @@
         <div class="panel-head">
           <div>
             <div class="kicker">Operations Control</div>
-            <div class="panel-title">TuringEdge Supervisor Command</div>
+            <div class="panel-title">TuringEdge Supervisor Command <span id="buildInfoBadge" class="badge badge-soft">build: __BUILD_TOKEN__</span></div>
             <div class="panel-sub">Live sessions, KPIs, governance controls, and workflow oversight.</div>
           </div>
           <a class="badge badge-soft" href="/" target="_blank" rel="noreferrer">Open Call Console</a>
@@ -89,10 +89,212 @@
           </table>
         </div>
 
+        <div class="transcript transcript-final admin-table-wrap">
+          <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
+            <div><strong>Campaign Manager</strong></div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="campaignNameInput" class="demo-input" type="text" placeholder="Campaign name" />
+              <button id="createCampaignBtn" class="secondary-btn btn-sm" type="button">Create</button>
+            </div>
+          </div>
+          <table id="campaignsTable" class="admin-table" style="margin-top:10px;">
+            <thead>
+              <tr>
+                <th>Campaign</th>
+                <th>Status</th>
+                <th>Accounts</th>
+                <th>Completed</th>
+                <th>Retries</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="transcript transcript-final admin-table-wrap">
+          <div><strong>Compliance Feed</strong></div>
+          <table id="violationsTable" class="admin-table" style="margin-top:10px;">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Session</th>
+                <th>Rule</th>
+                <th>Severity</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="transcript transcript-final admin-table-wrap">
+          <div><strong>Session Timeline</strong> <span id="timelineSessionLabel">Select a session</span></div>
+          <div id="timelineBox" style="margin-top:10px;max-height:220px;overflow:auto;white-space:pre-wrap;"></div>
+        </div>
+
+        <div class="transcript transcript-final admin-table-wrap">
+          <div><strong>Outbound Queue</strong></div>
+          <div id="outboundBox" style="margin-top:10px;">Loading…</div>
+        </div>
+
+        <div class="transcript transcript-final admin-table-wrap">
+          <div><strong>Portfolio Wizard</strong></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+            <input id="portfolioFileInput" type="file" accept=".csv,.xlsx" class="demo-input" />
+            <button id="portfolioUploadBtn" class="secondary-btn btn-sm" type="button">Step 1: Upload</button>
+            <button id="portfolioValidateBtn" class="secondary-btn btn-sm" type="button">Step 3: Validate</button>
+            <button id="portfolioLaunchBtn" class="secondary-btn btn-sm" type="button">Step 5: Launch</button>
+          </div>
+          <div id="portfolioUploadInfo" style="margin-top:10px;white-space:pre-wrap;"></div>
+          <div id="portfolioMappingBox" style="margin-top:10px;"></div>
+          <div id="portfolioValidationBox" style="margin-top:10px;"></div>
+          <div id="portfolioPreviewBox" style="margin-top:10px;"></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+            <input id="exclusionFileInput" type="file" accept=".csv" class="demo-input" />
+            <button id="uploadExclusionBtn" class="secondary-btn btn-sm" type="button">Upload Exclusions CSV</button>
+            <input id="excludePredicateInput" class="demo-input" type="text" placeholder="exclude predicate e.g. dpd<1,amount_due<50" />
+          </div>
+        </div>
+
+        <div class="transcript transcript-final admin-table-wrap">
+          <div><strong>Workbench</strong></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+            <input id="workbenchCampaignFilter" class="demo-input" type="text" placeholder="campaign_id filter" />
+            <button id="workbenchRefreshBtn" class="secondary-btn btn-sm" type="button">Refresh Workbench</button>
+            <input id="bulkIdsInput" class="demo-input" type="text" placeholder="task ids comma separated" />
+            <select id="bulkActionSelect" class="demo-input">
+              <option value="assign">assign</option>
+              <option value="close">close</option>
+              <option value="escalate">escalate</option>
+            </select>
+            <input id="bulkPayloadInput" class="demo-input" type="text" placeholder='payload json e.g. {"owner":"sup1"}' />
+            <button id="bulkApplyBtn" class="secondary-btn btn-sm" type="button">Apply Bulk</button>
+          </div>
+          <div class="admin-table-wrap" style="margin-top:10px;">
+            <table id="tasksTable" class="admin-table">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Campaign</th>
+                  <th>Customer</th>
+                  <th>State</th>
+                  <th>DPD</th>
+                  <th>SLA</th>
+                  <th>Compliance</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="taskDetailBox" style="margin-top:10px;"></div>
+        </div>
+
+        <div class="transcript transcript-final admin-table-wrap">
+          <div><strong>Alerts Center</strong></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+            <select id="alertStatusFilter" class="demo-input">
+              <option value="">all status</option>
+              <option value="OPEN">OPEN</option>
+              <option value="ACKED">ACKED</option>
+              <option value="RESOLVED">RESOLVED</option>
+            </select>
+            <select id="alertTypeFilter" class="demo-input">
+              <option value="">all types</option>
+              <option value="PTP_MISS">PTP_MISS</option>
+              <option value="SLA_BREACH">SLA_BREACH</option>
+              <option value="COMPLIANCE_VIOLATION">COMPLIANCE_VIOLATION</option>
+              <option value="COMPLIANCE_BLOCK">COMPLIANCE_BLOCK</option>
+            </select>
+            <button id="evaluateAlertsBtn" class="secondary-btn btn-sm" type="button">Evaluate Rules</button>
+          </div>
+          <table id="alertsTable" class="admin-table" style="margin-top:10px;">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Type</th>
+                <th>Severity</th>
+                <th>Status</th>
+                <th>Message</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div id="alertRulesBox" style="margin-top:10px;"></div>
+        </div>
+
+        <div class="transcript transcript-final admin-table-wrap">
+          <div><strong>Reports</strong></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+            <input id="reportTimeInput" class="demo-input" type="time" value="09:00" />
+            <label><input id="reportEnabledInput" type="checkbox" checked /> Daily schedule enabled</label>
+            <button id="saveReportScheduleBtn" class="secondary-btn btn-sm" type="button">Save Schedule</button>
+            <button id="generateReportsBtn" class="secondary-btn btn-sm" type="button">Generate Now</button>
+          </div>
+          <table id="reportsTable" class="admin-table" style="margin-top:10px;">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Campaign</th>
+                <th>Created</th>
+                <th>Download</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="transcript transcript-final admin-table-wrap" id="integrationsSection">
+          <div><strong>Integrations & Reconciliation</strong></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+            <button id="refreshIntegrationsBtn" class="secondary-btn btn-sm" type="button">Refresh Integrations</button>
+            <button id="sendInboundSampleBtn" class="secondary-btn btn-sm" type="button">Send Inbound Sample</button>
+          </div>
+          <div style="margin-top:10px;"><strong>Inbound Events</strong></div>
+          <table id="syncEventsTable" class="admin-table" style="margin-top:8px;">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Direction</th>
+                <th>Entity</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div style="margin-top:10px;"><strong>Conflicts</strong></div>
+          <table id="conflictsTable" class="admin-table" style="margin-top:8px;">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Entity</th>
+                <th>Status</th>
+                <th>Resolution</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div style="margin-top:10px;"><strong>Dead Letters</strong></div>
+          <table id="deadLettersTable" class="admin-table" style="margin-top:8px;">
+            <thead>
+              <tr>
+                <th>Queue ID</th>
+                <th>Attempts</th>
+                <th>Updated</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
         <div class="transcript transcript-partial" id="adminStatus">Ready.</div>
       </div>
     </div>
 
-    <script src="/static/admin.js?v=chat10" defer></script>
+    <script src="/static/admin.js?v=__STATIC_VER__" defer></script>
   </body>
 </html>
