@@ -1,0 +1,4 @@
+{"customer_id": "CUST001", "phone": "9876543210", "amount_due": "1200", "dpd": "25", "language": "en"}
+{"customer_id": "CUST002", "phone": "+919876543211", "amount_due": "900", "dpd": "0", "language": "hi"}
+{"customer_id": "CUST003", "phone": "12345", "amount_due": "800", "dpd": "15", "language": "en"}
+{"customer_id": "CUST001", "phone": "9988776655", "amount_due": "1300", "dpd": "35", "language": "ta"}

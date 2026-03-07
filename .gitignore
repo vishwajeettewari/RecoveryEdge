@@ -19,5 +19,9 @@ data/demo_export.xlsx
 # IDE / tools
 .claude/
 
+# Frontend
+frontend-react/node_modules/
+frontend-react/dist/
+
 # Archives
 Archive.zip

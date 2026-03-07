@@ -126,6 +126,7 @@ class WorkbenchService:
         campaign_id: Optional[str] = None,
         state: Optional[str] = None,
         dpd_bucket: Optional[str] = None,
+        owner: Optional[str] = None,
         q: Optional[str] = None,
         sort: str = "updated_desc",
         page: int = 1,
@@ -141,6 +142,9 @@ class WorkbenchService:
             if state:
                 where.append("state = ?")
                 args.append(state)
+            if owner:
+                where.append("owner = ?")
+                args.append(owner)
             if q:
                 where.append("(customer_id LIKE ? OR COALESCE(customer_name,'') LIKE ?)")
                 like = f"%{q.strip()}%"
@@ -257,13 +261,15 @@ class WorkbenchService:
             if new_state not in TASK_STATES:
                 return {"ok": False, "error": "invalid_state"}
 
+            override_roles = {"ADMIN", "COLLECTIONS_MANAGER", "SUPERVISOR"}
+
             if int(current.get("compliance_block") or 0) == 1 and not compliance_override:
-                if role not in {"ADMIN", "SUPERVISOR"}:
+                if role not in override_roles:
                     return {"ok": False, "error": "compliance_blocked"}
                 if new_state not in {"ESCALATED", "CLOSED"}:
                     return {"ok": False, "error": "compliance_blocked_requires_override"}
 
-            if int(current.get("compliance_block") or 0) == 1 and compliance_override and role in {"ADMIN", "SUPERVISOR"}:
+            if int(current.get("compliance_block") or 0) == 1 and compliance_override and role in override_roles:
                 conn.execute("UPDATE tasks SET compliance_block = 0 WHERE id = ?", (task_id,))
 
             sla_due = self._compute_sla_due(new_state, now, callback_at if callback_at else current.get("callback_at"))
@@ -397,6 +403,59 @@ class WorkbenchService:
             conn.commit()
         finally:
             conn.close()
+
+    def apply_session_gate_status(self, *, session_snapshot: Dict[str, Any], actor: str = "system") -> Dict[str, int]:
+        """Propagate consent/identity gate failures from live session snapshot into tasks.
+
+        If consent or identity is explicitly False, mark task as compliance-blocked.
+        """
+        customer_id = str(session_snapshot.get("customer_id") or "").strip()
+        campaign_id = str(session_snapshot.get("campaign_id") or "").strip()
+        consent = session_snapshot.get("consent")
+        identity = session_snapshot.get("identity_confirmed")
+
+        badges: Dict[str, bool] = {}
+        should_block = False
+        if consent is False:
+            badges["CONSENT_OK"] = False
+            should_block = True
+        if identity is False:
+            badges["IDENTITY_OK"] = False
+            should_block = True
+        if not customer_id or not should_block:
+            return {"matched": 0, "updated": 0, "blocked": 0}
+
+        conn = self._connect()
+        try:
+            where = ["customer_id = ?", "state != 'CLOSED'"]
+            args: List[Any] = [customer_id]
+            if campaign_id:
+                where.append("campaign_id = ?")
+                args.append(campaign_id)
+            rows = conn.execute(
+                f"SELECT id, compliance_status_json, compliance_block FROM tasks WHERE {' AND '.join(where)}",
+                tuple(args),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        updated = 0
+        blocked = 0
+        for row in rows:
+            tid = str(row["id"])
+            prev_block = int(row["compliance_block"] or 0)
+            try:
+                current_status = json.loads(row["compliance_status_json"] or "{}")
+            except Exception:
+                current_status = {}
+            already_applied = prev_block == 1 and all(current_status.get(k) is v for k, v in badges.items())
+            if already_applied:
+                continue
+            self.set_compliance_block(task_id=tid, actor=actor, blocked=True, badges=badges, reason="missing_gate")
+            updated += 1
+            if prev_block != 1:
+                blocked += 1
+        return {"matched": len(rows), "updated": updated, "blocked": blocked}
 
     def _assign_owner(self, *, task_id: str, owner: str, actor: str) -> Dict[str, Any]:
         conn = self._connect()

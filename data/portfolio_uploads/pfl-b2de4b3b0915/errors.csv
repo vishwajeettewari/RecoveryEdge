@@ -1,0 +1,3 @@
+row_index,customer_id,phone,dpd,amount_due,errors
+1,CUST001,9876543210,25,1200.0,duplicate_customer_id_dropped
+3,CUST003,12345,15,800.0,invalid_phone

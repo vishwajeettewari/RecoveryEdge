@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -31,6 +32,41 @@ _NUMBER_WORDS = {
     "nineteen": 19,
     "twenty": 20,
     "thirty": 30,
+    "एक": 1,
+    "दो": 2,
+    "तीन": 3,
+    "चार": 4,
+    "पांच": 5,
+    "पाँच": 5,
+    "छह": 6,
+    "सात": 7,
+    "आठ": 8,
+    "नौ": 9,
+    "दस": 10,
+    "ग्यारह": 11,
+    "बारह": 12,
+    "तेरह": 13,
+    "चौदह": 14,
+    "पंद्रह": 15,
+    "पन्द्रह": 15,
+    "सोलह": 16,
+    "सत्रह": 17,
+    "अठारह": 18,
+    "उन्नीस": 19,
+    "बीस": 20,
+    "तीस": 30,
+    "इक": 1,
+    "ਇਕ": 1,
+    "ਇੱਕ": 1,
+    "ਦੋ": 2,
+    "ਤਿੰਨ": 3,
+    "ਚਾਰ": 4,
+    "ਪੰਜ": 5,
+    "ਛੇ": 6,
+    "ਸੱਤ": 7,
+    "ਅੱਠ": 8,
+    "ਨੌ": 9,
+    "ਦਸ": 10,
 }
 
 _WEEKDAYS = {
@@ -63,9 +99,18 @@ def _ensure_now(tz: str, now: Optional[datetime]) -> datetime:
 
 
 def _normalize_text(text: str) -> str:
-    t = (text or "").lower()
-    t = re.sub(r"[^a-z0-9\u0900-\u097f\s:/-]", " ", t)
-    return " ".join(t.split())
+    t = unicodedata.normalize("NFKC", (text or "")).casefold()
+    out = []
+    for ch in t:
+        if ch.isspace():
+            out.append(" ")
+            continue
+        cat = unicodedata.category(ch)
+        if cat[0] in {"L", "N"} or cat in {"Mn", "Mc", "Me"} or ch in {":", "/", "-"}:
+            out.append(ch)
+        else:
+            out.append(" ")
+    return " ".join("".join(out).split())
 
 
 def _word_to_int(raw: str) -> Optional[int]:
@@ -77,7 +122,10 @@ def _word_to_int(raw: str) -> Optional[int]:
         try:
             return int(token)
         except ValueError:
-            return None
+            try:
+                return int("".join(str(unicodedata.digit(ch)) for ch in token))
+            except Exception:
+                return None
     if token in _NUMBER_WORDS:
         return _NUMBER_WORDS[token]
     parts = token.split()
@@ -100,11 +148,11 @@ def parse_date_from_text(text: str, *, tz: str, now: Optional[datetime] = None) 
 
     if "day after tomorrow" in t:
         return (today + timedelta(days=2)).isoformat()
-    if "today" in tokens or "aaj" in tokens or "आज" in tokens:
+    if "today" in tokens or "aaj" in tokens or "आज" in tokens or "ਅੱਜ" in tokens:
         return today.isoformat()
-    if "tomorrow" in tokens or "kal" in tokens or "कल" in tokens:
+    if "tomorrow" in tokens or "kal" in tokens or "कल" in tokens or "ਕੱਲ" in tokens:
         return (today + timedelta(days=1)).isoformat()
-    if "parso" in tokens or "parson" in tokens or "परसों" in tokens:
+    if "parso" in tokens or "parson" in tokens or "परसों" in tokens or "ਪਰਸੋਂ" in tokens:
         return (today + timedelta(days=2)).isoformat()
 
     # Relative offsets like "in 10 days", "after ten days", "10 दिन में".
@@ -113,6 +161,8 @@ def parse_date_from_text(text: str, *, tz: str, now: Optional[datetime] = None) 
         r"\b([a-z0-9-]+(?:\s+[a-z0-9-]+)?)\s+day(?:s)?\s+(?:later|from now)\b",
         r"\b(?:in|after)\s+(\d{1,3})\s+din(?:o)?\b",
         r"\b(\d{1,3})\s+din(?:o)?\s+(?:mein|me|later)?\b",
+        r"\b([^\s]+)\s+दिन(?:ों)?\s*(?:में|मे|बाद)?\b",
+        r"\b([^\s]+)\s+ਦਿਨ(?:ਾਂ)?\s*(?:ਵਿੱਚ|ਚ|ਬਾਅਦ)?\b",
     )
     for pattern in relative_patterns:
         m = re.search(pattern, t)

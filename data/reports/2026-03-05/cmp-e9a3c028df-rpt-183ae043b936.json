@@ -1,0 +1,35 @@
+{
+  "report_date": "2026-03-05",
+  "campaign_id": "cmp-e9a3c028df",
+  "totals": {
+    "attempts": 0,
+    "connected": 0,
+    "connected_rate": 0.0,
+    "ptp_count": 1,
+    "ptp_conversion": 0.0,
+    "ptp_amount_sum": 1300.0,
+    "expected_recovery_amount": 1300.0,
+    "escalations": 0,
+    "compliance_violations": 0
+  },
+  "bucket_heatmap": {
+    "1-30": 0,
+    "31-60": 1,
+    "61-90": 0,
+    "90+": 0
+  },
+  "queue_snapshot": {
+    "NEW": 0,
+    "IN_PROGRESS": 0,
+    "PTP": 1,
+    "CALLBACK": 0,
+    "ESCALATED": 0,
+    "CLOSED": 0
+  },
+  "top_5_escalation_reasons": [
+    {
+      "reason": "unknown",
+      "count": 1
+    }
+  ]
+}

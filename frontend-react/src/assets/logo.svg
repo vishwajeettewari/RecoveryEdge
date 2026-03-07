@@ -1,0 +1,7 @@
+<svg width="220" height="40" viewBox="0 0 220 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="1" y="1" width="38" height="38" rx="10" fill="#0D1B2A"/>
+  <path d="M11 12H29V16H23V28H17V16H11V12Z" fill="#66C2FF"/>
+  <path d="M29 18V28H25V22H21V18H29Z" fill="#18A999"/>
+  <text x="52" y="18" fill="#0D1B2A" font-family="Manrope, Inter, sans-serif" font-size="13" font-weight="700" letter-spacing="0.12em">NBFC</text>
+  <text x="52" y="33" fill="#1F3C88" font-family="Manrope, Inter, sans-serif" font-size="18" font-weight="800">Recovery OS</text>
+</svg>

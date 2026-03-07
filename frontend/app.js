@@ -1213,9 +1213,9 @@ function tryHandleJsonFromArrayBuffer(arrayBuffer) {
   return false;
 }
 
-function getWsUrl() {
+function getWsUrl(token) {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${protocol}://${window.location.host}/ws/voice`;
+  return `${protocol}://${window.location.host}/ws/voice?token=${encodeURIComponent(token || "")}`;
 }
 
 function wsSend(obj) {
@@ -1264,6 +1264,73 @@ async function loadCustomers() {
   }
 }
 
+function parseBootstrapContextFromQuery() {
+  let params;
+  try {
+    params = new URLSearchParams(window.location.search || "");
+  } catch (e) {
+    return { context: null, autostart: false };
+  }
+  const customerId = (params.get("customer_id") || "").trim();
+  const phone = (params.get("phone") || "").trim();
+  const amountDue = (params.get("amount_due") || "").trim();
+  const dpd = (params.get("dpd") || "").trim();
+  const customerName = (params.get("customer_name") || "").trim();
+  const campaignId = (params.get("campaign_id") || "").trim();
+  const dueDate = (params.get("due_date") || "").trim();
+  const language = (params.get("language") || "").trim();
+  const autostart = ["1", "true", "yes"].includes((params.get("autostart") || "").toLowerCase());
+
+  if (!customerId) {
+    return { context: null, autostart };
+  }
+
+  const context = {
+    customer_id: customerId,
+    customer_name: customerName || undefined,
+    phone: phone || undefined,
+    overdue_amount: amountDue || undefined,
+    dpd: dpd ? Number(dpd) : undefined,
+    campaign_id: campaignId || undefined,
+    due_date: dueDate || undefined,
+    language_preference: language || undefined,
+  };
+  return { context, autostart };
+}
+
+let bootstrapApplied = false;
+function applyBootstrapContextFromQuery() {
+  if (bootstrapApplied) return;
+  bootstrapApplied = true;
+  const parsed = parseBootstrapContextFromQuery();
+  if (!parsed.context) return;
+
+  const cid = (parsed.context.customer_id || "").toString();
+  const fromList = cid ? customersIndex[cid] || {} : {};
+  currentContext = { ...fromList, ...parsed.context };
+
+  if (customerSelect && cid) {
+    let existing = Array.from(customerSelect.options || []).find((opt) => opt.value === cid);
+    if (!existing) {
+      existing = document.createElement("option");
+      existing.value = cid;
+      const labelName = currentContext.customer_name || "Selected Customer";
+      const labelAmt = currentContext.overdue_amount ? ` (₹${currentContext.overdue_amount})` : "";
+      existing.textContent = `${cid} — ${labelName}${labelAmt}`;
+      customerSelect.appendChild(existing);
+    }
+    customerSelect.value = cid;
+  }
+
+  renderCustomerContext();
+  updateStartButtonState();
+  if (parsed.autostart) {
+    setTimeout(() => {
+      if (!running) startSession();
+    }, 350);
+  }
+}
+
 async function startSession() {
   if (running) return;
   if (!toggleBtn || !muteBtn) return;
@@ -1283,7 +1350,26 @@ async function startSession() {
   enableDispositionButtons(true);
   setStatus("connecting", "connecting");
 
-  ws = new WebSocket(getWsUrl());
+  let wsToken = "";
+  try {
+    const tokenRes = await fetch("/api/auth/ws-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({}),
+    });
+    const tokenData = await tokenRes.json();
+    wsToken = (tokenData && tokenData.ws_token) || "";
+  } catch (err) {
+    console.error("Unable to fetch ws token", err);
+  }
+  if (!wsToken) {
+    alert("Unable to start voice session. Authentication token could not be issued.");
+    await stopSession();
+    return;
+  }
+
+  ws = new WebSocket(getWsUrl(wsToken));
   ws.binaryType = "arraybuffer";
 
   ws.onopen = async () => {
@@ -1455,7 +1541,10 @@ if (hudLanguage && languageValue) hudLanguage.textContent = languageValue.textCo
 if (waveCanvas) startWaveformLoop("idle");
 
 setStatus("disconnected", "disconnected");
-loadCustomers();
+loadCustomers().finally(() => {
+  applyBootstrapContextFromQuery();
+  updateStartButtonState();
+});
 
 // Demo controls wiring
 if (reloadCustomersBtn) {
@@ -1476,6 +1565,7 @@ if (reloadCustomersBtn) {
       }
     });
   }
+applyBootstrapContextFromQuery();
 updateStartButtonState();
 
 // Disposition button handlers

@@ -1,0 +1,791 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Enterprise Collections Redesign</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+    <style>
+      :root {
+        --bg: #f3f5fa;
+        --surface: #ffffff;
+        --surface-soft: #f8faff;
+        --surface-strong: #0f172a;
+        --text-primary: #111827;
+        --text-secondary: #5b6474;
+        --text-on-dark: #eef3ff;
+        --brand: #0f4ad8;
+        --brand-soft: #deebff;
+        --accent: #0ea5a0;
+        --accent-soft: #dff8f7;
+        --warn: #e67e22;
+        --warn-soft: #fff2e2;
+        --danger: #dc2626;
+        --border: #e6eaf2;
+        --ring: 0 0 0 3px rgba(15, 74, 216, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(900px 500px at 20% -20%, #e5ecff 0%, transparent 70%),
+          radial-gradient(900px 500px at 95% -10%, #ddfbf8 0%, transparent 62%),
+          var(--bg);
+        color: var(--text-primary);
+      }
+
+      .page {
+        max-width: 1640px;
+        margin: 28px auto 60px;
+        padding: 0 24px;
+      }
+
+      .label {
+        margin: 16px 0 10px;
+        font-family: "Sora", sans-serif;
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #6b7384;
+      }
+
+      .board {
+        border-radius: 28px;
+        border: 1px solid var(--border);
+        overflow: hidden;
+        background: var(--surface);
+        box-shadow: 0 24px 55px rgba(15, 28, 63, 0.08);
+      }
+
+      #desktop-board {
+        width: 1440px;
+        min-height: 1024px;
+        transform-origin: top left;
+      }
+
+      .topbar {
+        height: 84px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 36px;
+        background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .brand-mark {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: linear-gradient(145deg, #1353ec 0%, #0b2c78 100%);
+        color: white;
+        display: grid;
+        place-items: center;
+        font-weight: 800;
+        font-size: 16px;
+      }
+
+      .brand-text {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.15;
+      }
+
+      .brand-text strong {
+        font-family: "Sora", sans-serif;
+        font-size: 15px;
+      }
+
+      .brand-text span {
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+
+      .menu {
+        display: flex;
+        gap: 12px;
+      }
+
+      .chip {
+        font-size: 13px;
+        font-weight: 600;
+        color: #4a5364;
+        padding: 8px 14px;
+        border-radius: 999px;
+        border: 1px solid transparent;
+      }
+
+      .chip.active {
+        color: #133892;
+        background: #ecf2ff;
+        border-color: #d7e2ff;
+      }
+
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .ghost-btn,
+      .solid-btn {
+        border-radius: 12px;
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 700;
+        border: 1px solid transparent;
+      }
+
+      .ghost-btn {
+        color: #1e2a3b;
+        border-color: #dbe3f2;
+        background: #fff;
+      }
+
+      .solid-btn {
+        color: #fff;
+        background: linear-gradient(135deg, #1a56f0 0%, #0d3999 100%);
+      }
+
+      .desktop-main {
+        padding: 28px 34px 32px;
+      }
+
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        align-items: flex-start;
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-family: "Sora", sans-serif;
+        font-size: 34px;
+        letter-spacing: -0.02em;
+      }
+
+      .hero p {
+        margin: 8px 0 0;
+        color: var(--text-secondary);
+        font-size: 15px;
+      }
+
+      .status-strip {
+        display: flex;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .pill {
+        padding: 6px 11px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .pill.ok {
+        background: #e6faf4;
+        color: #0f766e;
+      }
+
+      .pill.warn {
+        background: #fff3e5;
+        color: #9a3412;
+      }
+
+      .hero-aside {
+        width: 330px;
+        border: 1px solid #d9e5ff;
+        background: linear-gradient(180deg, #f7fbff 0%, #ebf3ff 100%);
+        border-radius: 16px;
+        padding: 15px;
+      }
+
+      .hero-aside .kicker {
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #466ec7;
+        font-weight: 800;
+      }
+
+      .hero-aside h3 {
+        margin: 8px 0 6px;
+        font-size: 18px;
+        font-family: "Sora", sans-serif;
+      }
+
+      .hero-aside p {
+        margin: 0;
+        font-size: 13px;
+        color: #4f6079;
+        line-height: 1.5;
+      }
+
+      .kpi-grid {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .kpi {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 14px;
+        background: var(--surface);
+      }
+
+      .kpi .name {
+        color: #657084;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .kpi .value {
+        margin-top: 7px;
+        font-family: "Sora", sans-serif;
+        font-size: 26px;
+        letter-spacing: -0.02em;
+      }
+
+      .kpi .trend {
+        margin-top: 5px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .kpi .trend.up {
+        color: #0f766e;
+      }
+
+      .kpi .trend.down {
+        color: #b45309;
+      }
+
+      .content-grid {
+        margin-top: 15px;
+        display: grid;
+        grid-template-columns: 340px 1fr 310px;
+        gap: 12px;
+      }
+
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--surface);
+        padding: 14px;
+      }
+
+      .panel-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+
+      .panel-title strong {
+        font-size: 14px;
+      }
+
+      .panel-title span {
+        font-size: 12px;
+        color: #6e7889;
+      }
+
+      .list {
+        display: grid;
+        gap: 9px;
+      }
+
+      .list-item {
+        border: 1px solid #ebeff7;
+        background: #fbfcff;
+        border-radius: 12px;
+        padding: 10px;
+      }
+
+      .list-item b {
+        font-size: 13px;
+      }
+
+      .list-item p {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: #687387;
+      }
+
+      .pipeline {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .stage {
+        background: #f8fbff;
+        border: 1px solid #e4ecfa;
+        border-radius: 12px;
+        padding: 10px;
+      }
+
+      .stage .stage-head {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        margin-bottom: 8px;
+      }
+
+      .stage .stage-head b {
+        color: #18346c;
+      }
+
+      .ticket {
+        background: #fff;
+        border: 1px solid #e4eaf6;
+        border-radius: 9px;
+        padding: 8px;
+        margin-bottom: 8px;
+      }
+
+      .ticket:last-child {
+        margin-bottom: 0;
+      }
+
+      .ticket h4 {
+        margin: 0;
+        font-size: 12px;
+      }
+
+      .ticket p {
+        margin: 4px 0 0;
+        font-size: 11px;
+        color: #6a7486;
+      }
+
+      .assist-card {
+        border-radius: 12px;
+        background: linear-gradient(180deg, #0c1c44 0%, #11214e 100%);
+        color: var(--text-on-dark);
+        padding: 13px;
+      }
+
+      .assist-card h4 {
+        margin: 0;
+        font-size: 14px;
+      }
+
+      .assist-card p {
+        margin: 7px 0 12px;
+        font-size: 12px;
+        color: #c8d4ef;
+        line-height: 1.5;
+      }
+
+      .assist-row {
+        display: flex;
+        justify-content: space-between;
+        border-top: 1px solid rgba(228, 236, 255, 0.14);
+        padding-top: 8px;
+        margin-top: 8px;
+        font-size: 12px;
+      }
+
+      .footer-note {
+        margin-top: 10px;
+        border: 1px dashed #d6deec;
+        border-radius: 12px;
+        padding: 10px;
+        color: #5f697b;
+        font-size: 12px;
+        background: #fdfefe;
+      }
+
+      #mobile-board {
+        width: 390px;
+        min-height: 844px;
+        border-radius: 30px;
+        overflow: hidden;
+        background: #f4f7fe;
+      }
+
+      .mobile-header {
+        padding: 18px 16px 10px;
+        background: linear-gradient(180deg, #0f3bb0 0%, #1b56e8 100%);
+        color: #fff;
+      }
+
+      .mobile-header-top {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        opacity: 0.9;
+      }
+
+      .mobile-header h2 {
+        margin: 11px 0 4px;
+        font-size: 24px;
+        font-family: "Sora", sans-serif;
+        letter-spacing: -0.02em;
+      }
+
+      .mobile-header p {
+        margin: 0;
+        font-size: 12px;
+        color: rgba(239, 246, 255, 0.9);
+      }
+
+      .mobile-content {
+        padding: 12px;
+      }
+
+      .mobile-kpis {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .mobile-card {
+        background: #fff;
+        border: 1px solid #e4eaf8;
+        border-radius: 14px;
+        padding: 12px;
+      }
+
+      .mobile-card .t {
+        font-size: 11px;
+        color: #69778f;
+        font-weight: 700;
+      }
+
+      .mobile-card .v {
+        font-size: 21px;
+        font-family: "Sora", sans-serif;
+        margin-top: 6px;
+      }
+
+      .mobile-card .s {
+        margin-top: 5px;
+        font-size: 11px;
+        color: #0f766e;
+        font-weight: 700;
+      }
+
+      .next-action {
+        margin-top: 10px;
+        border-radius: 16px;
+        padding: 13px;
+        background: linear-gradient(180deg, #ffffff 0%, #f3f7ff 100%);
+        border: 1px solid #dce7ff;
+      }
+
+      .next-action .title {
+        font-size: 11px;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        color: #4a65a7;
+        font-weight: 800;
+      }
+
+      .next-action h3 {
+        margin: 7px 0 6px;
+        font-size: 16px;
+      }
+
+      .next-action p {
+        margin: 0;
+        font-size: 12px;
+        color: #5c6780;
+        line-height: 1.45;
+      }
+
+      .timeline {
+        margin-top: 10px;
+        background: #fff;
+        border: 1px solid #e5ebf7;
+        border-radius: 14px;
+        padding: 12px;
+      }
+
+      .timeline h4 {
+        margin: 0 0 10px;
+        font-size: 13px;
+      }
+
+      .step {
+        border-left: 2px solid #d9e4fb;
+        margin-left: 6px;
+        padding-left: 10px;
+        margin-bottom: 10px;
+      }
+
+      .step:last-child {
+        margin-bottom: 0;
+      }
+
+      .step b {
+        font-size: 12px;
+      }
+
+      .step p {
+        margin: 3px 0 0;
+        font-size: 11px;
+        color: #697489;
+      }
+
+      .mobile-nav {
+        margin-top: 12px;
+        display: flex;
+        justify-content: space-around;
+        border: 1px solid #dce4f6;
+        border-radius: 14px;
+        background: #fff;
+        padding: 10px;
+        font-size: 11px;
+        font-weight: 700;
+        color: #657389;
+      }
+
+      .mobile-nav .active {
+        color: #1342b3;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="label">Desktop Artboard</div>
+      <section class="board" id="desktop-board">
+        <header class="topbar">
+          <div class="brand">
+            <div class="brand-mark">TE</div>
+            <div class="brand-text">
+              <strong>TuringEdge RecoverOS</strong>
+              <span>Enterprise Collections Command Center</span>
+            </div>
+          </div>
+          <nav class="menu">
+            <div class="chip active">Overview</div>
+            <div class="chip">Portfolio</div>
+            <div class="chip">Campaigns</div>
+            <div class="chip">Approvals</div>
+            <div class="chip">Compliance</div>
+            <div class="chip">Reports</div>
+          </nav>
+          <div class="top-actions">
+            <button class="ghost-btn">Scenario Studio</button>
+            <button class="solid-btn">Launch High-Risk Queue</button>
+          </div>
+        </header>
+
+        <div class="desktop-main">
+          <div class="hero">
+            <div>
+              <h1>Collections Control Room</h1>
+              <p>Unified portfolio intelligence, agent performance, and risk triage with AI-guided actions.</p>
+              <div class="status-strip">
+                <div class="pill ok">SLA Coverage 94.8%</div>
+                <div class="pill warn">8 Escalations Need Review</div>
+              </div>
+            </div>
+            <aside class="hero-aside">
+              <div class="kicker">Executive Insight</div>
+              <h3>INR 3.2 Cr at-risk this week</h3>
+              <p>Expected recovery lift of 11.6% if Priority B accounts are shifted to assisted negotiation journey.</p>
+            </aside>
+          </div>
+
+          <div class="kpi-grid">
+            <article class="kpi">
+              <div class="name">Today’s Collected</div>
+              <div class="value">₹1.82 Cr</div>
+              <div class="trend up">+12.4% vs yesterday</div>
+            </article>
+            <article class="kpi">
+              <div class="name">Promise-to-Pay</div>
+              <div class="value">71.3%</div>
+              <div class="trend up">+3.1% QoQ trend</div>
+            </article>
+            <article class="kpi">
+              <div class="name">High Risk Accounts</div>
+              <div class="value">482</div>
+              <div class="trend down">-6.2% in 7 days</div>
+            </article>
+            <article class="kpi">
+              <div class="name">Agent Productivity</div>
+              <div class="value">89.6</div>
+              <div class="trend up">+5 points this month</div>
+            </article>
+          </div>
+
+          <div class="content-grid">
+            <section class="panel">
+              <div class="panel-title">
+                <strong>Queue Health</strong>
+                <span>Live</span>
+              </div>
+              <div class="list">
+                <article class="list-item">
+                  <b>North Region DPD 30-60</b>
+                  <p>125 accounts · 17 marked critical · 4 legal escalations pending</p>
+                </article>
+                <article class="list-item">
+                  <b>Digital Self-Cure Funnel</b>
+                  <p>Conversion 21.8% · Drop-offs concentrated at KYC reconfirmation step</p>
+                </article>
+                <article class="list-item">
+                  <b>Broken Promise Followups</b>
+                  <p>73 due today · 81% are eligible for smart settlement recommendation</p>
+                </article>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-title">
+                <strong>Collection Pipeline</strong>
+                <span>Last 24h activity</span>
+              </div>
+              <div class="pipeline">
+                <div class="stage">
+                  <div class="stage-head"><b>Assigned</b><span>196</span></div>
+                  <div class="ticket">
+                    <h4>Aarya Finserve</h4>
+                    <p>₹2.4L · DPD 35 · Auto-dial in queue</p>
+                  </div>
+                  <div class="ticket">
+                    <h4>Urban Wheels</h4>
+                    <p>₹98k · DPD 44 · Multi-contact strategy</p>
+                  </div>
+                </div>
+                <div class="stage">
+                  <div class="stage-head"><b>Engaged</b><span>124</span></div>
+                  <div class="ticket">
+                    <h4>Ritu Home Loans</h4>
+                    <p>Call connected · Sent WhatsApp payment link</p>
+                  </div>
+                  <div class="ticket">
+                    <h4>Kuber Mobility</h4>
+                    <p>Negotiation phase · Needs manager approval</p>
+                  </div>
+                </div>
+                <div class="stage">
+                  <div class="stage-head"><b>Commitment</b><span>79</span></div>
+                  <div class="ticket">
+                    <h4>Vardhan Retail</h4>
+                    <p>PTP for Friday · Risk score dropped to moderate</p>
+                  </div>
+                  <div class="ticket">
+                    <h4>Shree Infra</h4>
+                    <p>EMI split approved · Follow-up in 48 hours</p>
+                  </div>
+                </div>
+                <div class="stage">
+                  <div class="stage-head"><b>Recovered</b><span>53</span></div>
+                  <div class="ticket">
+                    <h4>Spectrum Foods</h4>
+                    <p>₹3.9L settled · Receipt and CRM sync complete</p>
+                  </div>
+                  <div class="ticket">
+                    <h4>Metro Cabs</h4>
+                    <p>₹62k paid · Case auto-closed with audit log</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <aside class="panel">
+              <div class="panel-title">
+                <strong>AI Action Brief</strong>
+                <span>Revised 2m ago</span>
+              </div>
+              <div class="assist-card">
+                <h4>Focus Segment: Delayed Salary Accounts</h4>
+                <p>
+                  Recommend empathetic script + staggered repayment card. Predicted uplift: 14.2% with low
+                  compliance risk.
+                </p>
+                <div class="assist-row"><span>Confidence</span><b>92%</b></div>
+                <div class="assist-row"><span>Projected Recovery</span><b>₹48.6L</b></div>
+                <div class="assist-row"><span>Best Channel</span><b>Voice + WhatsApp</b></div>
+              </div>
+              <div class="footer-note">
+                3 policy exceptions pending approval. Compliance tags and transcript evidence are pre-attached.
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <div class="label" style="margin-top: 24px">Mobile Artboard</div>
+      <section class="board" id="mobile-board">
+        <div class="mobile-header">
+          <div class="mobile-header-top">
+            <span>Tue 09:40</span>
+            <span>5G · 92%</span>
+          </div>
+          <h2>Recovery Cockpit</h2>
+          <p>Supervisor snapshot for live field teams</p>
+        </div>
+        <div class="mobile-content">
+          <div class="mobile-kpis">
+            <article class="mobile-card">
+              <div class="t">Collected</div>
+              <div class="v">₹42.5L</div>
+              <div class="s">+8.4%</div>
+            </article>
+            <article class="mobile-card">
+              <div class="t">At Risk</div>
+              <div class="v">126</div>
+              <div class="s" style="color: #9a3412">22 urgent</div>
+            </article>
+          </div>
+
+          <section class="next-action">
+            <div class="title">Next Best Action</div>
+            <h3>Prioritize salary-delay cluster</h3>
+            <p>Trigger assisted settlement script for 18 accounts before 2:30 PM to maximize same-day closure.</p>
+          </section>
+
+          <section class="timeline">
+            <h4>Operational Timeline</h4>
+            <div class="step">
+              <b>11:00 AM · Manager Review</b>
+              <p>4 high-value renegotiations waiting for approval.</p>
+            </div>
+            <div class="step">
+              <b>01:15 PM · Agent Pulse Check</b>
+              <p>2 teams showing high callback latency in South zone.</p>
+            </div>
+            <div class="step">
+              <b>03:30 PM · Compliance Sweep</b>
+              <p>Auto-audit transcripts and flag script deviations.</p>
+            </div>
+          </section>
+
+          <nav class="mobile-nav">
+            <span class="active">Home</span>
+            <span>Queues</span>
+            <span>Actions</span>
+            <span>Alerts</span>
+          </nav>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

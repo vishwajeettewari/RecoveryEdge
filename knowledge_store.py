@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import unicodedata
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
@@ -143,8 +144,23 @@ class SQLiteFTSKnowledgeStore:
 
     @staticmethod
     def _fts_query(q: str) -> str:
-        # Very small sanitizer: drop punctuation and join tokens with AND.
-        tokens = re.findall(r"[A-Za-z0-9]+", q)
+        # Keep native-script letters and digits so Indic policy documents remain retrievable.
+        tokens: List[str] = []
+        current: List[str] = []
+        for ch in unicodedata.normalize("NFKC", q or ""):
+            cat = unicodedata.category(ch)
+            if cat[0] in {"L", "N"} or cat in {"Mn", "Mc", "Me"}:
+                current.append(ch)
+                continue
+            if current:
+                token = "".join(current).strip("_")
+                if token:
+                    tokens.append(token)
+                current = []
+        if current:
+            token = "".join(current).strip("_")
+            if token:
+                tokens.append(token)
         if not tokens:
             return q
         return " AND ".join(tokens[:12])
@@ -162,4 +178,3 @@ class SQLiteFTSKnowledgeStore:
                 snippet = snippet[:380].rstrip() + "..."
             lines.append(f"- [{c.doc_id}:{c.chunk_id}] {c.title}: {snippet}")
         return "\n".join(lines).strip()
-

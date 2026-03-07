@@ -28,6 +28,127 @@ def _norm(s: str) -> str:
     return " ".join("".join(out).split())
 
 
+def _is_awareness_denial_text(t_norm: str) -> bool:
+    if not t_norm:
+        return False
+    phrase_markers = (
+        "wasn t aware",
+        "wasnt aware",
+        "not aware",
+        "didn t know",
+        "didnt know",
+        "did not know",
+        "no idea",
+        "pata nahi",
+        "pata nahin",
+        "maloom nahi",
+        "malum nahi",
+        "aware nahi",
+        "jaankari nahi",
+    )
+    if any(p in t_norm for p in phrase_markers):
+        return True
+    if re.search(r"\b(?:not|wasn t|was not|didn t|did not|no)\b(?:\s+\w+){0,3}\s+\b(?:aware|know)\b", t_norm):
+        return True
+    return False
+
+
+def _has_payment_commitment_text(t_norm: str) -> bool:
+    if not t_norm:
+        return False
+    markers = (
+        "pay",
+        "payment",
+        "paid",
+        "payment date",
+        "kar dunga",
+        "kar dungi",
+        "kar denge",
+        "kar paunga",
+        "kar paungi",
+        "कर दूंगा",
+        "कर दूँगा",
+        "कर दूंगी",
+        "कर दूँगी",
+        "कर देंगे",
+        "कर पाएंगे",
+        "कर पाएँगे",
+        "कर पाऊंगा",
+        "कर पाऊँगा",
+        "भुगतान",
+        "पेमेंट",
+        "ਪੇਮੈਂਟ",
+        "ਭੁਗਤਾਨ",
+        "ਕਰ ਦੇਵਾਂਗੇ",
+        "ਕਰ ਦਿਆਂਗੇ",
+    )
+    return any(marker in t_norm for marker in markers)
+
+
+def _has_callback_intent_text(t_norm: str) -> bool:
+    if not t_norm:
+        return False
+    markers = (
+        "callback",
+        "call back",
+        "call me",
+        "call",
+        "phone",
+        "ring",
+        "later",
+        "kariye",
+        "karna",
+        "कॉलबैक",
+        "कॉल बैक",
+        "कॉल कर",
+        "कॉल",
+        "ਫੋਨ",
+        "ਕਾਲ",
+    )
+    return any(marker in t_norm for marker in markers)
+
+
+def _is_name_reconfirmation_text(t_norm: str) -> bool:
+    if not t_norm:
+        return False
+    phrases = (
+        "did you hear my name",
+        "did you get my name",
+        "heard my name",
+        "what is my name",
+        "say my name",
+        "aapne mera naam suna",
+        "mera naam suna",
+        "mera naam kya",
+        "mera naam dohra",
+        "आपने मेरा नाम सुना",
+        "मेरा नाम सुना",
+        "मेरा नाम क्या",
+        "मेरा नाम दोहरा",
+        "ਮੇਰਾ ਨਾਮ ਸੁਣਿਆ",
+        "ਮੇਰਾ ਨਾਂ ਸੁਣਿਆ",
+        "ਨਾਂ ਸੁਣਿਆ",
+        "ਨਾਮ ਸੁਣਿਆ",
+        "ਮੇਰਾ ਨਾਮ ਕੀ",
+        "ਮੇਰਾ ਨਾਂ ਕੀ",
+    )
+    return any(phrase in t_norm for phrase in phrases)
+
+
+def _is_yes_no_challenge_text(t_norm: str) -> bool:
+    if not t_norm:
+        return False
+    phrases = (
+        "yes or no",
+        "haan ya nahi",
+        "han ya nahi",
+        "हाँ या नहीं",
+        "हां या नहीं",
+        "ਹਾਂ ਜਾਂ ਨਹੀਂ",
+    )
+    return any(phrase in t_norm for phrase in phrases)
+
+
 def _is_yes(text: str) -> bool:
     t = _norm(text)
     tokens = [tok for tok in t.split() if tok]
@@ -66,7 +187,12 @@ def _is_yes(text: str) -> bool:
         "হ্যাঁ",
         "হ্যা",
         "હા",
+        "જી",
+        "હાજી",
         "ਹਾਂ",
+        "ਜੀ",
+        "ਹਾਂਜੀ",
+        "ਬਿਲਕੁਲ",
         "ହଁ",
     }
     no_tokens = {
@@ -94,6 +220,7 @@ def _is_yes(text: str) -> bool:
         "નથી",
         "ના",
         "ਨਹੀਂ",
+        "ਨਹੀ",
         "ନା",
     }
     if any(tok in no_tokens for tok in tokens):
@@ -137,7 +264,12 @@ def _is_no(text: str) -> bool:
         "হ্যাঁ",
         "হ্যা",
         "હા",
+        "જી",
+        "હાજી",
         "ਹਾਂ",
+        "ਜੀ",
+        "ਹਾਂਜੀ",
+        "ਬਿਲਕੁਲ",
         "ହଁ",
     }
     no_tokens = {
@@ -167,6 +299,7 @@ def _is_no(text: str) -> bool:
         "નથી",
         "ના",
         "ਨਹੀਂ",
+        "ਨਹੀ",
         "ନା",
     }
     if any(tok in yes_tokens for tok in tokens):
@@ -183,7 +316,9 @@ _RELATIVE_DAY_PHRASE_RE = re.compile(
     r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty)\s+day(?:s)?\s+(?:later|from now)\b"
     r"|\b(?:in|after)\s+\d+\s+din(?:o)?\b"
     r"|\b\d+\s+din(?:o)?(?:\s+(?:mein|me|later))?\b"
-    r"|\b(?:today|tomorrow|day after tomorrow|next week|next month|kal|parso)\b"
+    r"|\b(?:\d+|एक|दो|तीन|चार|पांच|पाँच|छह|सात|आठ|नौ|दस|ग्यारह|बारह|तेरह|चौदह|पंद्रह|पन्द्रह|सोलह|सत्रह|अठारह|उन्नीस|बीस|तीस)\s+दिन(?:ों)?(?:\s+(?:में|मे|बाद))?\b"
+    r"|\b(?:\d+|ਇਕ|ਇੱਕ|ਦੋ|ਤਿੰਨ|ਚਾਰ|ਪੰਜ|ਛੇ|ਸੱਤ|ਅੱਠ|ਨੌ|ਦਸ)\s+ਦਿਨ(?:ਾਂ)?(?:\s+(?:ਵਿੱਚ|ਚ|ਬਾਅਦ))?\b"
+    r"|\b(?:today|tomorrow|day after tomorrow|next week|next month|kal|parso|आज|कल|परसों|ਅੱਜ|ਕੱਲ|ਪਰਸੋਂ)\b"
 )
 
 
@@ -226,6 +361,7 @@ class WorkflowState:
     dnd_requested: bool = False
     wrong_party: bool = False
     identity_denied: bool = False
+    identity_prompt_mode: Optional[str] = None  # "confirm_known_name" | "collect_name"
 
     # meta
     disposition: Optional[str] = None
@@ -261,7 +397,7 @@ class WorkflowEngine:
         self,
         *,
         enable_advanced: bool = False,
-        max_retries: int = 2,
+        max_retries: int = 3,
         tz: str = "Asia/Kolkata",
         ptp_min_days: int = 0,
         ptp_max_days: int = 30,
@@ -298,6 +434,27 @@ class WorkflowEngine:
         t = _norm(text)
         if not t:
             return None
+        uncertain_markers = (
+            "not sure",
+            "don t know",
+            "dont know",
+            "do not know",
+            "cannot say",
+            "can t say",
+            "cant say",
+            "not decided",
+            "mujhe nahi pata",
+            "mujhe nahin pata",
+            "mere ko nahi pata",
+            "mere ko nahin pata",
+            "पता नहीं",
+            "मुझे नहीं पता",
+            "मुझे नहीं मालूम",
+            "मेरे को नहीं पता",
+            "मेरे को नहीं मालूम",
+        )
+        if any(marker in t for marker in uncertain_markers):
+            return None
 
         hard_unwilling = (
             "won t pay",
@@ -306,6 +463,31 @@ class WorkflowEngine:
             "never",
             "not ever",
             "not in my life",
+            "nahi karunga",
+            "nahi karungi",
+            "nahi karenge",
+            "payment nahi karunga",
+            "payment nahi karungi",
+            "पेमेंट नहीं करूंगा",
+            "पेमेंट नहीं करूँगा",
+            "पेमेंट नहीं करूंगी",
+            "पेमेंट नहीं करूँगी",
+            "भुगतान नहीं करूंगा",
+            "भुगतान नहीं करूँगा",
+            "भुगतान नहीं करूंगी",
+            "भुगतान नहीं करूँगी",
+            "नहीं करूंगा",
+            "नहीं करूँगा",
+            "नहीं करूंगी",
+            "नहीं करूँगी",
+            "नहीं करेंगे",
+            "क्या कर लोगे",
+            "क्या कर लोगी",
+            "क्या कर लेगा",
+            "जो करना है कर लो",
+            "ਨਹੀਂ ਕਰਾਂਗਾ",
+            "ਨਹੀਂ ਕਰਾਂਗੀ",
+            "ਕੀ ਕਰ ਲਓਗੇ",
         )
         hard_inability = (
             "cannot make payment",
@@ -323,6 +505,29 @@ class WorkflowEngine:
             "won t be able to",
             "wont be able to",
             "will not be able to",
+            "payment nahi kar sakta",
+            "payment nahi kar sakti",
+            "bhugtan nahi kar sakta",
+            "bhugtan nahi kar sakti",
+            "nahi kar sakta",
+            "nahi kar sakti",
+            "kar nahi sakta",
+            "kar nahi sakti",
+            "पेमेंट नहीं कर सकता",
+            "पेमेंट नहीं कर सकती",
+            "भुगतान नहीं कर सकता",
+            "भुगतान नहीं कर सकती",
+            "नहीं कर सकता",
+            "नहीं कर सकती",
+            "कर नहीं सकता",
+            "कर नहीं सकती",
+            "पैसे नहीं हैं",
+            "पैसे नही हैं",
+            "नहीं कर सकता हूँ",
+            "नहीं कर सकती हूँ",
+            "ਨਹੀਂ ਕਰ ਸਕਦਾ",
+            "ਨਹੀਂ ਕਰ ਸਕਦੀ",
+            "ਪੈਸੇ ਨਹੀਂ",
         )
         soft_inability = (
             "not yet",
@@ -331,6 +536,10 @@ class WorkflowEngine:
             "cant now",
             "cannot now",
             "not now",
+            "abhi nahi",
+            "baad mein",
+            "बाद में",
+            "अभी नहीं",
         )
 
         if any(p in t for p in hard_unwilling):
@@ -500,6 +709,11 @@ class WorkflowEngine:
             return "confirm_awareness"
         if state.payment_made is None:
             if self._retry_exceeded(state, "ask_payment_made"):
+                # Keep clarifying payment status instead of force-closing on
+                # ambiguous/non-binary answers.
+                if self._enable_advanced:
+                    state.last_transition_reason = "payment_status_unclear"
+                    return "ask_payment_made"
                 state.disposition = "payment_status_unknown"
                 state.last_transition_reason = "retry_exceeded"
                 return "closing"
@@ -533,8 +747,18 @@ class WorkflowEngine:
         if "consent" in t or "recorded" in t:
             step = "consent"
             state.consent_asked = True
-        elif "speaking with" in t or "confirm your name" in t or "your name" in t:
+        elif "speaking with" in t:
             step = "confirm_identity"
+            state.identity_prompt_mode = "confirm_known_name"
+        elif (
+            "confirm your name" in t
+            or "your name" in t
+            or "tell me your name" in t
+            or "tell me your full name" in t
+            or "full name" in t
+        ):
+            step = "confirm_identity"
+            state.identity_prompt_mode = "collect_name"
         elif "aware" in t and ("overdue" in t or "due" in t or "payment" in t):
             step = "confirm_awareness"
         elif "made the payment" in t or "made payment" in t or "paid" in t:
@@ -602,6 +826,15 @@ class WorkflowEngine:
                 state.callback_time = str(extracted["callback_time"])
 
         t_norm = _norm(t)
+        if step in {"confirm_awareness", "ask_payment_made", "ask_ptp_or_callback"}:
+            if _is_name_reconfirmation_text(t_norm) or (
+                state.last_transition_reason == "identity_reconfirm_requested"
+                and _is_yes_no_challenge_text(t_norm)
+            ):
+                state.last_transition_reason = "identity_reconfirm_requested"
+                state.current_step = step
+                return
+
         payment_step = step in {"ask_payment_made", "ask_ptp_or_callback"}
         negative_cls = self._classify_payment_negative(t) if payment_step else None
         if payment_step and negative_cls:
@@ -647,6 +880,24 @@ class WorkflowEngine:
                     "dont contact",
                     "don t contact",
                     "never call",
+                    "call mat karna",
+                    "call mat kariye",
+                    "dobara call mat karna",
+                    "dobara call mat kariye",
+                    "मुझे कॉल मत करें",
+                    "मुझे कॉल मत करिए",
+                    "मेरे को कॉल मत करें",
+                    "मेरे को कॉल मत करिए",
+                    "कॉल मत करें",
+                    "कॉल मत करिए",
+                    "कॉल ना करें",
+                    "कॉल ना करिए",
+                    "कॉल न करें",
+                    "कॉल न करिए",
+                    "फोन मत करें",
+                    "फोन मत करिए",
+                    "आप मेरे को कॉल ना ही करें",
+                    "मेरे को कॉल ना ही करें",
                 )
             ):
                 state.dnd_requested = True
@@ -770,19 +1021,37 @@ class WorkflowEngine:
         if step == "consent":
             if _is_yes(t):
                 state.consent = True
+                state.last_transition_reason = None
             elif _is_no(t):
                 state.consent = False
                 state.disposition = "no_consent"
+                state.last_transition_reason = "consent_refused"
+            elif t_norm:
+                state.last_transition_reason = "consent_unclear"
         elif state.consent is None:
             if _is_yes(t):
                 state.consent = True
+                state.last_transition_reason = None
             elif _is_no(t):
                 state.consent = False
                 state.disposition = "no_consent"
+                state.last_transition_reason = "consent_refused"
 
         # Identity confirmation
         if step == "confirm_identity" and not state.identity_confirmed:
-            if _is_yes(t) or (extracted.get("customer_name") and len(str(extracted.get("customer_name"))) >= 2):
+            extracted_name = str(extracted.get("customer_name") or "").strip()
+            name_was_known = bool(extracted.get("identity_name_preexisting"))
+            prompt_mode = str(
+                extracted.get("identity_prompt_mode")
+                or state.identity_prompt_mode
+                or ""
+            ).strip()
+            mentioned_known_name = bool(
+                name_was_known and extracted_name and _norm(extracted_name) in t_norm
+            )
+            if len(extracted_name) >= 2 and not name_was_known:
+                state.identity_confirmed = True
+            elif (name_was_known or prompt_mode == "confirm_known_name") and (_is_yes(t) or mentioned_known_name):
                 state.identity_confirmed = True
             elif self._enable_advanced and _is_no(t):
                 state.identity_denied = True
@@ -794,26 +1063,68 @@ class WorkflowEngine:
         if step == "confirm_awareness" and not state.awareness_confirmed:
             if _is_yes(t) or _is_no(t):
                 state.awareness_confirmed = True
+                if self._enable_advanced and (_is_no(t) or _is_awareness_denial_text(t_norm)):
+                    state.last_transition_reason = "awareness_denied_context"
             else:
-                keywords = (
-                    "aware",
-                    "know",
-                    "overdue",
-                    "due",
+                clarification_markers = (
+                    "what do you mean",
+                    "don t understand",
+                    "dont understand",
+                    "not clear",
+                    "repeat",
+                    "again",
+                    "kya",
+                    "samjha nahi",
+                    "samajh nahi",
+                    "samajh nahin",
+                    "samjha nahin",
+                )
+                has_awareness_signal = any(
+                    k in t_norm
+                    for k in (
+                        "aware",
+                        "know",
+                        "overdue",
+                        "due",
+                        "payment",
+                        "paid",
+                        "already",
+                        "not paid",
+                        "pay",
+                        "dispute",
+                        "wrong",
+                        "pata",
+                    )
+                )
+                looks_like_clarification = any(m in t_norm for m in clarification_markers) and not has_awareness_signal
+                if looks_like_clarification:
+                    # Keep awareness step pending when the user asks for clarification.
+                    state.last_transition_reason = "clarification_needed"
+                else:
+                    awareness_denied = _is_awareness_denial_text(t_norm)
+                    keywords = (
+                        "aware",
+                        "know",
+                        "overdue",
+                        "due",
                     "payment",
                     "paid",
                     "already",
                     "not paid",
-                    "pay",
-                    "dispute",
-                    "wrong",
-                )
-                if any(k in _norm(t) for k in keywords):
-                    state.awareness_confirmed = True
-                elif extracted.get("ptp_date") or extracted.get("reference_number") or extracted.get("callback_time"):
-                    state.awareness_confirmed = True
-                elif len(_norm(t).split()) >= 2:
-                    state.awareness_confirmed = True
+                        "pay",
+                        "dispute",
+                        "wrong",
+                    )
+                    if awareness_denied:
+                        state.awareness_confirmed = True
+                        if self._enable_advanced:
+                            state.last_transition_reason = "awareness_denied_context"
+                    elif any(k in _norm(t) for k in keywords):
+                        state.awareness_confirmed = True
+                    elif extracted.get("ptp_date") or extracted.get("reference_number") or extracted.get("callback_time"):
+                        state.awareness_confirmed = True
+                    elif len(_norm(t).split()) >= 2:
+                        state.awareness_confirmed = True
 
         # Payment made (global heuristic + step-specific)
         explicit_unpaid = self._is_explicit_unpaid_text(t_norm)
@@ -830,12 +1141,20 @@ class WorkflowEngine:
         if step == "ask_payment_made" and negative_cls:
             # Step-bound conflict rule: explicit unpaid/negative in payment status step wins.
             state.payment_made = False
+        if step == "ask_payment_made" and state.payment_made is None:
+            if _is_awareness_denial_text(t_norm):
+                state.last_transition_reason = "awareness_denied_context"
 
         # PTP/callback capture
         if step == "ask_ptp_or_callback":
             if self._enable_advanced:
                 now = self._now()
+                previous_transition_reason = state.last_transition_reason
                 invalid_reason = None
+                callback_checked = False
+                date_attempted = False
+                callback_hint = _has_callback_intent_text(t_norm)
+                payment_commitment_hint = _has_payment_commitment_text(t_norm)
                 if not state.ptp_date and not state.callback_time:
                     uncertain_phrases = (
                         "not sure",
@@ -847,6 +1166,17 @@ class WorkflowEngine:
                         "cant say",
                         "not decided",
                         "maybe",
+                        "mujhe nahi pata",
+                        "mujhe nahin pata",
+                        "mere ko nahi pata",
+                        "mere ko nahin pata",
+                        "पता नहीं",
+                        "मुझे नहीं पता",
+                        "मुझे नहीं मालूम",
+                        "मेरे को नहीं पता",
+                        "मेरे को नहीं मालूम",
+                        "आप देख लीजिए",
+                        "अपने आप देखिए",
                     )
                     unable_phrases = (
                         "cant pay",
@@ -869,15 +1199,39 @@ class WorkflowEngine:
                         if state.last_transition_reason not in {"hardship", "needs_callback"}:
                             state.last_transition_reason = "uncertain_commitment"
                     if any(p in t_norm for p in unable_phrases) or negative_cls:
+                        if callback_hint:
+                            state.callback_requested = True
+                        if state.last_transition_reason not in {"hardship"}:
+                            state.last_transition_reason = "resolve_refusal"
+                if callback_hint and not state.callback_time and not state.ptp_date:
+                    callback_checked = True
+                    parsed_time = self._resolve_callback_time_candidate(t)
+                    if parsed_time:
+                        state.callback_time = parsed_time
                         state.callback_requested = True
-                        if state.last_transition_reason != "hardship":
-                            state.last_transition_reason = "needs_callback"
-                if not state.ptp_date:
-                    date_attempted = False
+                    else:
+                        raw_time = parse_time_from_text(t, allow_implicit=True)
+                        if raw_time and validate_callback_time(
+                            raw_time,
+                            start_hour=self._callback_hours_start,
+                            end_hour=self._callback_hours_end,
+                        ):
+                            state.callback_time = raw_time
+                            state.callback_requested = True
+                        elif raw_time:
+                            invalid_reason = "invalid_callback_time"
+                        elif _RELATIVE_DAY_PHRASE_RE.search(t_norm):
+                            invalid_reason = "callback_time_needed"
+                if not state.ptp_date and not state.callback_time and not callback_hint:
                     parsed_date = parse_date_from_text(t, tz=self._tz, now=now)
                     if parsed_date:
                         date_attempted = True
-                        if validate_ptp_date(
+                        if (
+                            previous_transition_reason in {"uncertain_commitment", "needs_callback", "hardship"}
+                            and not payment_commitment_hint
+                        ):
+                            invalid_reason = "ptp_callback_ambiguous"
+                        elif validate_ptp_date(
                             parsed_date,
                             tz=self._tz,
                             now=now,
@@ -887,9 +1241,7 @@ class WorkflowEngine:
                             state.ptp_date = parsed_date
                         else:
                             invalid_reason = "invalid_ptp_date"
-                else:
-                    date_attempted = False
-                if not state.callback_time and not state.ptp_date and not date_attempted:
+                if not state.callback_time and not state.ptp_date and not date_attempted and not callback_checked:
                     parsed_time = self._resolve_callback_time_candidate(t)
                     if parsed_time:
                         state.callback_time = parsed_time

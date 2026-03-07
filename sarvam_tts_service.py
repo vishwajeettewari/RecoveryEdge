@@ -48,6 +48,12 @@ class BulbulTTSService:
         self._ws_ctx = None
         self._client = None
 
+    def _default_speaker(self) -> str:
+        model = str(self.model or "").strip().lower()
+        if model == "bulbul:v3":
+            return "shubh"
+        return "anushka"
+
     @staticmethod
     def _filter_kwargs(func, kwargs: dict) -> dict:
         try:
@@ -134,7 +140,7 @@ class BulbulTTSService:
             if hasattr(self._ws, "configure"):
                 config_kwargs = {
                     "target_language_code": self.language or "en-IN",
-                    "speaker": self.speaker or self.voice or "anushka",
+                    "speaker": self.speaker or self.voice or self._default_speaker(),
                     "speech_sample_rate": self.sample_rate,
                     "output_audio_codec": self.output_audio_codec,
                     "output_audio_bitrate": self.output_audio_bitrate,
@@ -148,7 +154,7 @@ class BulbulTTSService:
             return
         data = {
             "target_language_code": self.language or "en-IN",
-            "speaker": self.speaker or self.voice or "anushka",
+            "speaker": self.speaker or self.voice or self._default_speaker(),
             "speech_sample_rate": self.sample_rate,
             "output_audio_codec": self.output_audio_codec,
             "output_audio_bitrate": self.output_audio_bitrate,

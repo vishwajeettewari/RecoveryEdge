@@ -1,0 +1,104 @@
+export const ROLES = {
+  ADMIN: "ADMIN",
+  CEO: "CEO",
+  CFO: "CFO",
+  COLLECTIONS_MANAGER: "COLLECTIONS_MANAGER",
+  CALLING_AGENT: "CALLING_AGENT",
+  COMPLIANCE_OFFICER: "COMPLIANCE_OFFICER",
+  VIEWER: "VIEWER",
+} as const;
+
+export type AppRole = (typeof ROLES)[keyof typeof ROLES];
+
+export const PERMS = {
+  VIEW_DASHBOARD: "VIEW_DASHBOARD",
+  PORTFOLIO_MANAGE: "PORTFOLIO_MANAGE",
+  WORKBENCH_VIEW: "WORKBENCH_VIEW",
+  WORKBENCH_MUTATE: "WORKBENCH_MUTATE",
+  ALERTS_VIEW: "ALERTS_VIEW",
+  ALERTS_MUTATE: "ALERTS_MUTATE",
+  ALERT_RULES_EDIT: "ALERT_RULES_EDIT",
+  REPORTS_VIEW: "REPORTS_VIEW",
+  REPORTS_SCHEDULE: "REPORTS_SCHEDULE",
+  INTEGRATIONS_VIEW: "INTEGRATIONS_VIEW",
+  INTEGRATIONS_RESOLVE_CONFLICTS: "INTEGRATIONS_RESOLVE_CONFLICTS",
+  USERS_MANAGE: "USERS_MANAGE",
+  SYSTEM_VIEW_BUILD_INFO: "SYSTEM_VIEW_BUILD_INFO",
+} as const;
+
+export type Permission = (typeof PERMS)[keyof typeof PERMS];
+
+export const ROLE_LABELS: Record<AppRole, string> = {
+  ADMIN: "Platform Admin",
+  CEO: "CEO",
+  CFO: "CFO",
+  COLLECTIONS_MANAGER: "Collections Manager",
+  CALLING_AGENT: "Calling Agent",
+  COMPLIANCE_OFFICER: "Compliance Officer",
+  VIEWER: "Viewer",
+};
+
+export const ROLE_PERMISSIONS: Record<AppRole, Permission[]> = {
+  ADMIN: Object.values(PERMS),
+  CEO: [
+    PERMS.VIEW_DASHBOARD,
+    PERMS.WORKBENCH_VIEW,
+    PERMS.ALERTS_VIEW,
+    PERMS.REPORTS_VIEW,
+    PERMS.INTEGRATIONS_VIEW,
+    PERMS.SYSTEM_VIEW_BUILD_INFO,
+  ],
+  CFO: [
+    PERMS.VIEW_DASHBOARD,
+    PERMS.WORKBENCH_VIEW,
+    PERMS.REPORTS_VIEW,
+    PERMS.SYSTEM_VIEW_BUILD_INFO,
+  ],
+  COLLECTIONS_MANAGER: [
+    PERMS.VIEW_DASHBOARD,
+    PERMS.PORTFOLIO_MANAGE,
+    PERMS.WORKBENCH_VIEW,
+    PERMS.WORKBENCH_MUTATE,
+    PERMS.ALERTS_VIEW,
+    PERMS.ALERTS_MUTATE,
+    PERMS.REPORTS_VIEW,
+    PERMS.REPORTS_SCHEDULE,
+    PERMS.INTEGRATIONS_VIEW,
+    PERMS.INTEGRATIONS_RESOLVE_CONFLICTS,
+    PERMS.SYSTEM_VIEW_BUILD_INFO,
+  ],
+  CALLING_AGENT: [
+    PERMS.WORKBENCH_VIEW,
+    PERMS.WORKBENCH_MUTATE,
+    PERMS.SYSTEM_VIEW_BUILD_INFO,
+  ],
+  COMPLIANCE_OFFICER: [
+    PERMS.WORKBENCH_VIEW,
+    PERMS.ALERTS_VIEW,
+    PERMS.ALERTS_MUTATE,
+    PERMS.ALERT_RULES_EDIT,
+    PERMS.REPORTS_VIEW,
+    PERMS.SYSTEM_VIEW_BUILD_INFO,
+  ],
+  VIEWER: [
+    PERMS.VIEW_DASHBOARD,
+    PERMS.WORKBENCH_VIEW,
+    PERMS.ALERTS_VIEW,
+    PERMS.REPORTS_VIEW,
+    PERMS.SYSTEM_VIEW_BUILD_INFO,
+  ],
+};
+
+export function hasRolePermission(role: string | undefined, permission: Permission): boolean {
+  const key = (role || "") as AppRole;
+  const perms = ROLE_PERMISSIONS[key] || [];
+  return perms.includes(permission);
+}
+
+export function defaultLandingForRole(role: string | undefined): string {
+  const r = (role || "").toUpperCase();
+  if (r === ROLES.CALLING_AGENT) {
+    return "/app/calling";
+  }
+  return "/app/dashboard";
+}

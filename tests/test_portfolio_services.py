@@ -6,6 +6,7 @@ from campaign_service import CampaignService
 from compliance_engine import ComplianceEngine
 from followup_service import FollowupService
 from integrations.crm_adapter import CRMAdapter
+from knowledge_store import SQLiteFTSKnowledgeStore
 from strategy_engine import StrategyEngine
 
 
@@ -26,6 +27,16 @@ class PortfolioServiceTests(unittest.TestCase):
         self.assertEqual(eng.classify(70).strategy_mode, "high_urgency")
         self.assertEqual(eng.classify(120).strategy_mode, "pre_legal_caution")
 
+    def test_strategy_engine_prioritizes_dispute_and_hardship_playbooks(self):
+        eng = StrategyEngine()
+        dispute = eng.classify(45, dispute_raised=True)
+        self.assertEqual(dispute.strategy_mode, "dispute_resolution")
+        self.assertIn("acknowledge_dispute", dispute.preferred_actions)
+
+        hardship = eng.classify(75, hardship_detected=True, partial_payment_offered=True)
+        self.assertEqual(hardship.strategy_mode, "hardship_partial_resolution")
+        self.assertIn("accept_partial_payment", hardship.preferred_actions)
+
     def test_compliance_detects_sensitive_and_gate(self):
         eng = ComplianceEngine()
         out = eng.evaluate_assistant_text(
@@ -37,6 +48,25 @@ class PortfolioServiceTests(unittest.TestCase):
         codes = {v.rule_code for v in out}
         self.assertIn("DISALLOWED_SENSITIVE_ASK", codes)
         self.assertIn("MISSING_CONSENT_GATE", codes)
+
+    def test_compliance_detects_legal_hold_and_hardship_pressure(self):
+        eng = ComplianceEngine()
+        out = eng.evaluate_assistant_text(
+            text="Pay now or I will speak to your office. Since you mentioned a problem, pay immediately.",
+            consent=True,
+            identity_confirmed=True,
+            current_step="ask_ptp_or_callback",
+            hardship_detected=True,
+            legal_hold=True,
+        )
+        codes = {v.rule_code for v in out}
+        self.assertIn("LEGAL_HOLD_COLLECTION_ASK", codes)
+        self.assertIn("THIRD_PARTY_DISCLOSURE_RISK", codes)
+        self.assertIn("HARDSHIP_PRESSURE_RISK", codes)
+
+    def test_knowledge_store_preserves_indic_tokens(self):
+        query = SQLiteFTSKnowledgeStore._fts_query("मुझे लोन स्टेटमेंट भेजो")
+        self.assertEqual(query, "मुझे AND लोन AND स्टेटमेंट AND भेजो")
 
     def test_campaign_retry_and_metrics(self):
         svc = CampaignService(self.db_path)

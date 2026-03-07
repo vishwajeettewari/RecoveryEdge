@@ -112,13 +112,22 @@ class OpsLayerTests(unittest.TestCase):
 
     def test_compliance_block_requires_override(self):
         task_id = self._seed_task(campaign_id="cmp-comp", customer_id="C-COMP")
-        self.workbench.set_compliance_block(
-            task_id=task_id,
+        out = self.workbench.apply_session_gate_status(
+            session_snapshot={
+                "session_id": "sess-gate-1",
+                "campaign_id": "cmp-comp",
+                "customer_id": "C-COMP",
+                "consent": False,
+                "identity_confirmed": True,
+            },
             actor="system",
-            blocked=True,
-            badges={"CONSENT_OK": False, "IDENTITY_OK": False},
-            reason="missing_gate",
         )
+        self.assertEqual(out["updated"], 1)
+        task = self.workbench.get_task(task_id)
+        self.assertEqual(int(task["compliance_block"] or 0), 1)
+        status = json.loads(task["compliance_status_json"] or "{}")
+        self.assertEqual(status.get("CONSENT_OK"), False)
+
         blocked = self.workbench.update_task(
             task_id=task_id,
             actor="sup",
@@ -128,6 +137,11 @@ class OpsLayerTests(unittest.TestCase):
         )
         self.assertFalse(blocked["ok"])
         self.assertEqual(blocked["error"], "compliance_blocked_requires_override")
+
+        eval_out = self.alerts.evaluate()
+        self.assertGreaterEqual(eval_out["compliance_block"], 1)
+        arows = self.alerts.list_alerts(status=None, severity=None, rtype="COMPLIANCE_BLOCK", page=1, page_size=20)
+        self.assertGreaterEqual(arows["total"], 1)
 
         allowed = self.workbench.update_task(
             task_id=task_id,

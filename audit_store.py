@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import time
 from datetime import datetime
@@ -150,6 +152,146 @@ class SQLiteAuditStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    full_name TEXT,
+                    email TEXT,
+                    role TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    default_tenant_id TEXT NOT NULL DEFAULT 'default',
+                    failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+                    locked_until REAL,
+                    must_change_password INTEGER NOT NULL DEFAULT 0,
+                    password_changed_at REAL,
+                    created_at REAL NOT NULL,
+                    last_login_at REAL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL DEFAULT 'default',
+                    refresh_token_hash TEXT NOT NULL,
+                    access_jti TEXT,
+                    user_agent TEXT,
+                    ip_addr TEXT,
+                    created_at REAL NOT NULL,
+                    expires_at REAL,
+                    last_seen_at REAL,
+                    revoked_at REAL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_tenant_memberships (
+                    user_id TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL,
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL,
+                    created_by TEXT,
+                    PRIMARY KEY (user_id, tenant_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS webhook_events (
+                    id TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    external_event_id TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    received_at REAL NOT NULL,
+                    UNIQUE(provider, external_event_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_idempotency (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    route_key TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    body_hash TEXT NOT NULL,
+                    response_json TEXT NOT NULL,
+                    status_code INTEGER NOT NULL,
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    UNIQUE(route_key, idempotency_key)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    consumed_at REAL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_refresh_hash ON user_sessions(refresh_token_hash)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_tenant_memberships_user ON user_tenant_memberships(user_id, is_default)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_api_idempotency_route_key ON api_idempotency(route_key, expires_at)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, expires_at)")
+            # ── Post-call summaries ──────────────────────────────────────
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS call_summaries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT UNIQUE NOT NULL,
+                    customer_id TEXT,
+                    generated_ts REAL,
+                    key_facts TEXT,
+                    objections TEXT,
+                    commitment TEXT,
+                    next_step TEXT,
+                    compliance_notes TEXT,
+                    sentiment TEXT,
+                    disposition TEXT,
+                    raw_summary TEXT,
+                    search_text TEXT
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_summaries_customer ON call_summaries(customer_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_summaries_ts ON call_summaries(generated_ts DESC)"
+            )
+            # ── DPD roll-forward snapshots ───────────────────────────────
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dpd_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    customer_id TEXT NOT NULL,
+                    snapshot_ts REAL NOT NULL,
+                    dpd_bucket TEXT,
+                    dpd_value INTEGER,
+                    source TEXT DEFAULT 'call'
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_dpd_snap_cust ON dpd_snapshots(customer_id, snapshot_ts)"
+            )
             conn.commit()
         finally:
             conn.close()
@@ -165,6 +307,103 @@ class SQLiteAuditStore:
                 conn.execute("ALTER TABLE outcomes ADD COLUMN campaign_id TEXT")
             if "dpd_bucket" not in cols:
                 conn.execute("ALTER TABLE outcomes ADD COLUMN dpd_bucket TEXT")
+            if "agent_id" not in cols:
+                conn.execute("ALTER TABLE outcomes ADD COLUMN agent_id TEXT")
+            if "connect_duration_s" not in cols:
+                conn.execute("ALTER TABLE outcomes ADD COLUMN connect_duration_s REAL")
+
+            user_cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+            if "default_tenant_id" not in user_cols:
+                conn.execute("ALTER TABLE users ADD COLUMN default_tenant_id TEXT NOT NULL DEFAULT 'default'")
+            if "failed_login_attempts" not in user_cols:
+                conn.execute("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0")
+            if "locked_until" not in user_cols:
+                conn.execute("ALTER TABLE users ADD COLUMN locked_until REAL")
+            if "must_change_password" not in user_cols:
+                conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+            if "password_changed_at" not in user_cols:
+                conn.execute("ALTER TABLE users ADD COLUMN password_changed_at REAL")
+
+            sess_cols = {r["name"] for r in conn.execute("PRAGMA table_info(user_sessions)").fetchall()}
+            if "tenant_id" not in sess_cols:
+                conn.execute("ALTER TABLE user_sessions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+            if "refresh_token_hash" not in sess_cols:
+                conn.execute("ALTER TABLE user_sessions ADD COLUMN refresh_token_hash TEXT")
+                conn.execute(
+                    "UPDATE user_sessions SET refresh_token_hash = ? WHERE refresh_token_hash IS NULL OR TRIM(refresh_token_hash) = ''",
+                    (self.hash_token("legacy-session"),),
+                )
+            if "access_jti" not in sess_cols:
+                conn.execute("ALTER TABLE user_sessions ADD COLUMN access_jti TEXT")
+            if "user_agent" not in sess_cols:
+                conn.execute("ALTER TABLE user_sessions ADD COLUMN user_agent TEXT")
+            if "ip_addr" not in sess_cols:
+                conn.execute("ALTER TABLE user_sessions ADD COLUMN ip_addr TEXT")
+            if "last_seen_at" not in sess_cols:
+                conn.execute("ALTER TABLE user_sessions ADD COLUMN last_seen_at REAL")
+            if "revoked_at" not in sess_cols:
+                conn.execute("ALTER TABLE user_sessions ADD COLUMN revoked_at REAL")
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_tenant_memberships (
+                    user_id TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL,
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL,
+                    created_by TEXT,
+                    PRIMARY KEY (user_id, tenant_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS webhook_events (
+                    id TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    external_event_id TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    received_at REAL NOT NULL,
+                    UNIQUE(provider, external_event_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_idempotency (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    route_key TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    body_hash TEXT NOT NULL,
+                    response_json TEXT NOT NULL,
+                    status_code INTEGER NOT NULL,
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    UNIQUE(route_key, idempotency_key)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    consumed_at REAL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_refresh_hash ON user_sessions(refresh_token_hash)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_tenant_memberships_user ON user_tenant_memberships(user_id, is_default)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_api_idempotency_route_key ON api_idempotency(route_key, expires_at)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, expires_at)")
             conn.commit()
         finally:
             conn.close()
@@ -506,5 +745,1004 @@ class SQLiteAuditStore:
                 )
             out.sort(key=lambda x: float(x.get("ts") or 0))
             return out
+        finally:
+            conn.close()
+
+    # -------------------------
+    # User / auth operations
+    # -------------------------
+    def has_users(self) -> bool:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+            return int(row["n"] or 0) > 0
+        finally:
+            conn.close()
+
+    def create_user(
+        self,
+        *,
+        user_id: str,
+        username: str,
+        password_hash: str,
+        full_name: Optional[str],
+        email: Optional[str],
+        role: str,
+        is_active: bool = True,
+        default_tenant_id: str = "default",
+        must_change_password: bool = False,
+        actor: Optional[str] = None,
+    ) -> None:
+        now = time.time()
+        default_tid = (default_tenant_id or "default").strip().lower() or "default"
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO users (
+                    id, username, password_hash, full_name, email, role, is_active,
+                    default_tenant_id, failed_login_attempts, locked_until,
+                    must_change_password, password_changed_at, created_at, last_login_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, NULL)
+                """,
+                (
+                    user_id,
+                    username.strip().lower(),
+                    password_hash,
+                    full_name,
+                    email,
+                    role.strip().upper(),
+                    1 if is_active else 0,
+                    default_tid,
+                    1 if must_change_password else 0,
+                    now,
+                    now,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO user_tenant_memberships (user_id, tenant_id, is_default, created_at, created_by)
+                VALUES (?, ?, 1, ?, ?)
+                """,
+                (user_id, default_tid, now, actor or "system"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM users WHERE username = ?", (username.strip().lower(),)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def list_users(self) -> List[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    id, username, full_name, email, role, is_active, default_tenant_id,
+                    failed_login_attempts, locked_until, must_change_password,
+                    password_changed_at, created_at, last_login_at
+                FROM users
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def update_user(
+        self,
+        *,
+        user_id: str,
+        role: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        full_name: Optional[str] = None,
+        email: Optional[str] = None,
+        default_tenant_id: Optional[str] = None,
+        must_change_password: Optional[bool] = None,
+    ) -> bool:
+        updates: List[str] = []
+        args: List[Any] = []
+        if role is not None:
+            updates.append("role = ?")
+            args.append(role.strip().upper())
+        if is_active is not None:
+            updates.append("is_active = ?")
+            args.append(1 if is_active else 0)
+        if full_name is not None:
+            updates.append("full_name = ?")
+            args.append(full_name)
+        if email is not None:
+            updates.append("email = ?")
+            args.append(email)
+        if default_tenant_id is not None:
+            updates.append("default_tenant_id = ?")
+            args.append((default_tenant_id or "default").strip().lower() or "default")
+        if must_change_password is not None:
+            updates.append("must_change_password = ?")
+            args.append(1 if must_change_password else 0)
+        if not updates:
+            return False
+        args.append(user_id)
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                f"UPDATE users SET {', '.join(updates)} WHERE id = ?",
+                tuple(args),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+    def set_user_password(self, *, user_id: str, password_hash: str) -> bool:
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """
+                UPDATE users
+                SET password_hash = ?,
+                    password_changed_at = ?,
+                    must_change_password = 0
+                WHERE id = ?
+                """,
+                (password_hash, time.time(), user_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+    def mark_user_login(self, *, user_id: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                UPDATE users
+                SET last_login_at = ?,
+                    failed_login_attempts = 0,
+                    locked_until = NULL
+                WHERE id = ?
+                """,
+                (time.time(), user_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def mark_login_failure(self, *, user_id: str, threshold: int = 5, lock_seconds: int = 900) -> Dict[str, Any]:
+        conn = self._connect()
+        now = time.time()
+        try:
+            row = conn.execute(
+                "SELECT failed_login_attempts, locked_until FROM users WHERE id = ?",
+                (user_id,),
+            ).fetchone()
+            if row is None:
+                return {"failed_login_attempts": 0, "locked_until": None, "locked": False}
+            attempts = int(row["failed_login_attempts"] or 0) + 1
+            locked_until: Optional[float] = None
+            if attempts >= max(1, int(threshold)):
+                locked_until = now + max(1, int(lock_seconds))
+                attempts = 0
+            conn.execute(
+                "UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?",
+                (attempts, locked_until, user_id),
+            )
+            conn.commit()
+            return {
+                "failed_login_attempts": attempts,
+                "locked_until": locked_until,
+                "locked": bool(locked_until and locked_until > now),
+            }
+        finally:
+            conn.close()
+
+    def is_user_locked(self, *, user_id: str) -> bool:
+        conn = self._connect()
+        now = time.time()
+        try:
+            row = conn.execute("SELECT locked_until FROM users WHERE id = ?", (user_id,)).fetchone()
+            if row is None:
+                return False
+            locked_until = row["locked_until"]
+            return bool(locked_until and float(locked_until) > now)
+        finally:
+            conn.close()
+
+    def add_user_tenant_membership(
+        self,
+        *,
+        user_id: str,
+        tenant_id: str,
+        is_default: bool = False,
+        actor: str = "system",
+    ) -> None:
+        tid = (tenant_id or "default").strip().lower() or "default"
+        now = time.time()
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO user_tenant_memberships (user_id, tenant_id, is_default, created_at, created_by)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user_id, tid, 1 if is_default else 0, now, actor),
+            )
+            if is_default:
+                conn.execute("UPDATE users SET default_tenant_id = ? WHERE id = ?", (tid, user_id))
+                conn.execute(
+                    "UPDATE user_tenant_memberships SET is_default = CASE WHEN tenant_id = ? THEN 1 ELSE 0 END WHERE user_id = ?",
+                    (tid, user_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_user_tenants(self, *, user_id: str) -> List[str]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT tenant_id FROM user_tenant_memberships WHERE user_id = ? ORDER BY is_default DESC, tenant_id ASC",
+                (user_id,),
+            ).fetchall()
+            return [str(r["tenant_id"]) for r in rows]
+        finally:
+            conn.close()
+
+    def get_user_default_tenant(self, *, user_id: str) -> str:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT default_tenant_id FROM users WHERE id = ?", (user_id,)).fetchone()
+            if row and row["default_tenant_id"]:
+                return str(row["default_tenant_id"])
+            row2 = conn.execute(
+                "SELECT tenant_id FROM user_tenant_memberships WHERE user_id = ? AND is_default = 1",
+                (user_id,),
+            ).fetchone()
+            if row2 and row2["tenant_id"]:
+                return str(row2["tenant_id"])
+            return "default"
+        finally:
+            conn.close()
+
+    def user_has_tenant(self, *, user_id: str, tenant_id: str) -> bool:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM user_tenant_memberships WHERE user_id = ? AND tenant_id = ?",
+                (user_id, (tenant_id or "default").strip().lower() or "default"),
+            ).fetchone()
+            return row is not None
+        finally:
+            conn.close()
+
+    @staticmethod
+    def hash_token(token: str) -> str:
+        return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+    def create_user_session(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        tenant_id: str,
+        refresh_token_hash: str,
+        expires_at: float,
+        access_jti: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        ip_addr: Optional[str] = None,
+    ) -> None:
+        now = time.time()
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO user_sessions (
+                    id, user_id, tenant_id, refresh_token_hash, access_jti,
+                    user_agent, ip_addr, created_at, expires_at, last_seen_at, revoked_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    session_id,
+                    user_id,
+                    (tenant_id or "default").strip().lower() or "default",
+                    refresh_token_hash,
+                    access_jti,
+                    user_agent,
+                    ip_addr,
+                    now,
+                    expires_at,
+                    now,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_user_session(self, *, session_id: str) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM user_sessions WHERE id = ?", (session_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def get_user_session_by_refresh_hash(self, *, refresh_token_hash: str) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM user_sessions
+                WHERE refresh_token_hash = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (refresh_token_hash,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def rotate_user_session(
+        self,
+        *,
+        session_id: str,
+        refresh_token_hash: str,
+        access_jti: Optional[str],
+        expires_at: float,
+    ) -> bool:
+        now = time.time()
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """
+                UPDATE user_sessions
+                SET refresh_token_hash = ?,
+                    access_jti = ?,
+                    expires_at = ?,
+                    last_seen_at = ?
+                WHERE id = ?
+                  AND revoked_at IS NULL
+                """,
+                (refresh_token_hash, access_jti, expires_at, now, session_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+    def list_user_sessions(self, *, user_id: str) -> List[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT id, user_id, tenant_id, user_agent, ip_addr, created_at, expires_at, last_seen_at, revoked_at
+                FROM user_sessions
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                """,
+                (user_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def revoke_user_session(self, *, session_id: str) -> bool:
+        conn = self._connect()
+        now = time.time()
+        try:
+            cur = conn.execute(
+                "UPDATE user_sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                (now, session_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+    def revoke_user_sessions(self, *, user_id: str) -> int:
+        conn = self._connect()
+        now = time.time()
+        try:
+            cur = conn.execute(
+                "UPDATE user_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+                (now, user_id),
+            )
+            conn.commit()
+            return int(cur.rowcount or 0)
+        finally:
+            conn.close()
+
+    def upsert_idempotency(
+        self,
+        *,
+        route_key: str,
+        idempotency_key: str,
+        body_hash: str,
+        response_json: Dict[str, Any],
+        status_code: int,
+        window_seconds: int = 86400,
+    ) -> Dict[str, Any]:
+        now = time.time()
+        expires_at = now + max(1, int(window_seconds))
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM api_idempotency WHERE route_key = ? AND idempotency_key = ?",
+                (route_key, idempotency_key),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO api_idempotency (route_key, idempotency_key, body_hash, response_json, status_code, created_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        route_key,
+                        idempotency_key,
+                        body_hash,
+                        json.dumps(response_json, ensure_ascii=False),
+                        int(status_code),
+                        now,
+                        expires_at,
+                    ),
+                )
+                conn.execute("DELETE FROM api_idempotency WHERE expires_at < ?", (now,))
+                conn.commit()
+                return {"replayed": False, "conflict": False}
+            existing = dict(row)
+            if float(existing.get("expires_at") or 0) < now:
+                conn.execute("DELETE FROM api_idempotency WHERE id = ?", (existing["id"],))
+                conn.execute(
+                    """
+                    INSERT INTO api_idempotency (route_key, idempotency_key, body_hash, response_json, status_code, created_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        route_key,
+                        idempotency_key,
+                        body_hash,
+                        json.dumps(response_json, ensure_ascii=False),
+                        int(status_code),
+                        now,
+                        expires_at,
+                    ),
+                )
+                conn.commit()
+                return {"replayed": False, "conflict": False}
+            if str(existing.get("body_hash") or "") != body_hash:
+                return {"replayed": False, "conflict": True, "status_code": 409}
+            payload = {}
+            try:
+                payload = json.loads(existing.get("response_json") or "{}")
+            except Exception:
+                payload = {}
+            return {
+                "replayed": True,
+                "conflict": False,
+                "status_code": int(existing.get("status_code") or 200),
+                "response_json": payload,
+            }
+        finally:
+            conn.close()
+
+    def get_idempotency(
+        self,
+        *,
+        route_key: str,
+        idempotency_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        now = time.time()
+        try:
+            row = conn.execute(
+                """
+                SELECT id, route_key, idempotency_key, body_hash, response_json, status_code, created_at, expires_at
+                FROM api_idempotency
+                WHERE route_key = ? AND idempotency_key = ?
+                """,
+                (route_key, idempotency_key),
+            ).fetchone()
+            if row is None:
+                return None
+            out = dict(row)
+            if float(out.get("expires_at") or 0) < now:
+                conn.execute("DELETE FROM api_idempotency WHERE id = ?", (out["id"],))
+                conn.commit()
+                return None
+            try:
+                out["response_json"] = json.loads(out.get("response_json") or "{}")
+            except Exception:
+                out["response_json"] = {}
+            return out
+        finally:
+            conn.close()
+
+    def store_idempotency(
+        self,
+        *,
+        route_key: str,
+        idempotency_key: str,
+        body_hash: str,
+        response_json: Dict[str, Any],
+        status_code: int,
+        window_seconds: int = 86400,
+    ) -> None:
+        now = time.time()
+        expires_at = now + max(1, int(window_seconds))
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO api_idempotency (route_key, idempotency_key, body_hash, response_json, status_code, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(route_key, idempotency_key)
+                DO UPDATE SET
+                    body_hash = excluded.body_hash,
+                    response_json = excluded.response_json,
+                    status_code = excluded.status_code,
+                    created_at = excluded.created_at,
+                    expires_at = excluded.expires_at
+                """,
+                (
+                    route_key,
+                    idempotency_key,
+                    body_hash,
+                    json.dumps(response_json, ensure_ascii=False),
+                    int(status_code),
+                    now,
+                    expires_at,
+                ),
+            )
+            conn.execute("DELETE FROM api_idempotency WHERE expires_at < ?", (now,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def webhook_seen(
+        self,
+        *,
+        provider: str,
+        external_event_id: str,
+        request_hash: str,
+    ) -> bool:
+        conn = self._connect()
+        now = time.time()
+        try:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO webhook_events (id, provider, external_event_id, request_hash, received_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"whk-{secrets.token_hex(8)}",
+                        provider.strip().lower(),
+                        external_event_id.strip(),
+                        request_hash,
+                        now,
+                    ),
+                )
+                conn.commit()
+                return False
+            except sqlite3.IntegrityError:
+                row = conn.execute(
+                    "SELECT request_hash FROM webhook_events WHERE provider = ? AND external_event_id = ?",
+                    (provider.strip().lower(), external_event_id.strip()),
+                ).fetchone()
+                # Seen before, regardless of payload. Caller can decide strictness.
+                return row is not None
+        finally:
+            conn.close()
+
+    def create_password_reset_token(self, *, user_id: str, ttl_seconds: int = 1800) -> str:
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = self.hash_token(raw_token)
+        now = time.time()
+        conn = self._connect()
+        try:
+            conn.execute("UPDATE password_reset_tokens SET consumed_at = ? WHERE user_id = ? AND consumed_at IS NULL", (now, user_id))
+            conn.execute(
+                """
+                INSERT INTO password_reset_tokens (id, user_id, token_hash, created_at, expires_at, consumed_at)
+                VALUES (?, ?, ?, ?, ?, NULL)
+                """,
+                (f"prt-{secrets.token_hex(8)}", user_id, token_hash, now, now + max(60, int(ttl_seconds))),
+            )
+            conn.commit()
+            return raw_token
+        finally:
+            conn.close()
+
+    def consume_password_reset_token(self, *, token: str) -> Optional[Dict[str, Any]]:
+        now = time.time()
+        token_hash = self.hash_token(token)
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM password_reset_tokens
+                WHERE token_hash = ?
+                  AND consumed_at IS NULL
+                  AND expires_at > ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (token_hash, now),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute("UPDATE password_reset_tokens SET consumed_at = ? WHERE id = ?", (now, row["id"]))
+            conn.commit()
+            return dict(row)
+        finally:
+            conn.close()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Feature: Post-call summaries (Feature 5)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def store_call_summary(
+        self,
+        *,
+        session_id: str,
+        customer_id: Optional[str] = None,
+        summary: Dict[str, Any],
+    ) -> None:
+        key_facts = summary.get("key_facts") or []
+        objections = summary.get("objections") or []
+        compliance_notes = summary.get("compliance_notes") or []
+        commitment = str(summary.get("commitment") or "")
+        next_step = str(summary.get("next_step") or "")
+        sentiment = str(summary.get("sentiment") or "")
+        disposition = str(summary.get("disposition") or "")
+        raw = str(summary.get("raw") or "")
+        search_text = " ".join(filter(None, [
+            " ".join(key_facts) if isinstance(key_facts, list) else str(key_facts),
+            " ".join(objections) if isinstance(objections, list) else str(objections),
+            " ".join(compliance_notes) if isinstance(compliance_notes, list) else str(compliance_notes),
+            commitment, next_step, sentiment,
+        ]))
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO call_summaries (
+                    session_id, customer_id, generated_ts,
+                    key_facts, objections, commitment, next_step,
+                    compliance_notes, sentiment, disposition, raw_summary, search_text
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    customer_id = excluded.customer_id,
+                    generated_ts = excluded.generated_ts,
+                    key_facts = excluded.key_facts,
+                    objections = excluded.objections,
+                    commitment = excluded.commitment,
+                    next_step = excluded.next_step,
+                    compliance_notes = excluded.compliance_notes,
+                    sentiment = excluded.sentiment,
+                    disposition = excluded.disposition,
+                    raw_summary = excluded.raw_summary,
+                    search_text = excluded.search_text
+                """,
+                (
+                    session_id, customer_id, time.time(),
+                    json.dumps(key_facts, ensure_ascii=False),
+                    json.dumps(objections, ensure_ascii=False),
+                    commitment, next_step,
+                    json.dumps(compliance_notes, ensure_ascii=False),
+                    sentiment, disposition, raw, search_text,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_call_summary(self, session_id: str) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM call_summaries WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            out = dict(row)
+            for field in ("key_facts", "objections", "compliance_notes"):
+                try:
+                    out[field] = json.loads(out.get(field) or "[]")
+                except Exception:
+                    out[field] = []
+            return out
+        finally:
+            conn.close()
+
+    def search_summaries(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            q = f"%{(query or '').strip().lower()}%"
+            rows = conn.execute(
+                """
+                SELECT * FROM call_summaries
+                WHERE LOWER(COALESCE(search_text,'')) LIKE ?
+                   OR LOWER(COALESCE(customer_id,'')) LIKE ?
+                   OR LOWER(COALESCE(session_id,'')) LIKE ?
+                ORDER BY generated_ts DESC
+                LIMIT ?
+                """,
+                (q, q, q, max(1, min(200, int(limit)))),
+            ).fetchall()
+            out = []
+            for row in rows:
+                d = dict(row)
+                for field in ("key_facts", "objections", "compliance_notes"):
+                    try:
+                        d[field] = json.loads(d.get(field) or "[]")
+                    except Exception:
+                        d[field] = []
+                out.append(d)
+            return out
+        finally:
+            conn.close()
+
+    def recent_summaries(self, limit: int = 20) -> List[Dict[str, Any]]:
+        return self.search_summaries("", limit=limit)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Feature: DPD roll-forward tracking (Feature 1)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _dpd_to_bucket(dpd: int) -> str:
+        if dpd <= 0:
+            return "0"
+        if dpd <= 30:
+            return "1-30"
+        if dpd <= 60:
+            return "31-60"
+        if dpd <= 90:
+            return "61-90"
+        return "90+"
+
+    def record_dpd_snapshot(
+        self,
+        *,
+        customer_id: str,
+        dpd_value: int,
+        dpd_bucket: Optional[str] = None,
+        source: str = "call",
+    ) -> None:
+        if not customer_id:
+            return
+        bucket = dpd_bucket or self._dpd_to_bucket(int(dpd_value or 0))
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO dpd_snapshots (customer_id, snapshot_ts, dpd_bucket, dpd_value, source)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (customer_id, time.time(), bucket, int(dpd_value or 0), source),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def roll_forward_matrix(self, days: int = 30) -> Dict[str, Any]:
+        from collections import defaultdict
+        cutoff = time.time() - (max(1, int(days)) * 86400)
+        BUCKETS = ["0", "1-30", "31-60", "61-90", "90+"]
+        bucket_order = {b: i for i, b in enumerate(BUCKETS)}
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT customer_id, dpd_bucket, snapshot_ts
+                FROM dpd_snapshots WHERE snapshot_ts >= ?
+                ORDER BY customer_id, snapshot_ts ASC
+                """,
+                (cutoff,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        cust_snaps: Dict[str, List] = defaultdict(list)
+        for r in rows:
+            cust_snaps[r["customer_id"]].append((r["snapshot_ts"], r["dpd_bucket"]))
+
+        matrix: Dict[str, Dict[str, int]] = {b: {b2: 0 for b2 in BUCKETS} for b in BUCKETS}
+        total_transitions = 0
+        roll_forward_count = 0
+        for snaps in cust_snaps.values():
+            if len(snaps) < 2:
+                continue
+            from_b = snaps[0][1] or "0"
+            to_b = snaps[-1][1] or "0"
+            from_b = from_b if from_b in bucket_order else "0"
+            to_b = to_b if to_b in bucket_order else "0"
+            if from_b in matrix:
+                matrix[from_b][to_b] = matrix[from_b].get(to_b, 0) + 1
+            total_transitions += 1
+            if bucket_order.get(to_b, 0) > bucket_order.get(from_b, 0):
+                roll_forward_count += 1
+
+        return {
+            "buckets": BUCKETS,
+            "matrix": matrix,
+            "total_transitions": total_transitions,
+            "roll_forward_count": roll_forward_count,
+            "roll_forward_pct": round((roll_forward_count / max(1, total_transitions)) * 100.0, 2),
+            "window_days": int(days),
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Feature: Agent productivity (Feature 3)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def update_outcome_agent(
+        self,
+        *,
+        session_id: str,
+        agent_id: str,
+        connect_duration_s: Optional[float] = None,
+    ) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                UPDATE outcomes
+                SET agent_id = ?,
+                    connect_duration_s = COALESCE(?, connect_duration_s)
+                WHERE session_id = ?
+                """,
+                (agent_id, connect_duration_s, session_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def agent_metrics(self) -> List[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    COALESCE(o.agent_id, 'unknown') AS agent_id,
+                    u.full_name AS display_name,
+                    COUNT(*) AS total_calls,
+                    SUM(CASE WHEN o.end_ts IS NOT NULL THEN 1 ELSE 0 END) AS connected_calls,
+                    AVG(CASE WHEN o.start_ts IS NOT NULL AND o.end_ts IS NOT NULL
+                             THEN o.end_ts - o.start_ts ELSE NULL END) AS avg_handle_time_s,
+                    SUM(CASE WHEN o.ptp_date IS NOT NULL AND o.ptp_date != '' THEN 1 ELSE 0 END) AS ptp_count,
+                    SUM(COALESCE(o.escalations, 0)) AS total_escalations
+                FROM outcomes o
+                LEFT JOIN users u ON u.id = o.agent_id OR u.username = o.agent_id
+                WHERE o.agent_id IS NOT NULL
+                GROUP BY COALESCE(o.agent_id, 'unknown')
+                ORDER BY ptp_count DESC
+                """
+            ).fetchall()
+            viol_rows = conn.execute(
+                """
+                SELECT o.agent_id, COUNT(*) AS n
+                FROM compliance_violations cv
+                JOIN outcomes o ON cv.session_id = o.session_id
+                WHERE o.agent_id IS NOT NULL
+                GROUP BY o.agent_id
+                """
+            ).fetchall()
+            viol_by_agent = {r["agent_id"]: int(r["n"] or 0) for r in viol_rows}
+            out = []
+            for idx, r in enumerate(rows):
+                agent_id = r["agent_id"]
+                total = int(r["total_calls"] or 0)
+                connected = int(r["connected_calls"] or 0)
+                ptp = int(r["ptp_count"] or 0)
+                out.append({
+                    "rank": idx + 1,
+                    "agent_id": agent_id,
+                    "display_name": r["display_name"] or agent_id,
+                    "total_calls": total,
+                    "connected_calls": connected,
+                    "connect_rate_pct": round((connected / max(1, total)) * 100.0, 1),
+                    "avg_handle_time_s": round(float(r["avg_handle_time_s"] or 0), 1),
+                    "ptp_count": ptp,
+                    "ptp_conversion_pct": round((ptp / max(1, connected)) * 100.0, 1),
+                    "total_escalations": int(r["total_escalations"] or 0),
+                    "escalations": int(r["total_escalations"] or 0),  # UI alias
+                    "compliance_violations": viol_by_agent.get(agent_id, 0),
+                })
+            return out
+        finally:
+            conn.close()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Feature: Realized recovery rate (Feature 2)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _safe_query(conn: "sqlite3.Connection", sql: str, args: tuple = ()) -> List[Any]:
+        try:
+            return conn.execute(sql, args).fetchall()
+        except Exception:
+            return []
+
+    def realized_recovery_trend(self, days: int = 30) -> Dict[str, Any]:
+        cutoff = time.time() - (max(1, int(days)) * 86400)
+        conn = self._connect()
+        try:
+            daily_rows = self._safe_query(
+                conn,
+                """
+                SELECT
+                    DATE(COALESCE(updated_at, created_at), 'unixepoch', 'localtime') AS day,
+                    SUM(amount) AS day_amount,
+                    COUNT(*) AS day_count
+                FROM payment_intents
+                WHERE status = 'SUCCEEDED'
+                  AND COALESCE(updated_at, created_at) >= ?
+                GROUP BY day
+                ORDER BY day ASC
+                """,
+                (cutoff,),
+            )
+            total_recovered = sum(float(r["day_amount"] or 0) for r in daily_rows)
+            reconciliation = self._safe_query(
+                conn,
+                """
+                SELECT pi.id, pi.customer_id, pi.amount, pi.currency,
+                       pi.loan_account_id,
+                       COALESCE(pi.updated_at, pi.created_at) AS ts,
+                       DATE(COALESCE(pi.updated_at, pi.created_at), 'unixepoch', 'localtime') AS date,
+                       o.session_id
+                FROM payment_intents pi
+                LEFT JOIN outcomes o ON o.customer_id = pi.customer_id
+                WHERE pi.status = 'SUCCEEDED'
+                  AND COALESCE(pi.updated_at, pi.created_at) >= ?
+                ORDER BY ts DESC
+                LIMIT 100
+                """,
+                (cutoff,),
+            )
+            # Portfolio value: sum of all outstanding principal from loan_accounts.
+            portfolio_value = 0.0
+            pv_rows = self._safe_query(
+                conn,
+                "SELECT SUM(COALESCE(principal_outstanding, 0)) AS total FROM loan_accounts",
+                (),
+            )
+            if pv_rows:
+                portfolio_value = float(pv_rows[0]["total"] or 0)
+            recovery_rate_pct = (
+                round((total_recovered / portfolio_value) * 100.0, 2)
+                if portfolio_value > 0
+                else 0.0
+            )
+            return {
+                "dates": [r["day"] for r in daily_rows],
+                "amounts": [float(r["day_amount"] or 0) for r in daily_rows],
+                "daily_counts": [int(r["day_count"] or 0) for r in daily_rows],
+                "total_recovered": round(total_recovered, 2),
+                "portfolio_value": round(portfolio_value, 2),
+                "recovery_rate_pct": recovery_rate_pct,
+                "window_days": int(days),
+                "reconciliation": [dict(r) for r in reconciliation],
+            }
         finally:
             conn.close()

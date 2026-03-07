@@ -30,6 +30,12 @@ from strategy_engine import StrategyEngine
 from compliance_engine import ComplianceEngine
 from followup_service import FollowupService
 from integrations.crm_adapter import CRMAdapter
+try:
+    from settlement_service import SettlementService as _SettlementService
+    from approval_service import ApprovalService as _ApprovalService
+except ImportError:
+    _SettlementService = None  # type: ignore
+    _ApprovalService = None  # type: ignore
 from datetime_utils import (
     parse_date_from_text,
     parse_time_from_text,
@@ -42,9 +48,11 @@ logger = logging.getLogger(__name__)
 SendEvent = Callable[[dict], Awaitable[None]]
 SendAudio = Callable[[bytes], Awaitable[None]]
 
-_CONSENT_PROMPT = "This call may be recorded for quality. Do I have your consent to continue?"
+_EN_CONSENT_PROMPT = "This call may be recorded. May I continue?"
+_HI_CONSENT_PROMPT = "यह कॉल रिकॉर्ड हो सकती है। क्या मैं आगे बढ़ूँ?"
 _CONSENT_PROMPT_RE = re.compile(
-    r"this call may be recorded for quality[\.\!\?]?\s*do i have your consent to continue[\.\!\?]?",
+    r"(?:this call may be recorded(?: for quality)?[\.\!\?]?\s*(?:do i have your consent to continue|may i continue)[\.\!\?]?|"
+    r"यह कॉल रिकॉर्ड हो सकती है[\.\!\?]?\s*क्या मैं आगे बढ़ूँ[\.\!\?]?)",
     flags=re.IGNORECASE,
 )
 
@@ -171,6 +179,7 @@ class WebCallSession:
         action_router: Optional[ActionRouter] = None,
         knowledge_store: Optional[SQLiteFTSKnowledgeStore] = None,
         session_registry: Optional[dict] = None,
+        snapshot_update_hook: Optional[Callable[[dict], None]] = None,
         strategy_engine: Optional[StrategyEngine] = None,
         compliance_engine: Optional[ComplianceEngine] = None,
         followup_service: Optional[FollowupService] = None,
@@ -183,6 +192,7 @@ class WebCallSession:
         self.tts_voice = tts_voice
         self.tts_model = tts_model
         self.tts_speaker = tts_speaker
+        self._default_brand_name = (get_env("AGENT_BRAND_NAME", "TuringEdge") or "TuringEdge").strip()
         self.greeting_text = self._normalize_branding_text(greeting_text) if greeting_text else greeting_text
         # CHANGE: Conversation memory (history + optional persistence).
         self._max_history_turns = max(1, max_history_turns)
@@ -190,6 +200,8 @@ class WebCallSession:
         self._session_id = uuid.uuid4().hex[:12]
         self._session_store = SessionStore(session_store_path, self._session_id) if session_store_path else None
         self._dynamic_stt_language = dynamic_stt_language
+        # Do not auto-switch response language from STT detections unless explicitly enabled.
+        self._auto_align_language = get_env_bool("AUTO_ALIGN_LANGUAGE", False)
         self._pending_stt_language: Optional[str] = None
         self._last_detected_stt_lang: Optional[str] = None
         self._detected_stt_lang_streak: int = 0
@@ -225,6 +237,7 @@ class WebCallSession:
         self._tts_start_ts: float = 0.0
         self._last_tts_end_ts: float = 0.0
         self._barge_in_grace_s: float = max(0.2, float(get_env("BARGE_IN_GRACE_S", "0.45") or 0.45))
+        self._barge_in_fade_ms: int = max(0, int(get_env("BARGE_IN_FADE_MS", "160") or 160))
         self._barge_in_min_speech_frames: int = max(
             2, int(get_env("BARGE_IN_MIN_SPEECH_FRAMES", "5") or 5)
         )
@@ -270,8 +283,8 @@ class WebCallSession:
                 "ask_utr": False,
             },
             "confirmed": {
-                "awareness": False,
-                "identity": False,
+                "awareness": None,
+                "identity": None,
                 "payment_made": None,
             },
             "pending_intent": None,
@@ -288,6 +301,7 @@ class WebCallSession:
             "callback_time": None,
             "reference_number": None,
             "language_preference": None,
+            "brand_name": self._default_brand_name,
             "mentioned_family": False,
             "family_emergency": False,
             "job_loss_mentioned": False,
@@ -301,6 +315,13 @@ class WebCallSession:
         self._drift_count: int = 0
         self._interrupted_response: str = ""
         self._interrupted_at: float = 0.0
+        self._pending_interrupt_ack: bool = False
+        self._pending_repair_type: Optional[str] = None
+        self._pending_resume_hint: Optional[str] = None
+        self._pending_customer_meta_question: Optional[str] = None
+        self._force_dynamic_reply_once: bool = False
+        self._delayed_close_task: Optional[asyncio.Task] = None
+        self._call_ended_sent: bool = False
         self._cancel_lock = asyncio.Lock()
         self._last_transcript_text = ""
         self._last_user_text: str = ""
@@ -309,6 +330,9 @@ class WebCallSession:
         self._last_user_text_ts: float = 0.0
         self._last_assistant_text_ts: float = 0.0
         self._dedupe_window_s: float = 2.5
+        self._agent_max_sentences: int = max(1, int(get_env("AGENT_MAX_SENTENCES", "2") or 2))
+        self._agent_max_chars: int = max(80, int(get_env("AGENT_MAX_CHARS", "220") or 220))
+        self._agent_max_questions: int = max(1, int(get_env("AGENT_MAX_QUESTIONS", "1") or 1))
         self._last_persisted_ptp: Optional[str] = None
         self._last_persisted_callback: Optional[str] = None
         self._refusal_followup_emitted: bool = False
@@ -319,6 +343,7 @@ class WebCallSession:
         self._action_router = action_router
         self._knowledge_store = knowledge_store
         self._session_registry = session_registry
+        self._snapshot_update_hook = snapshot_update_hook
         self._strategy_engine = strategy_engine
         self._compliance_engine = compliance_engine
         self._followup_service = followup_service
@@ -335,12 +360,15 @@ class WebCallSession:
 
         # Deterministic workflow engine
         self._enable_advanced_workflow = get_env_bool("ENABLE_ADVANCED_WORKFLOW", True)
-        self._workflow_max_retries = int(get_env("WORKFLOW_MAX_RETRIES", "2") or 2)
+        self._workflow_max_retries = int(get_env("WORKFLOW_MAX_RETRIES", "3") or 3)
         self._workflow_tz = get_env("WORKFLOW_TZ", "Asia/Kolkata") or "Asia/Kolkata"
         self._ptp_min_days = int(get_env("PTP_MIN_DAYS", "0") or 0)
         self._ptp_max_days = int(get_env("PTP_MAX_DAYS", "30") or 30)
         self._callback_hours_start = int(get_env("CALLBACK_HOURS_START", "9") or 9)
         self._callback_hours_end = int(get_env("CALLBACK_HOURS_END", "20") or 20)
+        self._enable_fixed_workflow_turns = get_env_bool("ENABLE_FIXED_WORKFLOW_TURNS", True)
+        self._enable_tts_humanization = get_env_bool("ENABLE_TTS_HUMANIZATION", True)
+        self._enable_tts_prosody_hints = get_env_bool("ENABLE_TTS_PROSODY_HINTS", False)
         self._wf = WorkflowEngine(
             enable_advanced=self._enable_advanced_workflow,
             max_retries=self._workflow_max_retries,
@@ -371,6 +399,13 @@ class WebCallSession:
         self._log_partial_transcripts = log_partial_transcripts
         self._log_tokens = log_tokens
         self._log_audio_chunks = log_audio_chunks
+        self._voice_debug_trace = get_env_bool("VOICE_DEBUG_TRACE", False)
+        self._voice_debug_audio_every_frames = max(
+            1, int(get_env("VOICE_DEBUG_AUDIO_EVERY_FRAMES", "10") or 10)
+        )
+        self._voice_debug_text_preview_chars = max(
+            40, int(get_env("VOICE_DEBUG_TEXT_PREVIEW_CHARS", "120") or 120)
+        )
         self._tts_stream_chunk_chars = max(1, tts_stream_chunk_chars)
         self._tts_stream_flush_punct = tts_stream_flush_punct
         self._tts_min_buffer_size = max(0, int(tts_min_buffer_size))
@@ -391,7 +426,8 @@ class WebCallSession:
         self._current_llm_token_count = 0
         self._watchdog_task: Optional[asyncio.Task] = None
         self._stt_reconnect_lock = asyncio.Lock()
-        self._apply_context_language_to_stt = get_env_bool("STT_APPLY_CONTEXT_LANGUAGE", False)
+        self._stt_stream_restart_requested = False
+        self._apply_context_language_to_stt = get_env_bool("STT_APPLY_CONTEXT_LANGUAGE", True)
         self._audio_drop_count = 0
         self._last_queue_log_ts = 0.0
         self._speech_start_ts: Optional[float] = None
@@ -462,26 +498,53 @@ class WebCallSession:
             barge_in_min_speech_frames=self._barge_in_min_speech_frames,
             min_flush_speech_frames=self._min_flush_speech_frames,
         )
+        self._debug_trace(
+            "session_start",
+            stt_model=self.stt.model,
+            llm_model=self.llm.model,
+            tts_model=self.tts_model,
+            tts_speaker=self.tts_speaker or self.tts_voice,
+        )
         await self.send_event({"type": "status", "state": "ready"})
         self._set_turn_state("IDLE")
         # Greeting is triggered after client "start" (so customer context is loaded first).
 
     async def start_greeting(self) -> None:
-        if not self.greeting_text or self._greeting_started:
+        if self._greeting_started:
             return
         self._greeting_started = True
         self._greeting_active = True
         self._has_greeted = True
-        # If no language preference has been set yet, default to the greeting
-        # language so that the agent stays in English until the user explicitly
-        # switches.  The greeting text is always English in the current config.
+        # If the caller did not set a starting language, default to Hindi.
         if not self._facts.get("language_preference"):
-            self._facts["language_preference"] = "en-IN"
+            self._facts["language_preference"] = "hi-IN"
+        preferred_lang = self._canonical_language_code(self._facts.get("language_preference"))
+        preferred_stt_lang = self._resolve_stt_connect_language(preferred_lang)
+        if self._dynamic_stt_language and preferred_stt_lang and preferred_stt_lang != self.stt.language:
+            self._pending_stt_language = preferred_stt_lang
+            if self._in_silence:
+                try:
+                    await self._apply_language_update()
+                except Exception as exc:
+                    log_event(
+                        logger,
+                        "stt_language_update_error",
+                        session_id=self._session_id,
+                        language=preferred_stt_lang,
+                        error=str(exc),
+                    )
         greeting = self._select_varied_greeting()
         asyncio.create_task(self._start_tts_only(greeting), name="greeting")
 
     async def stop(self) -> None:
         await self._cancel_generation()
+        close_task = getattr(self, "_delayed_close_task", None)
+        current_task = asyncio.current_task()
+        if close_task and close_task is not current_task and not close_task.done():
+            close_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await close_task
+        self._delayed_close_task = None
         for task in [self._audio_sender_task, self._stt_task, self._watchdog_task]:
             if task and not task.done():
                 task.cancel()
@@ -491,6 +554,103 @@ class WebCallSession:
                     await task
         await self.stt.close()
         log_event(logger, "session_stop", session_id=self._session_id)
+        # Fire-and-forget post-call summary (non-blocking).
+        if self._audit_store and self._wf_state:
+            asyncio.create_task(self._generate_post_call_summary(), name="post_call_summary")
+
+    async def _delayed_session_close(self, delay_s: float = 2.0) -> None:
+        """Pause briefly after the closing farewell message, then stop the session."""
+        try:
+            await asyncio.sleep(delay_s)
+            log_event(
+                logger,
+                "session_auto_close",
+                session_id=self._session_id,
+                disposition=getattr(self._wf_state, "disposition", None),
+            )
+            await self.stop()
+        finally:
+            self._delayed_close_task = None
+
+    async def _emit_call_ended_once(self) -> None:
+        if self._call_ended_sent:
+            return
+        self._call_ended_sent = True
+        await self.send_event(
+            {
+                "type": "call_ended",
+                "disposition": getattr(self._wf_state, "disposition", None) or "closed",
+            }
+        )
+
+    def _schedule_session_close(self, delay_s: float = 2.0) -> None:
+        task = getattr(self, "_delayed_close_task", None)
+        if task and not task.done():
+            task.cancel()
+        self._delayed_close_task = asyncio.create_task(
+            self._delayed_session_close(delay_s=delay_s),
+            name="delayed_close",
+        )
+
+    async def _generate_post_call_summary(self) -> None:
+        """Fire-and-forget: generate LLM post-call summary and persist it."""
+        import json as _json
+        try:
+            # Build compact transcript from last 20 turns (skip system message).
+            turns = [
+                m for m in self._chat_history
+                if m.get("role") in ("user", "assistant")
+            ][-20:]
+            transcript_lines = [f"{m['role'].upper()}: {m.get('content','')}" for m in turns]
+            transcript = "\n".join(transcript_lines)
+
+            disposition = str(getattr(self._wf_state, "disposition", "") or "unknown")
+            ptp_date = str(getattr(self._wf_state, "ptp_date", "") or "")
+            dpd = str(self._facts.get("dpd") or "")
+            customer_id = str(self._facts.get("customer_id") or "") or None
+
+            prompt = (
+                "Summarize this collections call. Output valid JSON only with these exact keys:\n"
+                '{"key_facts": [str], "objections": [str], "commitment": str, '
+                '"next_step": str, "compliance_notes": [str], "sentiment": str}\n'
+                f"Context: disposition={disposition}, ptp_date={ptp_date}, dpd={dpd}\n"
+                f"Transcript (last 20 turns):\n{transcript}"
+            )
+            messages = [
+                {"role": "system", "content": "You are a collections call summarizer. Output JSON only."},
+                {"role": "user", "content": prompt},
+            ]
+            raw_parts: list[str] = []
+            async for token in self.llm.stream_tokens(messages=messages):
+                raw_parts.append(token)
+            raw_summary = "".join(raw_parts).strip()
+
+            # Parse JSON — be lenient: find first { ... } block.
+            summary: dict = {}
+            try:
+                start = raw_summary.index("{")
+                end = raw_summary.rindex("}") + 1
+                summary = _json.loads(raw_summary[start:end])
+            except Exception:
+                summary = {"raw_only": True}
+
+            self._audit_store.store_call_summary(
+                session_id=self._session_id,
+                customer_id=customer_id,
+                summary={
+                    "key_facts": summary.get("key_facts") or [],
+                    "objections": summary.get("objections") or [],
+                    "commitment": str(summary.get("commitment") or ""),
+                    "next_step": str(summary.get("next_step") or ""),
+                    "compliance_notes": summary.get("compliance_notes") or [],
+                    "sentiment": str(summary.get("sentiment") or ""),
+                    "disposition": disposition,
+                    "raw_summary": raw_summary,
+                },
+            )
+            log_event(logger, "post_call_summary_stored", session_id=self._session_id)
+        except Exception as exc:
+            log_event(logger, "post_call_summary_error", session_id=self._session_id, error=str(exc))
 
     async def handle_audio(self, pcm_bytes: bytes) -> None:
         if not pcm_bytes:
@@ -522,6 +682,13 @@ class WebCallSession:
                 bytes=self._audio_bytes,
                 rms=round(rms, 2),
             )
+        if self._audio_frames == 1 or self._audio_frames % getattr(self, "_voice_debug_audio_every_frames", 10) == 0:
+            self._debug_trace(
+                "audio_frame",
+                bytes=len(pcm_bytes),
+                rms=round(rms, 2),
+                audio_bytes=self._audio_bytes,
+            )
         if rms < self._vad_threshold:
             self._silent_frames += 1
             self._vad_speech_frames = 0
@@ -550,7 +717,17 @@ class WebCallSession:
                     if self._dynamic_stt_language and self._pending_stt_language:
                         await self._apply_language_update()
                     # Flush once on silence transition to finalize STT.
-                    if self._should_flush_on_silence_transition(segment_duration_ms=segment_duration_ms):
+                    should_flush = self._should_flush_on_silence_transition(segment_duration_ms=segment_duration_ms)
+                    self._debug_trace(
+                        "silence_transition",
+                        segment_duration_ms=segment_duration_ms,
+                        should_flush=should_flush,
+                        short_flush_skip_count=self._short_flush_skip_count,
+                        min_flush_speech_frames=self._min_flush_speech_frames,
+                        force_flush_after_skips=self._force_flush_after_skips,
+                        ms_since_last_final=int((time.time() - self._last_stt_final_ts) * 1000),
+                    )
+                    if should_flush:
                         now = time.time()
                         try:
                             await self.stt.flush()
@@ -587,6 +764,7 @@ class WebCallSession:
                 self._last_speech_ts = time.time()  # Update last speech timestamp
                 self._first_partial_logged = False
                 log_event(logger, "vad_speech_start", session_id=self._session_id, rms=round(rms, 2))
+                self._debug_trace("vad_speech_start", rms=round(rms, 2))
                 self._cancel_no_response_watch()
                 self._set_turn_state("USER_SPEAKING")
                 # Bind this reply to the last pending question as soon as speech starts.
@@ -662,11 +840,21 @@ class WebCallSession:
 
         self._last_activity_ts = time.time()
 
-        # If the assistant is currently speaking, treat typed text as barge-in.
-        if self._tts_playing.is_set():
+        # Always preempt stale in-flight replies on a fresh user turn.
+        preempt_mode = self._preempt_mode_for_user_turn()
+        if preempt_mode == "interrupt":
             await self._graceful_interrupt("typed")
+        elif preempt_mode == "cancel":
+            await self._cancel_generation()
+            log_event(
+                logger,
+                "generation_preempted",
+                session_id=self._session_id,
+                reason="typed_user_turn",
+            )
 
         lang = self._resolve_output_language(language)
+        self._debug_trace("typed_user_turn", text=t, language=lang)
 
         # Show the typed message in the UI transcript stream.
         await self.send_event(
@@ -684,7 +872,12 @@ class WebCallSession:
         # Update facts and generate an assistant response.
         self._last_user_text = t
         self._log_message(role="user", content=t)
+        previous_customer_name = str(self._facts.get("customer_name") or "").strip()
         self._extract_facts_from_text(t)
+        meta_q = self._detect_customer_meta_question(t)
+        if meta_q:
+            self._pending_customer_meta_question = meta_q
+            self._force_dynamic_reply_once = True
         reply_step = self._pending_step_id or self._wf_state.last_agent_intent or self._wf_state.current_step
         requested_language = self._detect_language_switch_request(t)
         if requested_language:
@@ -700,12 +893,20 @@ class WebCallSession:
             self._wf_state,
             extracted={
                 "customer_name": self._facts.get("customer_name"),
+                "identity_name_preexisting": bool(previous_customer_name),
                 "ptp_date": self._facts.get("ptp_date"),
                 "reference_number": self._facts.get("reference_number"),
                 "callback_time": self._facts.get("callback_time"),
             },
             reply_to_step_id=reply_step,
         )
+        self._debug_trace(
+            "typed_user_turn_processed",
+            text=t,
+            reply_step=reply_step,
+            extracted_customer_name=self._facts.get("customer_name"),
+        )
+        self._consume_pending_step_binding()
         self._sync_workflow_from_facts()
         self._persist_commitments()
         self._persist_state()  # Persist state after extracting facts
@@ -729,8 +930,12 @@ class WebCallSession:
             "ptp_date": ["ptp_date", "ptpDate"],
             "reference_number": ["reference_number", "reference", "utr", "referenceNumber"],
             "language_preference": ["language_preference", "language", "lang", "languagePreference"],
+            "brand_name": ["brand_name", "brand", "lender", "lender_name", "company_name", "organization_name", "org_name"],
             "dpd": ["dpd", "days_past_due", "daysPastDue"],
             "risk_band": ["risk_band", "risk", "riskBand"],
+            "agent_id": ["agent_id", "agentId"],
+            "tts_speaker": ["tts_speaker", "ttsSpeaker", "speaker", "speaker_name", "speakerName", "bulbul_voice", "bulbulVoice"],
+            "tts_model": ["tts_model", "ttsModel"],
         }
 
         updated = {}
@@ -760,19 +965,53 @@ class WebCallSession:
             self._facts["language_preference"] = self._canonical_language_code(
                 str(updated["language_preference"]).strip()
             )
+        if updated.get("brand_name"):
+            self._facts["brand_name"] = str(updated["brand_name"]).strip()
         if updated.get("dpd") is not None:
             self._facts["dpd"] = updated.get("dpd")
+            # Record DPD snapshot for roll-forward tracking.
+            if self._audit_store and self._facts.get("customer_id"):
+                try:
+                    dpd_val = updated["dpd"]
+                    dpd_int = None
+                    try:
+                        dpd_int = int(dpd_val)
+                    except (TypeError, ValueError):
+                        pass
+                    self._audit_store.record_dpd_snapshot(
+                        customer_id=str(self._facts["customer_id"]),
+                        dpd_value=dpd_int,
+                        source="context",
+                    )
+                except Exception:
+                    pass
         if updated.get("risk_band") is not None:
             self._facts["risk_band"] = updated.get("risk_band")
+        if updated.get("agent_id"):
+            self._facts["agent_id"] = str(updated["agent_id"]).strip()
+            if self._audit_store:
+                try:
+                    self._audit_store.update_outcome_agent(
+                        session_id=self._session_id,
+                        agent_id=self._facts["agent_id"],
+                    )
+                except Exception:
+                    pass
+        if updated.get("tts_speaker"):
+            self.tts_speaker = str(updated["tts_speaker"]).strip().lower()
+        if updated.get("tts_model"):
+            self.tts_model = str(updated["tts_model"]).strip()
 
         # Optionally update STT language for subsequent audio, if dynamic language is enabled.
         if (
             self._dynamic_stt_language
             and self._apply_context_language_to_stt
+            and self._stt_task is not None
             and self._facts.get("language_preference")
         ):
-            self._pending_stt_language = self._facts.get("language_preference")
-            if self._in_silence:
+            pending_lang = self._resolve_stt_connect_language(self._facts.get("language_preference"))
+            self._pending_stt_language = pending_lang
+            if self._in_silence and pending_lang:
                 await self._apply_language_update()
 
         self._persist_state()  # Persist state after context update
@@ -828,6 +1067,9 @@ class WebCallSession:
                     consent=self._wf_state.consent,
                     identity_confirmed=bool(self._wf_state.identity_confirmed),
                     current_step=self._wf_state.current_step,
+                    hardship_detected=bool(self._wf_state.hardship_detected),
+                    dispute_raised=bool(self._wf_state.dispute_raised),
+                    legal_hold=bool(self._wf_state.legal_hold),
                 )
                 for v in violations:
                     self._audit_store.record_compliance_violation(
@@ -842,7 +1084,7 @@ class WebCallSession:
                 log_event(logger, "compliance_eval_error", session_id=self._session_id, error=str(exc))
         if self._session_registry is not None:
             try:
-                self._session_registry[self._session_id] = self.get_snapshot()
+                self._publish_snapshot()
             except Exception as exc:
                 log_event(logger, "session_registry_update_error", session_id=self._session_id, error=str(exc))
 
@@ -853,6 +1095,18 @@ class WebCallSession:
 
     def _set_turn_state(self, state: str) -> None:
         self._turn_state = state
+
+    def _has_active_generation(self) -> bool:
+        task = getattr(self, "_gen_task", None)
+        return bool(task and not task.done())
+
+    def _preempt_mode_for_user_turn(self) -> Optional[str]:
+        """Return how a new user turn should preempt an in-flight assistant reply."""
+        if not self._has_active_generation():
+            return None
+        if self._tts_playing.is_set() or self._tts_pending:
+            return "interrupt"
+        return "cancel"
 
     async def _start_fixed_turn(
         self,
@@ -904,6 +1158,7 @@ class WebCallSession:
             self._log_workflow_transition(from_step=prev, to_step=next_step, reason=reason)
         else:
             self._wf_state.current_step = next_step
+        self._debug_trace("workflow_step", prev_step=prev, next_step=next_step, reason=reason)
         # Emit workflow update to frontend for live progress tracking
         self._emit_workflow_update()
         return next_step
@@ -930,6 +1185,7 @@ class WebCallSession:
         self._pending_turn_id = self._current_turn_id
         if self._current_utterance_id:
             self._pending_utterance_id = self._current_utterance_id
+        self._debug_trace("set_pending_step", step=step, turn_id=self._pending_turn_id, utterance_id=self._pending_utterance_id)
 
     def _next_utterance_id(self) -> str:
         self._utterance_seq += 1
@@ -941,6 +1197,45 @@ class WebCallSession:
             ts = self._last_event_ts_ms + 1
         self._last_event_ts_ms = ts
         return ts
+
+    def _debug_text_preview(self, text: Optional[str]) -> Optional[str]:
+        if text is None:
+            return None
+        value = " ".join(str(text).split()).strip()
+        if not value:
+            return ""
+        limit = max(40, int(getattr(self, "_voice_debug_text_preview_chars", 120) or 120))
+        if len(value) <= limit:
+            return value
+        return value[: limit - 3] + "..."
+
+    def _debug_trace(self, phase: str, **fields) -> None:
+        if not getattr(self, "_voice_debug_trace", False):
+            return
+        payload = {
+            "session_id": self._session_id,
+            "phase": phase,
+            "current_step": getattr(self._wf_state, "current_step", None),
+            "pending_step": getattr(self, "_pending_step_id", None),
+            "reply_to_step": getattr(self, "_reply_to_step_id", None),
+            "last_agent_intent": getattr(self._wf_state, "last_agent_intent", None),
+            "consent": getattr(self._wf_state, "consent", None),
+            "identity_confirmed": getattr(self._wf_state, "identity_confirmed", None),
+            "awareness_confirmed": getattr(self._wf_state, "awareness_confirmed", None),
+            "in_silence": getattr(self, "_in_silence", None),
+            "vad_speech_frames": getattr(self, "_vad_speech_frames", None),
+            "segment_speech_frames": getattr(self, "_segment_speech_frames", None),
+            "audio_frames": getattr(self, "_audio_frames", None),
+            "has_sent_audio": getattr(self, "_has_sent_audio", None),
+            "stt_language": getattr(getattr(self, "stt", None), "language", None),
+            "pending_stt_language": getattr(self, "_pending_stt_language", None),
+        }
+        for key, value in fields.items():
+            if isinstance(value, str):
+                payload[key] = self._debug_text_preview(value)
+            else:
+                payload[key] = value
+        log_event(logger, "voice_debug", **payload)
 
     async def _emit_timeline_event(self, event_type: str, **payload) -> None:
         ts = self._event_ts_ms()
@@ -970,6 +1265,24 @@ class WebCallSession:
             step=step,
             turn_id=self._reply_to_turn_id,
         )
+        self._debug_trace(
+            "freeze_reply_binding",
+            reason=reason,
+            step=step,
+            turn_id=self._reply_to_turn_id,
+            utterance_id=self._reply_to_utterance_id,
+        )
+
+    def _consume_pending_step_binding(self) -> None:
+        self._debug_trace(
+            "consume_pending_step_binding",
+            consumed_step=self._pending_step_id,
+            consumed_turn_id=getattr(self, "_pending_turn_id", None),
+            consumed_utterance_id=getattr(self, "_pending_utterance_id", None),
+        )
+        self._pending_step_id = None
+        self._pending_turn_id = None
+        self._pending_utterance_id = None
 
     def _cancel_vad_barge(self) -> None:
         if self._vad_barge_task and not self._vad_barge_task.done():
@@ -1003,14 +1316,22 @@ class WebCallSession:
         self._cancel_no_response_watch()
         self._last_question_ts = time.time()
         self._no_response_task = asyncio.create_task(self._no_response_loop(), name="no_response_watch")
+        self._debug_trace("schedule_no_response_watch", last_question_ts=round(self._last_question_ts, 3))
 
     async def _no_response_loop(self) -> None:
         try:
             await asyncio.sleep(8.0)
             # If user spoke or agent is speaking, skip reprompt.
             if self._last_speech_ts > self._last_question_ts or self._tts_playing.is_set():
+                self._debug_trace(
+                    "no_response_watch_cancelled",
+                    reason="user_spoke_or_tts",
+                    last_speech_ts=round(self._last_speech_ts, 3),
+                    last_question_ts=round(self._last_question_ts, 3),
+                )
                 return
             self._last_question_ts = time.time()
+            self._debug_trace("no_response_reprompt")
             await self._run_fixed_turn(
                 assistant_text="Just checking—are you still there?",
                 language=self._facts.get("language_preference"),
@@ -1020,7 +1341,14 @@ class WebCallSession:
             )
             await asyncio.sleep(8.0)
             if self._last_speech_ts > self._last_question_ts or self._tts_playing.is_set():
+                self._debug_trace(
+                    "no_response_watch_cancelled",
+                    reason="user_spoke_or_tts_after_reprompt",
+                    last_speech_ts=round(self._last_speech_ts, 3),
+                    last_question_ts=round(self._last_question_ts, 3),
+                )
                 return
+            self._debug_trace("no_response_end")
             await self._run_fixed_turn(
                 assistant_text="I’ll call back later. Thank you.",
                 language=self._facts.get("language_preference"),
@@ -1029,6 +1357,7 @@ class WebCallSession:
                 schedule_no_response=False,
             )
         except asyncio.CancelledError:
+            self._debug_trace("no_response_watch_cancelled", reason="task_cancelled")
             return
 
     def _persist_commitments(self) -> None:
@@ -1176,9 +1505,208 @@ class WebCallSession:
         }
         return names.get(code, code)
 
+    def _resolve_stt_connect_language(self, language: Optional[str]) -> Optional[str]:
+        code = self._canonical_language_code(language)
+        if not code:
+            return None
+        # For non-English calls, let Sarvam auto-detect the speech language at the
+        # STT layer instead of hard-pinning the socket to a single locale.
+        if code != "en-IN":
+            return "unknown"
+        return code
+
+    def _stt_uses_auto_detect(self) -> bool:
+        current = str(getattr(self.stt, "language", "") or "").strip().lower()
+        return current == "unknown"
+
+    def _resolve_requested_stt_language(self, language: Optional[str]) -> Optional[str]:
+        connect_language = self._resolve_stt_connect_language(language)
+        if self._stt_uses_auto_detect():
+            return "unknown"
+        return connect_language or self._canonical_language_code(language) or language
+
+    async def _queue_detected_stt_language_update(
+        self,
+        detected_language: Optional[str],
+        *,
+        source: str,
+    ) -> None:
+        detected_lang = self._canonical_language_code(detected_language)
+        if not (self._dynamic_stt_language and detected_lang):
+            return
+        connect_language = self._resolve_requested_stt_language(detected_lang) or detected_lang
+        if connect_language == self.stt.language:
+            return
+        self._pending_stt_language = connect_language
+        log_event(
+            logger,
+            "stt_language_detected",
+            session_id=self._session_id,
+            language=detected_lang,
+            connect_language=connect_language,
+            source=source,
+        )
+        if self._in_silence:
+            await self._apply_language_update()
+
+    def _speaker_gender(self) -> str:
+        speaker = (self.tts_speaker or "").strip().lower()
+        female_speakers = {
+            "ritu",
+            "priya",
+            "neha",
+            "pooja",
+            "simran",
+            "kavya",
+            "ishita",
+            "shreya",
+            "roopa",
+            "amelia",
+            "sophia",
+            "tanya",
+            "shruti",
+            "suhani",
+            "kavitha",
+            "rupali",
+        }
+        return "female" if speaker in female_speakers else "male"
+
+    def _apply_hindi_speaker_style(self, text: str, language: Optional[str]) -> str:
+        lang = self._canonical_language_code(language)
+        if lang != "hi-IN":
+            return text
+        male_replacements = (
+            ("बात कर रही हूँ", "बात कर रहा हूँ"),
+            ("कॉल कर रही हूँ", "कॉल कर रहा हूँ"),
+            ("बोल रही हूँ", "बोल रहा हूँ"),
+            ("पूछ रही हूँ", "पूछ रहा हूँ"),
+            ("पुष्टि कर रही हूँ", "पुष्टि कर रहा हूँ"),
+            ("कर सकती हूँ", "कर सकता हूँ"),
+            ("पूछ सकती हूँ", "पूछ सकता हूँ"),
+            ("शेड्यूल कर सकती हूँ", "शेड्यूल कर सकता हूँ"),
+            ("नोट कर सकती हूँ", "नोट कर सकता हूँ"),
+            ("समझ सकती हूँ", "समझ सकता हूँ"),
+            ("मार्क कर रही हूँ", "मार्क कर रहा हूँ"),
+            ("नोट कर रही हूँ", "नोट कर रहा हूँ"),
+            ("समझ गई", "समझ गया"),
+        )
+        female_replacements = tuple((new, old) for old, new in male_replacements)
+        out = text
+        replacements = male_replacements if self._speaker_gender() == "male" else female_replacements
+        for old, new in replacements:
+            out = out.replace(old, new)
+        return out
+
+    def _maybe_acknowledge_customer_name(
+        self,
+        text: str,
+        *,
+        step: Optional[str],
+        language: Optional[str],
+    ) -> str:
+        out = (text or "").strip()
+        name = str(self._facts.get("customer_name") or "").strip()
+        lang = self._canonical_language_code(language)
+        if (
+            not out
+            or not name
+            or self._wf_state.last_asked_step != "confirm_identity"
+            or step not in {"confirm_awareness", "ask_payment_made", "ask_reference_number", "ask_ptp_or_callback"}
+        ):
+            return out
+        out_norm = self._normalize_intent_text(out)
+        name_norm = self._normalize_intent_text(name)
+        if name_norm and name_norm in out_norm:
+            return out
+        if lang == "hi-IN":
+            if out_norm.startswith("धन्यवाद"):
+                return f"{name} जी, {out}"
+            return f"धन्यवाद {name} जी। {out}"
+        if out_norm.startswith("thanks"):
+            return f"{name}, {out}"
+        return f"Thanks, {name}. {out}"
+
+    def _has_payment_commitment_marker(self, text: str) -> bool:
+        t = self._normalize_intent_text(text)
+        if not t:
+            return False
+        markers = (
+            "pay",
+            "payment",
+            "paid",
+            "payment date",
+            "kar dunga",
+            "kar dungi",
+            "kar denge",
+            "kar paunga",
+            "kar paungi",
+            "कर दूंगा",
+            "कर दूँगा",
+            "कर दूंगी",
+            "कर दूँगी",
+            "कर देंगे",
+            "कर पाएंगे",
+            "कर पाएँगे",
+            "कर पाऊंगा",
+            "कर पाऊँगा",
+            "भुगतान",
+            "पेमेंट",
+            "ਭੁਗਤਾਨ",
+            "ਪੇਮੈਂਟ",
+            "ਕਰ ਦੇਵਾਂਗੇ",
+            "ਕਰ ਦਿਆਂਗੇ",
+        )
+        return any(marker in t for marker in markers)
+
+    def _has_callback_marker(self, text: str) -> bool:
+        t = self._normalize_intent_text(text)
+        if not t:
+            return False
+        markers = (
+            "callback",
+            "call back",
+            "call me",
+            "call",
+            "phone",
+            "ring",
+            "later",
+            "kariye",
+            "karna",
+            "कॉलबैक",
+            "कॉल बैक",
+            "कॉल कर",
+            "कॉल",
+            "ਫੋਨ",
+            "ਕਾਲ",
+        )
+        return any(marker in t for marker in markers)
+
+    def _consent_prompt(self, language: Optional[str]) -> str:
+        return _HI_CONSENT_PROMPT if self._canonical_language_code(language) == "hi-IN" else _EN_CONSENT_PROMPT
+
     def _supports_fixed_language(self, language: Optional[str]) -> bool:
         code = self._canonical_language_code(language)
         return code in {"en-IN", "hi-IN"}
+
+    def _effective_brand_name(self) -> str:
+        facts = getattr(self, "_facts", None)
+        brand = ""
+        if isinstance(facts, dict):
+            brand = str(facts.get("brand_name") or "").strip()
+        if brand:
+            return brand
+        return getattr(self, "_default_brand_name", "TuringEdge")
+
+    def _format_hour_12h(self, hour_24: int) -> str:
+        hour = int(hour_24) % 24
+        suffix = "am" if hour < 12 else "pm"
+        hh = hour % 12 or 12
+        return f"{hh}{suffix}"
+
+    def _callback_window_label(self) -> str:
+        start = self._format_hour_12h(getattr(self, "_callback_hours_start", 9))
+        end = self._format_hour_12h(getattr(self, "_callback_hours_end", 20))
+        return f"{start}-{end}"
 
     def _contains_native_script(self, text: str, language: Optional[str]) -> bool:
         code = self._canonical_language_code(language)
@@ -1247,11 +1775,16 @@ class WebCallSession:
         if not t:
             return None
 
+        # Clarification questions (for example: "are you speaking in Hindi?")
+        # should not auto-switch the call language.
+        if re.search(r"\bare you (?:speaking|talking)(?: in)?\b", t):
+            return None
+        if re.search(r"\bis this (?:in )?(?:hindi|english|hinglish)\b", t):
+            return None
+        if re.search(r"\b(?:what|which) language\b", t):
+            return None
+
         hi_direct = (
-            "hindi",
-            "hinglish",
-            "हिंदी",
-            "हिन्दी",
             "english nahi samajh",
             "english nahin samajh",
             "don t understand english",
@@ -1263,11 +1796,10 @@ class WebCallSession:
             "hindi mein baat",
             "speak in hindi",
             "talk in hindi",
+            "switch to hindi",
+            "continue in hindi",
         )
         en_direct = (
-            "english",
-            "अंग्रेजी",
-            "इंग्लिश",
             "hindi nahi samajh",
             "hindi nahin samajh",
             "don t understand hindi",
@@ -1279,6 +1811,8 @@ class WebCallSession:
             "angrezi me baat",
             "speak in english",
             "talk in english",
+            "switch to english",
+            "continue in english",
         )
         if any(p in t for p in hi_direct):
             return "hi-IN"
@@ -1357,9 +1891,11 @@ class WebCallSession:
             bound_step=bound_step,
         )
 
-        # Explicit user language request should always switch STT for subsequent speech.
-        self._pending_stt_language = target_lang
-        if self._in_silence:
+        # Preserve auto-detect STT sockets during live calls; output language can still change.
+        self._pending_stt_language = self._resolve_requested_stt_language(target_lang)
+        if self._pending_stt_language == self.stt.language:
+            self._pending_stt_language = None
+        if self._in_silence and self._pending_stt_language:
             await self._apply_language_update()
 
         step = (
@@ -1545,6 +2081,13 @@ class WebCallSession:
             "compliance_flags": dict(self._compliance_flags),
         }
 
+    def _publish_snapshot(self) -> None:
+        snap = self.get_snapshot()
+        if self._session_registry is not None:
+            self._session_registry[self._session_id] = snap
+        if self._snapshot_update_hook:
+            self._snapshot_update_hook(snap)
+
     def get_timeline(self) -> list:
         return list(self._event_timeline)
 
@@ -1580,7 +2123,7 @@ class WebCallSession:
                     pass
             if self._session_registry is not None:
                 try:
-                    self._session_registry[self._session_id] = self.get_snapshot()
+                    self._publish_snapshot()
                 except Exception:
                     pass
             return result
@@ -1730,10 +2273,78 @@ class WebCallSession:
                     log_event(logger, "crm_enqueue_escalation_error", session_id=self._session_id, error=str(exc))
             if self._session_registry is not None:
                 try:
-                    self._session_registry[self._session_id] = self.get_snapshot()
+                    self._publish_snapshot()
                 except Exception:
                     pass
             return result
+
+        if name == "settlement_offer":
+            if _SettlementService is None:
+                raise RuntimeError("settlement_service not available")
+            if not self._audit_store:
+                raise RuntimeError("audit_store not configured")
+
+            customer_id = str(payload.get("customer_id") or self._facts.get("customer_id") or "") or None
+            loan_account_id = str(payload.get("loan_account_id") or "") or None
+            try:
+                offered_amount = float(payload.get("offered_amount") or 0)
+            except (TypeError, ValueError):
+                offered_amount = 0.0
+            if offered_amount <= 0:
+                raise ValueError("offered_amount_required")
+
+            try:
+                original_amount = float(payload.get("original_amount") or self._facts.get("overdue_amount") or 0) or None
+            except (TypeError, ValueError):
+                original_amount = None
+
+            discount_pct = 0.0
+            if original_amount and original_amount > 0:
+                discount_pct = round((1.0 - offered_amount / original_amount) * 100.0, 2)
+            if discount_pct > 25:
+                raise ValueError("discount_exceeds_policy_limit_25_pct")
+
+            agent_id = str(self._facts.get("agent_id") or "unknown")
+            tenant_id = str(self._facts.get("campaign_id") or "default")
+            svc = _SettlementService(self._audit_store.db_path)
+            offer = svc.create_offer(
+                tenant_id=tenant_id,
+                payload={
+                    "customer_id": customer_id,
+                    "loan_account_id": loan_account_id,
+                    "offered_amount": offered_amount,
+                    "original_due_amount": original_amount,
+                    "terms": payload.get("terms") or {"channel": "upi", "one_time": True},
+                    "journey_id": self._session_id,
+                },
+                actor=agent_id,
+                request_id=self._session_id,
+            )
+            requires_approval = discount_pct > 10
+            if requires_approval and _ApprovalService is not None:
+                try:
+                    approval_svc = _ApprovalService(self._audit_store.db_path)
+                    approval_svc.enqueue(
+                        tenant_id=tenant_id,
+                        action_type="settlement_offer",
+                        actor=agent_id,
+                        request_id=self._session_id,
+                        reference_type="settlement_offer",
+                        reference_id=offer.get("id"),
+                        risk_score=discount_pct / 100.0,
+                        payload={"offer": offer, "discount_pct": discount_pct},
+                    )
+                except Exception as exc:
+                    log_event(logger, "settlement_approval_enqueue_error", session_id=self._session_id, error=str(exc))
+            try:
+                self._audit_store.record_event(
+                    event_type="settlement_offer",
+                    session_id=self._session_id,
+                    payload={"offer_id": offer.get("id"), "offered_amount": offered_amount, "discount_pct": discount_pct},
+                )
+            except Exception:
+                pass
+            return {"ok": True, "offer": offer, "discount_pct": discount_pct, "requires_approval": requires_approval}
 
         raise ValueError(f"Unknown action: {name}")
 
@@ -1780,7 +2391,7 @@ class WebCallSession:
                 pass
         if self._session_registry is not None:
             try:
-                self._session_registry[self._session_id] = self.get_snapshot()
+                self._publish_snapshot()
             except Exception:
                 pass
         if self._crm_adapter:
@@ -1832,7 +2443,14 @@ class WebCallSession:
             return True
         if segment_duration_ms is not None and segment_duration_ms >= self._force_flush_segment_ms:
             return True
-        if self._short_flush_skip_count >= self._force_flush_after_skips:
+        # A very short utterance such as a name may only produce a single speech
+        # segment before silence. Treat the current silence transition as the next
+        # skip candidate so we can force a flush on the first short segment when
+        # configured to do so.
+        if (
+            self._segment_speech_frames > 0
+            and (self._short_flush_skip_count + 1) >= self._force_flush_after_skips
+        ):
             return True
         if (
             self._segment_speech_frames > 0
@@ -1912,11 +2530,11 @@ class WebCallSession:
                     code=getattr(exc, "code", None),
                     reason=getattr(exc, "reason", None),
                 )
-                await self._reconnect_stt()
+                await self._request_stt_stream_restart()
                 continue
             except Exception as exc:
                 log_event(logger, "stt_send_error", session_id=self._session_id, error=str(exc))
-                await self._reconnect_stt()
+                await self._request_stt_stream_restart()
                 continue
 
     async def _stt_loop(self) -> None:
@@ -1957,6 +2575,14 @@ class WebCallSession:
                             "segment_id": segment_id,
                         }
                     )
+                    self._debug_trace(
+                        "stt_transcript",
+                        transcript_type="final" if transcript.is_final else "partial",
+                        text=text,
+                        transcript_language=transcript.language,
+                        confidence=transcript.confidence,
+                        segment_id=segment_id,
+                    )
 
                     detected_lang = self._canonical_language_code(transcript.language)
                     if detected_lang:
@@ -1967,18 +2593,12 @@ class WebCallSession:
                             self._detected_stt_lang_streak = 1
 
                     if self._dynamic_stt_language and detected_lang:
-                        if detected_lang != self.stt.language:
-                            self._pending_stt_language = detected_lang
-                            log_event(
-                                logger,
-                                "stt_language_detected",
-                                session_id=self._session_id,
-                                language=detected_lang,
-                            )
-                            if self._in_silence:
-                                await self._apply_language_update()
+                        await self._queue_detected_stt_language_update(
+                            detected_lang,
+                            source="stt_transcript",
+                        )
 
-                    if transcript.is_final and detected_lang:
+                    if self._auto_align_language and transcript.is_final and detected_lang:
                         current_pref = self._canonical_language_code(self._facts.get("language_preference"))
                         if self._is_language_auto_align_candidate(
                             detected_language=detected_lang,
@@ -1988,10 +2608,11 @@ class WebCallSession:
                             self._facts["language_preference"] = detected_lang
                             # Also queue STT language switch so transcription
                             # uses the newly detected language.
-                            if self._dynamic_stt_language and detected_lang != self.stt.language:
-                                self._pending_stt_language = detected_lang
-                                if self._in_silence:
-                                    await self._apply_language_update()
+                            if self._dynamic_stt_language:
+                                await self._queue_detected_stt_language_update(
+                                    detected_lang,
+                                    source="language_auto_align",
+                                )
                             log_event(
                                 logger,
                                 "language_auto_aligned",
@@ -2030,10 +2651,11 @@ class WebCallSession:
                             or self._wf_state.last_agent_intent
                             or self._wf_state.current_step
                         )
-                        # Determine if this final is a barge-in while TTS is active.
+                        # Determine how to preempt any stale in-flight assistant reply.
                         is_barge_in = False
                         barge_in_on = None
-                        if (self._tts_playing.is_set() or self._tts_pending) and self._barge_in_armed:
+                        preempt_mode = self._preempt_mode_for_user_turn()
+                        if preempt_mode == "interrupt":
                             is_barge_in = True
                             barge_in_on = self._reply_to_utterance_id or self._current_utterance_id
                             self._barge_in_armed = False
@@ -2047,9 +2669,18 @@ class WebCallSession:
                             if self._wf_state.consent is True and t_norm in {"hi", "hello", "hey", "ok", "okay", "yes"}:
                                 log_event(logger, "greeting_ack_ignored", session_id=self._session_id, text=text)
                                 continue
-                        if is_barge_in and (self._tts_playing.is_set() or self._tts_pending):
+                        if preempt_mode == "interrupt":
                             # Cut current speech immediately once we have a decisive final.
                             await self._graceful_interrupt("stt_final")
+                        elif preempt_mode == "cancel":
+                            # User spoke while assistant was still thinking; drop stale draft immediately.
+                            await self._cancel_generation()
+                            log_event(
+                                logger,
+                                "generation_preempted",
+                                session_id=self._session_id,
+                                reason="stt_final_user_turn",
+                            )
                         await self._emit_timeline_event(
                             "stt_final",
                             segment_id=segment_id,
@@ -2165,7 +2796,21 @@ class WebCallSession:
                         prev_lang_pref = self._canonical_language_code(self._facts.get("language_preference"))
                         await self._emit_chat_message(role="user", text=text)
                         self._log_message(role="user", content=text)
+                        previous_customer_name = str(self._facts.get("customer_name") or "").strip()
                         self._extract_facts_from_text(text)
+                        effective_reply_step = self._effective_reply_step_for_user_text(text, reply_step)
+                        if reply_step == "closing" and effective_reply_step != "closing":
+                            log_event(
+                                logger,
+                                "closing_reopened",
+                                session_id=self._session_id,
+                                text=text[:50],
+                                reopened_step=effective_reply_step,
+                            )
+                        meta_q = self._detect_customer_meta_question(text)
+                        if meta_q:
+                            self._pending_customer_meta_question = meta_q
+                            self._force_dynamic_reply_once = True
                         requested_language = self._detect_language_switch_request(text)
                         if not requested_language:
                             updated_lang_pref = self._canonical_language_code(self._facts.get("language_preference"))
@@ -2184,24 +2829,26 @@ class WebCallSession:
                             self._wf_state,
                             extracted={
                                 "customer_name": self._facts.get("customer_name"),
+                                "identity_name_preexisting": bool(previous_customer_name),
                                 "ptp_date": self._facts.get("ptp_date"),
                                 "reference_number": self._facts.get("reference_number"),
                                 "callback_time": self._facts.get("callback_time"),
                             },
-                            reply_to_step_id=reply_step,
+                            reply_to_step_id=effective_reply_step,
                         )
-                        # Fallback: if we just asked awareness, any user response counts as answered.
-                        if (
-                            (reply_step == "confirm_awareness")
-                            and not self._wf_state.awareness_confirmed
-                        ):
-                            self._wf_state.awareness_confirmed = True
-                            if self._is_no(text):
-                                self._facts["awareness_denied"] = True
-                            self._set_workflow_step(reason="fallback_awareness")
+                        if effective_reply_step == "closing" and self._is_abusive_utterance(text):
+                            self._wf_state.last_transition_reason = "abusive_language"
+                        self._debug_trace(
+                            "stt_final_processed",
+                            text=text,
+                            reply_step=effective_reply_step,
+                            extracted_customer_name=self._facts.get("customer_name"),
+                        )
                         # Clear reply binding once consumed.
                         self._reply_to_step_id = None
                         self._reply_to_turn_id = None
+                        self._reply_to_utterance_id = None
+                        self._consume_pending_step_binding()
                         self._sync_workflow_from_facts()
                         self._persist_commitments()
                         self._persist_state()  # Persist state after extracting facts
@@ -2224,21 +2871,21 @@ class WebCallSession:
                             if repair_response:
                                 log_event(logger, "repair_triggered", session_id=self._session_id, 
                                           type=repair_type, user_text=text[:50])
-                                # Inject repair into context
-                                self._append_history("assistant", f"[Repair: {repair_type}] {repair_response}")
+                                self._pending_repair_type = repair_type
+                                self._force_dynamic_reply_once = True
                         
                         # Check for post-interrupt handling
                         post_interrupt = await self._handle_post_interrupt(text)
                         if post_interrupt:
-                            # User asked us to continue
-                            self._append_history("assistant", post_interrupt)
+                            self._pending_resume_hint = post_interrupt
+                            self._force_dynamic_reply_once = True
 
                         log_event(
                             logger,
                             "stt_final_scheduling",
                             session_id=self._session_id,
                             text=text[:50],
-                            bound_step=reply_step,
+                            bound_step=effective_reply_step,
                             negative_class=negative_class,
                             in_silence=self._in_silence,
                             tts_playing=self._tts_playing.is_set(),
@@ -2267,8 +2914,12 @@ class WebCallSession:
                             session_id=self._session_id,
                             reason="finals_only_decision_path",
                         )
-                # If we exit the loop normally (shouldn't happen), break
-                break
+                if self._should_resume_stt_after_stream_end():
+                    reconnect_attempts = 0
+                    log_event(logger, "stt_stream_restart_resumed", session_id=self._session_id)
+                    await asyncio.sleep(0.05)
+                    continue
+                raise RuntimeError("STT stream closed unexpectedly")
             except Exception as exc:
                 reconnect_attempts += 1
                 log_event(
@@ -2310,10 +2961,22 @@ class WebCallSession:
         has_pending = bool(self._pending_final)
         keep_existing = False
         replacement_reason = "no_pending"
+        active_step = (
+            self._reply_to_step_id
+            or self._pending_step_id
+            or self._wf_state.last_agent_intent
+            or self._wf_state.current_step
+        )
         if self._pending_final:
             pending_text, _, _ = self._pending_final
+            if active_step == "confirm_identity":
+                merged_text = self._merge_identity_pending_final(pending_text, text)
+                if merged_text not in {pending_text, text}:
+                    text = merged_text
+                    replacement_reason = "merged_identity_fragments"
             keep_existing = self._should_keep_existing_pending_final(pending_text, text)
-            replacement_reason = "kept_existing_meaningful" if keep_existing else "replaced_with_new_final"
+            if replacement_reason == "no_pending":
+                replacement_reason = "kept_existing_meaningful" if keep_existing else "replaced_with_new_final"
         log_event(
             logger,
             "schedule_final_generation",
@@ -2477,7 +3140,32 @@ class WebCallSession:
                 current_epoch=self._generation_epoch,
             )
             return
-        
+
+        active_step = (
+            self._reply_to_step_id
+            or self._pending_step_id
+            or self._wf_state.last_agent_intent
+            or self._wf_state.current_step
+        )
+        if self._recover_identity_from_pending_final(text, active_step):
+            log_event(
+                logger,
+                "identity_recovered_from_pending_final",
+                session_id=self._session_id,
+                text=text[:50],
+                customer_name=self._facts.get("customer_name"),
+            )
+        if active_step == "closing" and self._is_closing_acknowledgment(text):
+            log_event(
+                logger,
+                "closing_acknowledged",
+                session_id=self._session_id,
+                text=text[:50],
+            )
+            await self._emit_call_ended_once()
+            self._schedule_session_close(delay_s=0.8)
+            return
+
         log_event(
             logger,
             "finalize_pending_final",
@@ -2534,35 +3222,36 @@ class WebCallSession:
 
             messages.append({"role": "user", "content": user_text})
 
-            # Deterministic hard-routing for key workflow steps (kills looping for demos).
+            # Optional deterministic routing for key steps (disabled by default).
             next_step = self._set_workflow_step(reason="generation_from_text")
             if not preview:
                 self._set_pending_step(next_step)
-            if (
-                not preview
-                and self._supports_fixed_language(language)
-                and next_step in {
-                "consent",
-                "confirm_identity",
-                "confirm_awareness",
-                "ask_payment_made",
-                "ask_reference_number",
-                "ask_ptp_or_callback",
-                "closing",
-                }
-            ):
+            self._debug_trace(
+                "start_generation_from_text",
+                user_text=user_text,
+                language=language,
+                preview=preview,
+                next_step=next_step,
+            )
+            if self._should_use_fixed_turn(step=next_step, language=language, preview=preview):
                 fixed = self._fixed_prompt_for_step(next_step, language=language)
+                self._debug_trace("start_fixed_turn_from_text", step=next_step, assistant_text=fixed)
                 self._gen_task = asyncio.create_task(
                     self._run_fixed_turn(assistant_text=fixed, language=language, step=next_step),
                     name=f"fixed_{next_step}",
                 )
                 return
 
+            self._force_dynamic_reply_once = False
             # For non-fixed steps, inject a strict runtime instruction into the last user message.
             messages[-1] = {
                 "role": "user",
                 "content": self._build_runtime_user_instruction(step=next_step, user_text=user_text),
             }
+            self._pending_interrupt_ack = False
+            self._pending_repair_type = None
+            self._pending_resume_hint = None
+            self._pending_customer_meta_question = None
 
             log_event(
                 logger,
@@ -2624,35 +3313,36 @@ class WebCallSession:
 
             messages.append({"role": "user", "content": text})
 
-            # Deterministic hard-routing for key workflow steps (kills looping for demos).
+            # Optional deterministic routing for key steps (disabled by default).
             next_step = self._set_workflow_step(reason="generation")
             if not preview:
                 self._set_pending_step(next_step)
-            if (
-                not preview
-                and self._supports_fixed_language(language)
-                and next_step in {
-                "consent",
-                "confirm_identity",
-                "confirm_awareness",
-                "ask_payment_made",
-                "ask_reference_number",
-                "ask_ptp_or_callback",
-                "closing",
-                }
-            ):
+            self._debug_trace(
+                "start_generation_from_stt",
+                user_text=text,
+                language=language,
+                preview=preview,
+                next_step=next_step,
+            )
+            if self._should_use_fixed_turn(step=next_step, language=language, preview=preview):
                 fixed = self._fixed_prompt_for_step(next_step, language=language)
+                self._debug_trace("start_fixed_turn_from_stt", step=next_step, assistant_text=fixed)
                 self._gen_task = asyncio.create_task(
                     self._run_fixed_turn(assistant_text=fixed, language=language, step=next_step),
                     name=f"fixed_{next_step}",
                 )
                 return
 
+            self._force_dynamic_reply_once = False
             # For non-fixed steps, inject a strict runtime instruction into the last user message.
             messages[-1] = {
                 "role": "user",
                 "content": self._build_runtime_user_instruction(step=next_step, user_text=text),
             }
+            self._pending_interrupt_ack = False
+            self._pending_repair_type = None
+            self._pending_resume_hint = None
+            self._pending_customer_meta_question = None
 
             log_event(
                 logger,
@@ -2821,66 +3511,146 @@ class WebCallSession:
         name = self._facts.get("customer_name")
         amt = self._facts.get("overdue_amount")
         due = self._facts.get("due_date")
+        brand = self._effective_brand_name()
+        callback_window = self._callback_window_label()
         lang = self._resolve_output_language(language)
         is_hi = bool(lang and lang.lower().startswith("hi"))
-        if step == "consent":
+        def with_identity_reconfirm(text: str) -> str:
+            if self._wf_state.last_transition_reason != "identity_reconfirm_requested":
+                return text
+            confirmed_name = str(name or "").strip()
+            if confirmed_name:
+                if is_hi:
+                    return f"जी, मैंने आपका नाम {confirmed_name} सुना है। {text}"
+                return f"Yes, I heard your name as {confirmed_name}. {text}"
             if is_hi:
-                return "यह कॉल गुणवत्ता के लिए रिकॉर्ड की जा सकती है। क्या मैं आपकी सहमति से बातचीत आगे बढ़ाऊँ?"
-            return "This call may be recorded for quality. Do I have your consent to continue?"
+                return "माफ़ कीजिए, आपका नाम साफ़ नहीं सुन पाई। कृपया अपना पूरा नाम फिर से बताइए।"
+            return "Sorry, I did not catch your name clearly. Please tell me your full name once more."
+        def finalize(text: str) -> str:
+            text = self._maybe_acknowledge_customer_name(text, step=step, language=lang)
+            return self._apply_hindi_speaker_style(text, lang)
+        def with_name_ack(text: str) -> str:
+            text = with_identity_reconfirm(text)
+            return finalize(text) if is_hi else self._maybe_acknowledge_customer_name(text, step=step, language=lang)
+        if step == "consent":
+            if self._wf_state.last_transition_reason == "consent_unclear":
+                if is_hi:
+                    return finalize("माफ़ कीजिए, आपकी सहमति स्पष्ट समझ नहीं पाई। अगर आप आगे बढ़ना चाहते हैं, तो कृपया सिर्फ हाँ कहिए।")
+                return "Sorry, I could not clearly confirm your consent. If you want to continue, please say yes."
+            if is_hi:
+                return finalize("यह कॉल रिकॉर्ड हो सकती है। क्या मैं आगे बढ़ूँ?")
+            return "This call may be recorded. May I continue?"
         if step == "confirm_identity":
             if name:
                 if is_hi:
-                    return f"क्या मैं {name} जी से बात कर रही हूँ?"
+                    return finalize(f"क्या मैं {name} जी से बात कर रहा हूँ?")
                 return f"Am I speaking with {name}?"
             if is_hi:
-                return "क्या मैं आपका नाम पुष्टि कर सकती हूँ?"
-            return "May I confirm your name?"
+                return "कृपया अपना पूरा नाम बताइए।"
+            return "Please tell me your full name."
         if step == "confirm_awareness":
+            # Fail-safe: once awareness has already been answered (yes/no), never loop this step.
+            awareness_answered = (
+                bool(self._wf_state.awareness_confirmed)
+                or self._policy.get("confirmed", {}).get("awareness") in {True, False}
+            )
+            if awareness_answered:
+                if self._policy.get("confirmed", {}).get("awareness") is False or self._facts.get("awareness_denied"):
+                    return self._fixed_prompt_for_step("ask_payment_made", language=lang)
+                return self._fixed_prompt_for_step("ask_payment_made", language=lang)
             if (
                 self._wf_state.last_asked_step == "confirm_awareness"
                 and time.time() - self._wf_state.last_asked_ts < 15
             ):
                 if amt:
                     if is_hi:
-                        return f"पुष्टि के लिए पूछ रही हूँ, क्या आपको ₹{amt} की लंबित भुगतान राशि के बारे में पता है?"
-                    return f"Just to confirm, you’re aware of the pending payment of ₹{amt}, correct?"
+                        return with_name_ack(f"पुष्टि के लिए पूछ रहा हूँ, क्या आपको ₹{amt} की लंबित भुगतान राशि के बारे में पता है?")
+                    return with_name_ack(f"Just to confirm, you’re aware of the pending payment of ₹{amt}, correct?")
                 if is_hi:
-                    return "पुष्टि के लिए पूछ रही हूँ, क्या आपको लंबित भुगतान के बारे में पता है?"
-                return "Just to confirm, you’re aware of the pending payment, correct?"
+                    return with_name_ack("पुष्टि के लिए पूछ रहा हूँ, क्या आपको लंबित भुगतान के बारे में पता है?")
+                return with_name_ack("Just to confirm, you’re aware of the pending payment, correct?")
             if amt and due:
                 if is_hi:
-                    return f"क्या आपको पता है कि ₹{amt} की आपकी लोन भुगतान राशि {due} से ओवरड्यू है?"
-                return f"Are you aware that your loan payment of ₹{amt} is overdue as of {due}?"
+                    return with_name_ack(f"क्या आपको पता है कि ₹{amt} की आपकी लोन भुगतान राशि {due} से ओवरड्यू है?")
+                return with_name_ack(f"Are you aware that your loan payment of ₹{amt} is overdue as of {due}?")
             if amt:
                 if is_hi:
-                    return f"क्या आपको पता है कि ₹{amt} की आपकी लोन भुगतान राशि ओवरड्यू है?"
-                return f"Are you aware that your loan payment of ₹{amt} is overdue?"
+                    return with_name_ack(f"क्या आपको पता है कि ₹{amt} की आपकी लोन भुगतान राशि ओवरड्यू है?")
+                return with_name_ack(f"Are you aware that your loan payment of ₹{amt} is overdue?")
             if due:
                 if is_hi:
-                    return f"क्या आपको पता है कि आपकी लोन भुगतान राशि {due} से ओवरड्यू है?"
-                return f"Are you aware that your loan payment is overdue as of {due}?"
+                    return with_name_ack(f"क्या आपको पता है कि आपकी लोन भुगतान राशि {due} से ओवरड्यू है?")
+                return with_name_ack(f"Are you aware that your loan payment is overdue as of {due}?")
             if is_hi:
-                return "क्या आपको अपने TuringEdge लोन की ओवरड्यू भुगतान राशि के बारे में पता है?"
-            return "Are you aware of the overdue payment on your TuringEdge loan?"
+                return with_name_ack(f"क्या आपको अपने {brand} लोन की ओवरड्यू भुगतान राशि के बारे में पता है?")
+            return with_name_ack(f"Are you aware of the overdue payment on your {brand} loan?")
         if step == "ask_payment_made":
+            awareness_denied_context = (
+                self._wf_state.last_transition_reason == "awareness_denied_context"
+                or (
+                    self._wf_state.last_asked_step == "confirm_awareness"
+                    and (
+                        self._policy.get("confirmed", {}).get("awareness") is False
+                        or self._facts.get("awareness_denied")
+                    )
+                )
+            )
+            if awareness_denied_context:
+                if amt:
+                    if is_hi:
+                        if due:
+                            return with_name_ack(
+                                f"समझ गया। जानकारी के लिए बता दूँ कि आपके {brand} लोन की ₹{amt} की राशि {due} से ओवरड्यू है। क्या आपने इसका भुगतान कर दिया है?"
+                            )
+                        return with_name_ack(
+                            f"समझ गया। जानकारी के लिए बता दूँ कि आपके {brand} लोन की ₹{amt} की राशि अभी ओवरड्यू है। क्या आपने इसका भुगतान कर दिया है?"
+                        )
+                    return with_name_ack(
+                        f"Understood. For clarity, your overdue amount of ₹{amt} is still pending. Have you already made this payment?"
+                    )
+                if is_hi:
+                    return with_name_ack("समझ गया। जानकारी के लिए बता दूँ कि आपकी भुगतान राशि अभी ओवरड्यू है। क्या आपने इसका भुगतान कर दिया है?")
+                return with_name_ack("Understood. Just to proceed, have you already made the payment?")
+            ask_attempts = int(self._wf_state.attempts.get("ask_payment_made", 0) or 0)
+            if self._wf_state.last_transition_reason == "payment_status_unclear" or ask_attempts >= 3:
+                if amt:
+                    if is_hi:
+                        return (
+                            f"शायद आपकी बात पूरी तरह समझ नहीं पाई। "
+                            f"अगर ₹{amt} का भुगतान हो गया है, तो 'हो गया' बोलकर UTR या तारीख बताइए। "
+                            "अगर भुगतान नहीं हुआ है, तो भुगतान की तारीख या कॉलबैक समय बताइए।"
+                        )
+                    return (
+                        f"I may have missed your response. If the ₹{amt} payment is done, please say 'paid' "
+                        "and share UTR or payment date. If it is not paid, share a payment date or callback time."
+                    )
+                if is_hi:
+                    return (
+                        "शायद आपकी बात पूरी तरह समझ नहीं पाई। अगर भुगतान हो गया है, तो UTR या तारीख बताइए। "
+                        "अगर भुगतान नहीं हुआ है, तो भुगतान की तारीख या कॉलबैक समय बताइए।"
+                    )
+                return (
+                    "I may have missed your response. If payment is done, share UTR or payment date. "
+                    "If not paid, share a payment date or callback time."
+                )
             if (
                 self._wf_state.last_asked_step == "ask_payment_made"
                 and time.time() - self._wf_state.last_asked_ts < 15
             ):
                 if amt:
                     if is_hi:
-                        return f"पुष्टि के लिए पूछ रही हूँ, क्या आपने ₹{amt} का भुगतान कर दिया है? सिर्फ हाँ या ना काफी है।"
-                    return f"Just to confirm, have you already paid the ₹{amt}? A simple yes or no is fine."
+                        return with_name_ack(f"पुष्टि के लिए पूछ रही हूँ, क्या आपने ₹{amt} का भुगतान कर दिया है? सिर्फ हाँ या ना काफी है।")
+                    return with_name_ack(f"Just to confirm, have you already paid the ₹{amt}? A simple yes or no is fine.")
                 if is_hi:
-                    return "पुष्टि के लिए पूछ रही हूँ, क्या आपने भुगतान कर दिया है? सिर्फ हाँ या ना काफी है।"
-                return "Just to confirm, have you already made the payment? A simple yes or no is fine."
+                    return with_name_ack("पुष्टि के लिए पूछ रही हूँ, क्या आपने भुगतान कर दिया है? सिर्फ हाँ या ना काफी है।")
+                return with_name_ack("Just to confirm, have you already made the payment? A simple yes or no is fine.")
             if amt:
                 if is_hi:
-                    return f"क्या आपने ₹{amt} का भुगतान कर दिया है?"
-                return f"Have you already made the payment of ₹{amt}?"
+                    return with_name_ack(f"क्या आपने ₹{amt} का भुगतान कर दिया है?")
+                return with_name_ack(f"Have you already made the payment of ₹{amt}?")
             if is_hi:
-                return "क्या आपने भुगतान कर दिया है?"
-            return "Have you already made the payment?"
+                return with_name_ack("क्या आपने भुगतान कर दिया है?")
+            return with_name_ack("Have you already made the payment?")
         if step == "ask_reference_number":
             if (
                 self._wf_state.last_asked_step == "ask_reference_number"
@@ -2900,41 +3670,66 @@ class WebCallSession:
             return "Please share the transaction reference number or UTR and the date of payment."
         if step == "ask_ptp_or_callback":
             if self._wf_state.last_transition_reason == "invalid_ptp_date":
+                max_days = int(getattr(self, "_ptp_max_days", 30) or 30)
                 if is_hi:
-                    return "कृपया अगले 30 दिनों के भीतर की वैध भुगतान तारीख बताइए।"
-                return "Please share a valid payment date within the next 30 days."
+                    return f"कृपया अगले {max_days} दिनों के भीतर की वैध भुगतान तारीख बताइए।"
+                return f"Please share a valid payment date within the next {max_days} days."
             if self._wf_state.last_transition_reason == "invalid_callback_time":
                 if is_hi:
-                    return "कृपया 9am–8pm के बीच का कॉलबैक समय बताइए।"
-                return "Please share a callback time between 9am–8pm."
+                    return f"कृपया {callback_window} के बीच का कॉलबैक समय बताइए।"
+                return f"Please share a callback time between {callback_window}."
+            if self._wf_state.last_transition_reason == "callback_time_needed":
+                if is_hi:
+                    return finalize(with_identity_reconfirm(f"समझ गया। अगर आप कॉलबैक चाहते हैं, तो कृपया {callback_window} के बीच एक समय भी बताइए।"))
+                return f"Understood. If you want a callback, please also share a time between {callback_window}."
+            if self._wf_state.last_transition_reason == "ptp_callback_ambiguous":
+                if is_hi:
+                    return finalize(with_identity_reconfirm("आपने एक समयावधि बताई है। क्या इसका मतलब है कि आप तब तक भुगतान करेंगे, या मैं उस समय फिर कॉल करूँ?"))
+                return "You mentioned a time window. Do you mean you will make the payment by then, or would you like a callback then?"
+            if self._wf_state.last_transition_reason == "resolve_refusal":
+                if self._wf_state.refusal_reason == "unwilling":
+                    if is_hi:
+                        return with_name_ack(
+                            "मैं समझता हूँ कि आप अभी भुगतान नहीं करना चाह रहे हैं, लेकिन इस लोन का समाधान तय करना ज़रूरी है। क्या आप कोई व्यावहारिक भुगतान तारीख बता सकते हैं, या मैं विकल्पों पर बात करने के लिए कॉलबैक तय करूँ?"
+                        )
+                    return with_name_ack(
+                        "I understand you do not want to pay right now, but this loan still needs a workable resolution. Can you share a practical payment date, or should I arrange a callback to discuss options?"
+                    )
+                if is_hi:
+                    return with_name_ack(
+                        "मैं समझता हूँ कि अभी भुगतान करना मुश्किल लग रहा है, लेकिन इस लोन का समाधान तय करना ज़रूरी है। क्या आप एक वास्तविक भुगतान तारीख बता सकते हैं, या मैं विकल्पों पर बात करने के लिए कॉलबैक तय करूँ?"
+                    )
+                return with_name_ack(
+                    "I understand payment feels difficult right now, but this loan still needs a practical resolution. Can you share a realistic payment date, or should I arrange a callback to discuss options?"
+                )
             if self._wf_state.last_transition_reason == "uncertain_commitment":
                 if amt:
                     if is_hi:
                         return (
                             f"कोई बात नहीं। अगर आप अभी सुनिश्चित नहीं हैं, तो मैं कॉलबैक शेड्यूल कर सकती हूँ। "
-                            f"कृपया 9am–8pm के बीच का समय बताइए, या ₹{amt} की भुगतान तारीख बताइए।"
+                            f"कृपया {callback_window} के बीच का समय बताइए, या ₹{amt} की भुगतान तारीख बताइए।"
                         )
                     return (
                         f"No problem. If you're unsure right now, I can schedule a callback. "
-                        f"Please share a time between 9am–8pm, or a date when you can pay ₹{amt}."
+                        f"Please share a time between {callback_window}, or a date when you can pay ₹{amt}."
                     )
                 if is_hi:
                     return (
                         "कोई बात नहीं। अगर आप अभी सुनिश्चित नहीं हैं, तो मैं कॉलबैक शेड्यूल कर सकती हूँ। "
-                        "कृपया 9am–8pm के बीच का समय बताइए, या भुगतान तारीख बताइए।"
+                        f"कृपया {callback_window} के बीच का समय बताइए, या भुगतान तारीख बताइए।"
                     )
                 return (
                     "No problem. If you're unsure right now, I can schedule a callback. "
-                    "Please share a time between 9am–8pm, or a payment date."
+                    f"Please share a time between {callback_window}, or a payment date."
                 )
             if self._wf_state.last_transition_reason == "needs_callback":
                 if is_hi:
-                    return "ठीक है। मैं आपको किस समय कॉलबैक करूँ? कृपया 9am–8pm के बीच का समय बताइए।"
-                return "Okay. What time should I call you back? Please share a time between 9am–8pm."
+                    return f"ठीक है। मैं आपको किस समय कॉलबैक करूँ? कृपया {callback_window} के बीच का समय बताइए।"
+                return f"Okay. What time should I call you back? Please share a time between {callback_window}."
             if self._wf_state.last_transition_reason == "hardship" or self._wf_state.hardship_detected:
                 if is_hi:
-                    return "मैं समझ सकती हूँ। विकल्पों पर बात करने के लिए 9am–8pm के बीच कॉलबैक का समय बताइए।"
-                return "I understand. What time should I call you back to discuss options? Please share a time between 9am–8pm."
+                    return f"मैं समझ सकती हूँ। विकल्पों पर बात करने के लिए {callback_window} के बीच कॉलबैक का समय बताइए।"
+                return f"I understand. What time should I call you back to discuss options? Please share a time between {callback_window}."
             ask_attempts = int(self._wf_state.attempts.get("ask_ptp_or_callback", 0) or 0)
             if (
                 self._wf_state.last_asked_step == "ask_ptp_or_callback"
@@ -2973,6 +3768,10 @@ class WebCallSession:
             callback_spoken = self._normalize_callback_text(
                 str(self._wf_state.callback_time or self._facts.get("callback_time") or "")
             ) or self._wf_state.callback_time or self._facts.get("callback_time")
+            if self._wf_state.last_transition_reason == "abusive_language":
+                if is_hi:
+                    return "मैं अपमानजनक भाषा में बातचीत जारी नहीं रख सकती। आगे की मदद के लिए हमारी टीम फॉलो-अप करेगी। धन्यवाद।"
+                return "I cannot continue the call with abusive language. Our team will follow up if needed. Thank you."
             if self._wf_state.disposition in {"dnd_requested"}:
                 if is_hi:
                     return "समझ गई। हम इस नंबर पर कॉल करना बंद कर देंगे। धन्यवाद।"
@@ -3031,18 +3830,88 @@ class WebCallSession:
             return "एक पल दीजिए।"
         return "One moment, please."
 
+    def _should_use_fixed_turn(self, *, step: str, language: Optional[str], preview: bool) -> bool:
+        if preview:
+            return False
+        # Always use deterministic fixed turn for closing — ensures farewell message is
+        # always spoken and session can be cleanly terminated afterward.
+        if step == "closing" and self._supports_fixed_language(language):
+            return True
+        if not getattr(self, "_enable_fixed_workflow_turns", False):
+            return False
+        if not self._supports_fixed_language(language):
+            return False
+        if step not in {
+            "consent",
+            "confirm_identity",
+            "confirm_awareness",
+            "ask_payment_made",
+            "ask_reference_number",
+            "ask_ptp_or_callback",
+            "closing",
+        }:
+            return False
+        if self._force_dynamic_reply_once:
+            return False
+        if step == "ask_payment_made" and self._wf_state.last_transition_reason == "payment_status_unclear":
+            return False
+        return True
+
     def _build_runtime_user_instruction(self, *, step: str, user_text: str) -> str:
         """Wrap the customer utterance with strict step instructions for the LLM."""
         amt = self._facts.get("overdue_amount")
         due = self._facts.get("due_date")
+        lang = self._resolve_output_language()
+        brand = self._effective_brand_name()
+        callback_window = self._callback_window_label()
         strategy = self._get_strategy_decision()
         base = [
-            "You are a TuringEdge collections agent. Follow the collections workflow strictly.",
+            f"You are a {brand} collections agent. Follow the collections workflow strictly.",
             "Ask ONLY ONE clear question.",
             "Do NOT greet. Do NOT repeat a question already answered.",
             "Do NOT ask for OTP/CVV/card numbers/passwords/bank details.",
             f"Current workflow step: {step}.",
         ]
+        if lang:
+            base.append(f"Respond in {self._language_name(lang)} ({lang}) unless customer requests a switch.")
+            if str(lang).lower().startswith("hi"):
+                if self._speaker_gender() == "male":
+                    base.append(
+                        "Your Hindi self-reference must match a male voice. Use masculine forms such as "
+                        "'बोल रहा हूँ', 'कर सकता हूँ', 'पूछ रहा हूँ', and 'समझ गया'."
+                    )
+                else:
+                    base.append(
+                        "Your Hindi self-reference must match a female voice. Use feminine forms such as "
+                        "'बोल रही हूँ', 'कर सकती हूँ', 'पूछ रही हूँ', and 'समझ गई'."
+                    )
+        if self._pending_interrupt_ack:
+            base.append(
+                "The customer interrupted you. Start with one short natural acknowledgment "
+                "(for example: 'Got it' or 'I understand'), then continue with the required next question."
+            )
+        if self._pending_repair_type:
+            if self._pending_repair_type == "confusion":
+                base.append(
+                    "Customer sounded confused. Rephrase the same step in simpler words, then ask one concise question."
+                )
+            elif self._pending_repair_type == "correction":
+                base.append(
+                    "Customer corrected earlier context. Acknowledge briefly and continue with the same workflow step."
+                )
+            elif self._pending_repair_type == "topic_drift":
+                base.append(
+                    "Customer drifted off-topic. Acknowledge politely and steer back to one payment-related question."
+                )
+        if self._pending_resume_hint:
+            base.append(
+                "Customer asked to continue. Resume briefly from prior context, then ask only one next-step question."
+            )
+        if self._pending_customer_meta_question:
+            base.append(
+                "Customer asked who you are or why you are calling. First answer this briefly in one short sentence "
+                f"(identify as {brand} collections and mention the overdue account context), then ask the required step question."
+            )
         if amt:
             base.append(f"Known overdue amount: INR {amt}. Use it exactly if mentioned.")
         if due:
@@ -3051,16 +3920,97 @@ class WebCallSession:
             base.append(f"DPD strategy bucket: {strategy.dpd_bucket}.")
             base.append(f"Strategy mode: {strategy.strategy_mode}.")
             base.append(f"Tone profile: {strategy.tone_profile}.")
+            base.append(f"Primary objective: {strategy.objective}.")
             base.append(strategy.instruction)
+            if strategy.guardrails:
+                base.append("Guardrails: " + " ".join(strategy.guardrails))
+            if strategy.preferred_actions:
+                base.append("Preferred actions: " + ", ".join(strategy.preferred_actions) + ".")
+            if strategy.prohibited_actions:
+                base.append("Prohibited actions: " + ", ".join(strategy.prohibited_actions) + ".")
 
-        if step == "ask_payment_made":
-            base.append("Question to ask: Have you made the payment?")
+        if (
+            self._facts.get("customer_name")
+            and self._wf_state.last_asked_step == "confirm_identity"
+            and step in {"confirm_awareness", "ask_payment_made", "ask_reference_number", "ask_ptp_or_callback"}
+        ):
+            base.append("Begin with one short acknowledgment using the customer's confirmed name once, then continue.")
+        if (
+            self._wf_state.last_transition_reason == "identity_reconfirm_requested"
+            and step in {"confirm_awareness", "ask_payment_made", "ask_ptp_or_callback"}
+        ):
+            base.append(
+                "Customer asked whether you heard their name. First answer explicitly by repeating the confirmed name once. "
+                "If the name is not reliable, ask them to repeat it. Then continue with the required step question."
+            )
+
+        if step == "consent":
+            if self._wf_state.last_transition_reason == "consent_unclear":
+                base.append(
+                    "Customer's previous reply did not clearly grant or refuse consent. "
+                    "Briefly say the consent was not clear, then ask for a simple yes or no."
+                )
+            else:
+                base.append("Question to ask: Confirm whether you may continue with the call. Accept brief multilingual yes/no replies.")
+        elif step == "confirm_identity":
+            if self._facts.get("customer_name"):
+                base.append(
+                    f"Question to ask: Confirm you are speaking with {self._facts['customer_name']}."
+                )
+                base.append(
+                    "If another person answers, ask briefly whether this customer is available or when to call back, "
+                    "without discussing account details."
+                )
+            else:
+                base.append(
+                    "Question to ask: Ask the customer to tell you their full name directly. "
+                    "Do not ask permission to ask for their name."
+                )
+        elif step == "ask_payment_made":
+            if (
+                self._wf_state.last_transition_reason == "awareness_denied_context"
+                or (
+                    self._wf_state.last_asked_step == "confirm_awareness"
+                    and (
+                        self._policy.get("confirmed", {}).get("awareness") is False
+                        or self._facts.get("awareness_denied")
+                    )
+                )
+            ):
+                base.append(
+                    "Before asking about payment, briefly inform the customer that the overdue amount is still pending, "
+                    "then ask whether payment has already been made."
+                )
+            else:
+                base.append("Question to ask: Have you made the payment?")
         elif step == "ask_reference_number":
             base.append("Question to ask: Please share the transaction reference/UTR and payment date so I can verify.")
         elif step == "ask_ptp_or_callback":
-            base.append("Question to ask: By when can you make the payment? Share a date (preferred) or a callback time.")
+            if self._wf_state.last_transition_reason == "ptp_callback_ambiguous":
+                base.append(
+                    "Customer mentioned a relative time window, but it is unclear whether that means a payment promise "
+                    "or a callback request. Ask one short clarification question to disambiguate that."
+                )
+            elif self._wf_state.last_transition_reason == "resolve_refusal":
+                base.append(
+                    "Customer resisted payment or challenged the request. Briefly acknowledge the pushback, state that "
+                    "the loan still needs a workable resolution, and ask for one feasible next step such as a dated "
+                    "payment commitment, partial payment, or callback to discuss options. Do not threaten, moralize, "
+                    "or close the call immediately."
+                )
+            elif self._wf_state.last_transition_reason == "callback_time_needed":
+                base.append(
+                    f"Customer wants a callback but has not shared a valid time yet. Ask only for a callback time between {callback_window}."
+                )
+            else:
+                base.append(
+                    f"Question to ask: By when can you make the payment? Share a date (preferred) "
+                    f"or a callback time between {callback_window}."
+                )
         else:
             base.append("Question to ask: Ask the next missing required detail for this step.")
+        base.append("If unsure, ask a short clarifying question aligned to the same workflow step.")
+        base.append("Response style: 1-2 short sentences, maximum one question, no repetition.")
 
         return "\n".join(base) + f"\n\nCustomer said: {user_text}"
 
@@ -3084,6 +4034,7 @@ class WebCallSession:
             self._wf_state.last_asked_ts = time.time()
             # Count asks even when text is repeated; prevents infinite repeat loops.
             self._wf.update_from_assistant(normalized_assistant_text, self._wf_state)
+            self._update_policy_from_assistant(normalized_assistant_text)
             self._set_workflow_step(reason="fixed_turn")
         self._current_utterance_id = self._next_utterance_id()
         self._current_utterance_status = "completed"
@@ -3152,10 +4103,15 @@ class WebCallSession:
                         self._log_message(role="assistant", content=self._last_assistant_text)
                         self._append_history("assistant", self._last_assistant_text)
                         self._trim_history()
-                await self.send_event({"type": "status", "state": "listening"})
-                self._set_turn_state("WAITING_FOR_USER")
-                if schedule_no_response:
-                    self._schedule_no_response_watch()
+                if step == "closing":
+                    # Farewell has been spoken — signal the client and auto-close the session.
+                    await self._emit_call_ended_once()
+                    self._schedule_session_close(delay_s=2.0)
+                else:
+                    await self.send_event({"type": "status", "state": "listening"})
+                    self._set_turn_state("WAITING_FOR_USER")
+                    if schedule_no_response:
+                        self._schedule_no_response_watch()
             except asyncio.CancelledError:
                 audio_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -3224,6 +4180,7 @@ class WebCallSession:
             # Gate the first sentence to block placeholders / repeated questions early.
             gate_buffer = ""
             gate_released = False
+            active_step = self._pending_step_id or self._wf_state.last_agent_intent or self._wf_state.current_step
 
             try:
                 await self.send_event({"type": "status", "state": "thinking"})
@@ -3260,7 +4217,7 @@ class WebCallSession:
                     # First-sentence gate
                     if not gate_released:
                         gate_buffer += token
-                        boundary_hit = any(ch in gate_buffer for ch in [".", "?", "!", "।", "\n"]) or len(gate_buffer) >= 320
+                        boundary_hit = any(ch in gate_buffer for ch in [".", "?", "!", "।", "\n"]) or len(gate_buffer) >= 150
                         if not boundary_hit:
                             continue
 
@@ -3269,19 +4226,19 @@ class WebCallSession:
 
                         reason = self._policy_disallows_assistant_text(candidate)
                         if reason:
-                            candidate = self._policy_fallback_response(user_text)
+                            candidate = self._policy_fallback_response(user_text, language=language)
                             candidate = self._sanitize_placeholders(candidate)
                             candidate = self._dedupe_repeated_sentences(candidate)
-                        candidate = self._normalize_branding_text(candidate)
+                        candidate = self._enforce_enterprise_response(
+                            candidate,
+                            step=active_step,
+                            language=language,
+                        )
 
                         gate_released = True
                         gate_buffer = ""
 
                         self._update_policy_from_assistant(candidate)
-                        
-                        # Humanize and add prosody hints
-                        candidate = self._humanize_response(candidate, language=language)
-                        candidate = self._add_prosody_hints(candidate, self._emotional_state)
 
                         if not utterance_emitted:
                             await self._emit_timeline_event(
@@ -3307,28 +4264,35 @@ class WebCallSession:
                             }
                         )
                         assistant_text += candidate
-                        spoken_text += candidate
                         tts_buffer += candidate
 
                         if candidate and self._should_flush_tts(tts_buffer, candidate[-1]):
-                            # Humanize and add prosody before sending to TTS
-                            tts_buffer = self._humanize_response(tts_buffer, language=language)
-                            tts_buffer = self._add_prosody_hints(tts_buffer, self._emotional_state)
-                            tts_buffer = self._normalize_branding_text(tts_buffer)
+                            tts_chunk = self._prepare_tts_text(tts_buffer, language=language)
                             log_event(
                                 logger,
                                 "tts_input",
                                 session_id=self._session_id,
                                 turn_id=self._current_turn_id,
-                                chars=len(tts_buffer),
+                                chars=len(tts_chunk),
                                 source="llm_stream",
                             )
                             if not self._tts_pending:
                                 self._tts_pending = True
                                 self._tts_start_ts = time.time()
                                 self._barge_in_armed = True
-                            await tts.send_text(tts_buffer)
+                            await tts.send_text(tts_chunk)
+                            spoken_text += tts_chunk
                             tts_buffer = ""
+                        if self._should_end_stream_early(assistant_text, step=active_step):
+                            log_event(
+                                logger,
+                                "llm_stream_truncated",
+                                session_id=self._session_id,
+                                turn_id=self._current_turn_id,
+                                reason="quality_guard",
+                                step=active_step,
+                            )
+                            break
                         continue
 
                     # After gate release: stream tokens normally
@@ -3341,23 +4305,30 @@ class WebCallSession:
                         }
                     )
                     assistant_text += token
-                    spoken_text += token
                     tts_buffer += token
+                    if self._should_end_stream_early(assistant_text, step=active_step):
+                        log_event(
+                            logger,
+                            "llm_stream_truncated",
+                            session_id=self._session_id,
+                            turn_id=self._current_turn_id,
+                            reason="quality_guard",
+                            step=active_step,
+                        )
+                        break
 
                     if self._should_flush_tts(tts_buffer, token):
-                        # Humanize and add prosody before sending to TTS
-                        tts_buffer = self._humanize_response(tts_buffer, language=language)
-                        tts_buffer = self._add_prosody_hints(tts_buffer, self._emotional_state)
-                        tts_buffer = self._normalize_branding_text(tts_buffer)
+                        tts_chunk = self._prepare_tts_text(tts_buffer, language=language)
                         log_event(
                             logger,
                             "tts_input",
                             session_id=self._session_id,
                             turn_id=self._current_turn_id,
-                            chars=len(tts_buffer),
+                            chars=len(tts_chunk),
                             source="llm_stream",
                         )
-                        await tts.send_text(tts_buffer)
+                        await tts.send_text(tts_chunk)
+                        spoken_text += tts_chunk
                         tts_buffer = ""
 
                 # If stream ended before gate released, flush what we have.
@@ -3367,10 +4338,14 @@ class WebCallSession:
 
                     reason = self._policy_disallows_assistant_text(candidate)
                     if reason:
-                        candidate = self._policy_fallback_response(user_text)
+                        candidate = self._policy_fallback_response(user_text, language=language)
                         candidate = self._sanitize_placeholders(candidate)
                         candidate = self._dedupe_repeated_sentences(candidate)
-                    candidate = self._normalize_branding_text(candidate)
+                    candidate = self._enforce_enterprise_response(
+                        candidate,
+                        step=active_step,
+                        language=language,
+                    )
 
                     self._update_policy_from_assistant(candidate)
                     if not utterance_emitted:
@@ -3397,28 +4372,69 @@ class WebCallSession:
                         }
                     )
                     assistant_text += candidate
-                    spoken_text += candidate
                     tts_buffer += candidate
+
+                if not assistant_text.strip() and not tts_buffer.strip():
+                    candidate = self._policy_fallback_response(user_text, language=language)
+                    candidate = self._sanitize_placeholders(candidate)
+                    candidate = self._dedupe_repeated_sentences(candidate)
+                    candidate = self._enforce_enterprise_response(
+                        candidate,
+                        step=active_step,
+                        language=language,
+                    )
+                    if candidate.strip():
+                        log_event(
+                            logger,
+                            "llm_empty_fallback",
+                            session_id=self._session_id,
+                            turn_id=self._current_turn_id,
+                            step=active_step,
+                        )
+                        self._update_policy_from_assistant(candidate)
+                        if not utterance_emitted:
+                            await self._emit_timeline_event(
+                                "agent_utterance_created",
+                                utterance_id=self._current_utterance_id,
+                                text=candidate,
+                            )
+                            utterance_emitted = True
+                        if (not assistant_history_appended) and not self._is_duplicate_assistant_text(candidate):
+                            self._last_assistant_text = candidate.strip()
+                            self._log_message(role="assistant", content=self._last_assistant_text)
+                            self._wf.update_from_assistant(self._last_assistant_text, self._wf_state)
+                            self._set_workflow_step(reason="llm_empty_fallback")
+                            self._append_history("assistant", self._last_assistant_text)
+                            self._trim_history()
+                            assistant_history_appended = True
+                        await self.send_event(
+                            {
+                                "type": "assistant_token",
+                                "text": candidate,
+                                "final": False,
+                                "utterance_id": self._current_utterance_id,
+                            }
+                        )
+                        assistant_text += candidate
+                        tts_buffer += candidate
 
                 # Flush remaining TTS buffer
                 if tts_buffer.strip():
-                    # Humanize and add prosody before sending to TTS
-                    tts_buffer = self._humanize_response(tts_buffer, language=language)
-                    tts_buffer = self._add_prosody_hints(tts_buffer, self._emotional_state)
-                    tts_buffer = self._normalize_branding_text(tts_buffer)
+                    tts_chunk = self._prepare_tts_text(tts_buffer, language=language)
                     log_event(
                         logger,
                         "tts_input",
                         session_id=self._session_id,
                         turn_id=self._current_turn_id,
-                        chars=len(tts_buffer),
+                        chars=len(tts_chunk),
                         source="llm_stream",
                     )
                     if not self._tts_pending:
                         self._tts_pending = True
                         self._tts_start_ts = time.time()
                         self._barge_in_armed = True
-                    await tts.send_text(tts_buffer)
+                    await tts.send_text(tts_chunk)
+                    spoken_text += tts_chunk
                     tts_buffer = ""
 
                 await tts.end_input()
@@ -3450,7 +4466,11 @@ class WebCallSession:
                     with contextlib.suppress(asyncio.CancelledError):
                         await audio_task
 
-                assistant_text = self._normalize_branding_text(assistant_text)
+                assistant_text = self._enforce_enterprise_response(
+                    assistant_text,
+                    step=active_step,
+                    language=language,
+                )
                 if utterance_emitted:
                     await self._emit_timeline_event(
                         "agent_tts_end",
@@ -3490,13 +4510,18 @@ class WebCallSession:
                         self._append_history("assistant", assistant_text)
                     self._trim_history()
 
-                await self.send_event({"type": "status", "state": "listening"})
-                self._set_turn_state("WAITING_FOR_USER")
-                self._schedule_no_response_watch()
+                if active_step == "closing":
+                    # LLM generated the closing farewell — signal the client and auto-close.
+                    await self._emit_call_ended_once()
+                    self._schedule_session_close(delay_s=2.0)
+                else:
+                    await self.send_event({"type": "status", "state": "listening"})
+                    self._set_turn_state("WAITING_FOR_USER")
+                    self._schedule_no_response_watch()
 
             except asyncio.CancelledError:
                 # Preserve what the user actually heard so we don't repeat on the next turn.
-                interrupted_text = (spoken_text or "").strip() or (assistant_text or "").strip()
+                interrupted_text = (spoken_text or "").strip()
                 interrupted_text = self._normalize_branding_text(interrupted_text)
                 self._current_utterance_status = "interrupted"
                 if utterance_emitted:
@@ -3523,6 +4548,14 @@ class WebCallSession:
                             }
                         )
                         await self._emit_chat_message(role="assistant", text=interrupted_text)
+                elif not assistant_history_appended:
+                    # Barge-in happened before any audio was sent — record a step marker so
+                    # the LLM doesn't regenerate an identical response on the next turn.
+                    step_hint = active_step or self._wf_state.current_step or "unknown"
+                    marker = f"[Agent was interrupted before speaking — step: {step_hint}]"
+                    self._append_history("user", user_text)
+                    self._append_history("assistant", marker)
+                    self._trim_history()
 
                 audio_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -3631,24 +4664,322 @@ class WebCallSession:
                     bytes=total_bytes,
                 )
 
+    def _is_plausible_name_candidate(self, candidate: str, utterance: str) -> bool:
+        c = re.sub(r"\s+", " ", (candidate or "")).strip(" .,'\"")
+        if not c:
+            return False
+        if any(ch.isdigit() for ch in c):
+            return False
+        tokens = [tok for tok in re.split(r"\s+", c.lower()) if tok]
+        if not tokens or len(tokens) > 4:
+            return False
+        if tokens[0] in {"a", "an", "the", "this", "that"}:
+            return False
+        blocked_tokens = {
+            "good",
+            "time",
+            "talk",
+            "go",
+            "simple",
+            "noun",
+            "payment",
+            "pay",
+            "due",
+            "overdue",
+            "call",
+            "callback",
+            "now",
+            "later",
+            "today",
+            "tomorrow",
+            "yes",
+            "no",
+            "okay",
+            "ok",
+            "hello",
+            "hi",
+            "there",
+            "understand",
+            "sure",
+            "maybe",
+        }
+        if any(tok in blocked_tokens for tok in tokens):
+            return False
+        utt = (utterance or "").lower()
+        if ("good time" in utt or "right time" in utt) and "time" in tokens:
+            return False
+        return True
+
+    def _is_edge_noise_char(self, ch: str) -> bool:
+        if not ch:
+            return False
+        if ch in {"'", "’", "-"}:
+            return False
+        category = unicodedata.category(ch)
+        return ch.isspace() or category.startswith("P") or category.startswith("S")
+
+    def _strip_edge_noise(self, text: str) -> str:
+        value = (text or "")
+        start = 0
+        end = len(value)
+        while start < end and self._is_edge_noise_char(value[start]):
+            start += 1
+        while end > start and self._is_edge_noise_char(value[end - 1]):
+            end -= 1
+        return value[start:end]
+
+    def _format_name_candidate(self, candidate: str) -> str:
+        parts = []
+        for token in re.split(r"\s+", (candidate or "").strip()):
+            token = self._strip_edge_noise(token)
+            if not token:
+                continue
+            if re.fullmatch(r"[A-Za-z][A-Za-z'’-]*", token):
+                parts.append(token[:1].upper() + token[1:].lower())
+            else:
+                parts.append(token)
+        return " ".join(parts).strip()
+
+    def _is_better_name_candidate(self, candidate: Optional[str], existing: Optional[str]) -> bool:
+        new_value = " ".join((candidate or "").split()).strip()
+        current_value = " ".join((existing or "").split()).strip()
+        if not new_value:
+            return False
+        if not current_value:
+            return True
+        new_tokens = len([token for token in new_value.split() if token])
+        current_tokens = len([token for token in current_value.split() if token])
+        if new_tokens != current_tokens:
+            return new_tokens > current_tokens
+        return len(new_value) > len(current_value)
+
+    def _is_name_token(self, token: str) -> bool:
+        token = self._strip_edge_noise((token or "").strip())
+        if not token:
+            return False
+        saw_letter = False
+        for ch in token:
+            if ch in {"'", "’", "-"}:
+                continue
+            category = unicodedata.category(ch)
+            if category.startswith("L"):
+                saw_letter = True
+                continue
+            if category in {"Mn", "Mc", "Me"}:
+                continue
+            return False
+        return saw_letter
+
+    def _normalize_name_token(self, token: str) -> str:
+        token = self._strip_edge_noise(token or "")
+        parts = []
+        for ch in (token or ""):
+            if ch in {"'", "’", "-"}:
+                continue
+            category = unicodedata.category(ch)
+            if category.startswith("L") or category in {"Mn", "Mc", "Me"}:
+                parts.append(ch)
+        return "".join(parts).casefold()
+
+    def _merge_identity_pending_final(self, existing_text: str, new_text: str) -> str:
+        existing = " ".join((existing_text or "").split()).strip()
+        new = " ".join((new_text or "").split()).strip()
+        if not existing or not new:
+            return existing or new
+        if existing == new:
+            return existing
+
+        existing_tokens = [token for token in existing.split() if token]
+        new_tokens = [token for token in new.split() if token]
+        if not existing_tokens or not new_tokens:
+            return new or existing
+
+        existing_norm = [self._normalize_name_token(token) for token in existing_tokens]
+        new_norm = [self._normalize_name_token(token) for token in new_tokens]
+
+        overlap = 0
+        max_overlap = min(len(existing_norm), len(new_norm))
+        for size in range(max_overlap, 0, -1):
+            if existing_norm[-size:] == new_norm[:size] and all(existing_norm[-size:]):
+                overlap = size
+                break
+
+        merged_tokens = existing_tokens + new_tokens[overlap:]
+        deduped_tokens = []
+        last_norm = None
+        for token in merged_tokens:
+            norm_token = self._normalize_name_token(token)
+            if norm_token and norm_token == last_norm:
+                continue
+            deduped_tokens.append(token)
+            last_norm = norm_token or None
+        return " ".join(deduped_tokens).strip()
+
+    def _recover_identity_from_pending_final(self, text: str, active_step: Optional[str]) -> bool:
+        if active_step != "confirm_identity":
+            return False
+        if self._wf_state.identity_confirmed and self._facts.get("customer_name"):
+            return False
+
+        previous_name = self._facts.get("customer_name")
+        recovered_name = self._extract_identity_name_candidate(text)
+        if self._is_better_name_candidate(recovered_name, previous_name):
+            self._facts["customer_name"] = recovered_name
+        else:
+            self._extract_facts_from_text(text)
+            recovered_name = self._facts.get("customer_name")
+        if not recovered_name:
+            return False
+
+        if self._wf_state.identity_confirmed and recovered_name == previous_name:
+            return False
+
+        self._wf.update_from_user(
+            text,
+            self._wf_state,
+            extracted={
+                "customer_name": recovered_name,
+                "identity_name_preexisting": bool(previous_name),
+                "ptp_date": self._facts.get("ptp_date"),
+                "reference_number": self._facts.get("reference_number"),
+                "callback_time": self._facts.get("callback_time"),
+            },
+            reply_to_step_id=active_step,
+        )
+        self._sync_workflow_from_facts()
+        return bool(self._wf_state.identity_confirmed and self._facts.get("customer_name"))
+
+    def _extract_identity_name_candidate(self, text: str) -> Optional[str]:
+        bound_step = (
+            self._reply_to_step_id
+            or self._pending_step_id
+            or self._wf_state.last_agent_intent
+            or self._wf_state.current_step
+        )
+        if bound_step != "confirm_identity":
+            return None
+
+        candidate = unicodedata.normalize("NFKC", (text or "")).strip()
+        if not candidate:
+            return None
+
+        candidate = self._strip_edge_noise(candidate)
+        candidate = re.sub(
+            r"^(?:uh+|um+|hmm+|hello|hi|ji|haan|han|ha|haanji|yes|yeah|yep|ਜੀ|ਹਾਂ|ਹਾਂਜੀ)\s+",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = re.sub(
+            r"^(?:it[' ]?s|this is|i am|i[' ]?m|im|myself|"
+            r"mera\s+naam(?:\s+hai)?|mein|main|mai|"
+            r"मेरा\s+नाम(?:\s+है)?|मैं|"
+            r"ਮੇਰਾ\s+ਨਾਮ(?:\s+ਹੈ)?|ਮੈਂ)\s+",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = re.sub(
+            r"^(?:is|hai|h(?:u|oo)n|है|हूँ|हूं|ਹੈ)\s+",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = re.sub(
+            r"\s+(?:speaking|here|bol\s+raha\s+h(?:u|oo)n|bol\s+rahi\s+h(?:u|oo)n|"
+            r"बोल\s+रहा\s+हूँ|बोल\s+रही\s+हूँ|hai|h(?:u|oo)n|है|हूँ|हूं|ਹੈ)\.?$",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = self._strip_edge_noise(" ".join(candidate.split()))
+        if not candidate:
+            return None
+
+        tokens = [token for token in candidate.split() if token]
+        if not tokens or len(tokens) > 4:
+            return None
+        if not all(self._is_name_token(token) for token in tokens):
+            return None
+
+        stop_tokens = {
+            "ji",
+            "haan",
+            "han",
+            "ha",
+            "haanji",
+            "yes",
+            "yeah",
+            "yep",
+            "hello",
+            "hi",
+            "ok",
+            "okay",
+            "nahi",
+            "nahin",
+            "no",
+            "mera",
+            "naam",
+            "hai",
+            "main",
+            "mai",
+            "mein",
+            "है",
+            "हूँ",
+            "हूं",
+            "ਜੀ",
+            "ਹਾਂ",
+            "ਹਾਂਜੀ",
+            "ਮੇਰਾ",
+            "ਨਾਮ",
+            "ਮੈਂ",
+            "ਹੈ",
+        }
+        normalized_stop_tokens = {
+            self._normalize_name_token(token)
+            for token in stop_tokens
+            if self._normalize_name_token(token)
+        }
+        normalized_tokens = [
+            self._normalize_name_token(token)
+            for token in tokens
+        ]
+        if any((not token) or token in normalized_stop_tokens for token in normalized_tokens):
+            return None
+        if not self._is_plausible_name_candidate(candidate, text):
+            return None
+        return self._format_name_candidate(candidate)
+
     def _extract_facts_from_text(self, text: str) -> None:
         """Best-effort extraction of key facts from user utterances.
 
         Keeps it conservative; LLM is responsible for deeper reasoning.
         """
-        import re
-
         t = (text or "").strip()
         if not t:
             return
 
         # Name
-        m = re.search(r"\b(?:my name is|i am|this is)\s+([A-Za-z][A-Za-z\s\-']{1,40})\b", t, re.IGNORECASE)
-        if m and not self._facts.get("customer_name"):
+        current_name = self._facts.get("customer_name")
+        m = re.search(
+            r"\b(?:my name is|i am|i[' ]?m|im|this is|it[' ]?s|it is|this side is)\s+([A-Za-z][A-Za-z\s\-']{1,40})\b",
+            t,
+            re.IGNORECASE,
+        )
+        if m:
             name = m.group(1).strip(" .,")
-            # Avoid capturing generic words.
-            if name and name.lower() not in {"hello", "hi", "yes", "okay"}:
-                self._facts["customer_name"] = " ".join(w.capitalize() for w in name.split())
+            if self._is_plausible_name_candidate(name, t) and self._is_better_name_candidate(name, current_name):
+                self._facts["customer_name"] = self._format_name_candidate(name)
+        current_name = self._facts.get("customer_name")
+        honorific = re.search(r"\b(?:mr|mrs|ms|miss)\.?\s+([A-Za-z][A-Za-z\s\-']{1,40})\b", t, re.IGNORECASE)
+        if honorific:
+            name = honorific.group(1).strip(" .,")
+            if self._is_plausible_name_candidate(name, t) and self._is_better_name_candidate(name, current_name):
+                self._facts["customer_name"] = self._format_name_candidate(name)
+        current_name = self._facts.get("customer_name")
+        bare_identity_name = self._extract_identity_name_candidate(t)
+        if self._is_better_name_candidate(bare_identity_name, current_name):
+            self._facts["customer_name"] = bare_identity_name
 
         # Amount (₹ / Rs / rupees)
         amt = re.search(r"(?:₹|\brs\.?|\brupees\b)\s*([0-9][0-9,]*(?:\.[0-9]+)?)", t, re.IGNORECASE)
@@ -3658,6 +4989,13 @@ class WebCallSession:
 
         # Date normalization (supports relative + absolute phrases).
         normalized_ptp = self._normalize_ptp_text(t)
+        ambiguous_relative_window = (
+            self._wf_state.current_step == "ask_ptp_or_callback"
+            and self._wf_state.last_transition_reason in {"uncertain_commitment", "needs_callback", "hardship", "ptp_callback_ambiguous", "callback_time_needed"}
+        )
+        if normalized_ptp and not self._has_callback_marker(t):
+            if ambiguous_relative_window and not self._has_payment_commitment_marker(t):
+                normalized_ptp = None
         if normalized_ptp:
             self._facts["ptp_date"] = normalized_ptp
 
@@ -3707,17 +5045,21 @@ class WebCallSession:
         ptp = self._facts.get("ptp_date")
         ref = self._facts.get("reference_number")
         lang = self._facts.get("language_preference")
+        brand = self._effective_brand_name()
 
         # IMPORTANT: This is a *system* hint to prevent repetitive greetings and placeholders.
         parts = [
-            "You are a TuringEdge collections voice agent.",
+            f"You are a {brand} collections voice agent.",
             f"The conversation has {'already' if self._has_greeted else 'not yet'} started with an initial greeting.",
             "Do NOT repeat the greeting once it has happened.",
             "Never use placeholders like [Customer's Name]. If a value is unknown, ask a short question to obtain it and then use it consistently.",
             "Do not repeat the same question verbatim twice; if unclear, rephrase or clarify once.",
         ]
         if name:
-            parts.append(f"Customer name (confirmed): {name}.")
+            if self._wf_state.identity_confirmed:
+                parts.append(f"Customer name (confirmed): {name}.")
+            else:
+                parts.append(f"Customer name from records: {name}. Use it naturally, but still confirm identity before discussing account details.")
         if amt:
             parts.append(f"Overdue amount (known): INR {amt}.")
         if due:
@@ -3733,6 +5075,16 @@ class WebCallSession:
                     "Respond in Hindi using Devanagari script unless the customer requests another language. "
                     "Never use Romanized Hindi."
                 )
+                if self._speaker_gender() == "male":
+                    parts.append(
+                        "The configured Hindi voice is male. Use masculine self-reference such as "
+                        "'बोल रहा हूँ', 'कर सकता हूँ', 'पूछ रहा हूँ', and 'समझ गया'."
+                    )
+                else:
+                    parts.append(
+                        "The configured Hindi voice is female. Use feminine self-reference such as "
+                        "'बोल रही हूँ', 'कर सकती हूँ', 'पूछ रही हूँ', and 'समझ गई'."
+                    )
             elif str(lang).lower().startswith("en"):
                 parts.append("Respond in English unless the customer requests another language.")
             else:
@@ -3744,7 +5096,14 @@ class WebCallSession:
             parts.append(f"DPD bucket: {strategy.dpd_bucket}.")
             parts.append(f"Strategy mode: {strategy.strategy_mode}.")
             parts.append(f"Tone profile: {strategy.tone_profile}.")
+            parts.append(f"Primary objective: {strategy.objective}.")
             parts.append(strategy.instruction)
+            if strategy.guardrails:
+                parts.append("Guardrails: " + " ".join(strategy.guardrails))
+            if strategy.preferred_actions:
+                parts.append("Preferred actions: " + ", ".join(strategy.preferred_actions) + ".")
+            if strategy.prohibited_actions:
+                parts.append("Prohibited actions: " + ", ".join(strategy.prohibited_actions) + ".")
         
         # Add conversation history context
         history_turns = len([m for m in self._chat_history if m.get("role") in ("user", "assistant")])
@@ -3795,6 +5154,13 @@ class WebCallSession:
                 "HARDSHIP DETECTED: Customer is in financial difficulty. "
                 "Be extra empathetic. Offer callback or flexible payment."
             )
+        if ws.refusal_detected and not (ws.ptp_date or ws.callback_time):
+            parts.append(
+                "PAYMENT RESISTANCE: Customer has resisted committing to payment. "
+                "Acknowledge the resistance briefly, avoid repeating the same ask, explain that the loan still needs "
+                "a workable resolution, and move to one practical next step such as a dated commitment, partial "
+                "payment, or callback to discuss options."
+            )
 
         # Add emotional context
         empathy_instruction = EmotionAnalyzer.get_empathy_prompt(self._emotional_state)
@@ -3809,7 +5175,22 @@ class WebCallSession:
         if not self._strategy_engine:
             return None
         try:
-            return self._strategy_engine.classify(self._facts.get("dpd"))
+            return self._strategy_engine.classify(
+                self._facts.get("dpd"),
+                hardship_detected=bool(self._wf_state.hardship_detected),
+                dispute_raised=bool(self._wf_state.dispute_raised),
+                legal_hold=bool(self._wf_state.legal_hold),
+                partial_payment_offered=bool(self._wf_state.partial_payment_offered),
+                emi_restructure_requested=bool(self._wf_state.emi_restructure_requested),
+                callback_requested=bool(self._wf_state.callback_requested),
+                document_requested=bool(self._wf_state.document_requested),
+                refusal_detected=bool(self._wf_state.refusal_detected),
+                refusal_strength=self._wf_state.refusal_strength,
+                no_count=int(self._wf_state.no_count or 0),
+                payment_made=self._wf_state.payment_made,
+                stress_level=getattr(self._emotional_state, "stress_level", 0.0),
+                sentiment=getattr(self._emotional_state, "sentiment", None),
+            )
         except Exception:
             return None
 
@@ -3831,21 +5212,26 @@ class WebCallSession:
     async def _barge_in(self, reason: str) -> None:
         if self._gen_task and not self._gen_task.done():
             logger.info("Barge-in triggered (%s)", reason)
+            fade_ms = self._barge_in_fade_ms
             await self.send_event(
                 {
                     "type": "barge_in",
                     "reason": reason,
-                    "fade_ms": 120,
+                    "fade_ms": fade_ms,
                     "utterance_id": self._reply_to_utterance_id or self._current_utterance_id,
                 }
             )
             log_event(logger, "barge_in", session_id=self._session_id, reason=reason)
             self._current_utterance_status = "interrupted"
+            self._pending_interrupt_ack = True
+            self._force_dynamic_reply_once = True
             await self._emit_timeline_event(
                 "barge_in",
                 utterance_id=self._reply_to_utterance_id or self._current_utterance_id,
                 reason=reason,
             )
+            if fade_ms > 0:
+                await asyncio.sleep(min(0.35, float(fade_ms) / 1000.0))
             await self._cancel_generation()
 
     def _append_history(self, role: str, content: str) -> None:
@@ -3933,6 +5319,7 @@ class WebCallSession:
         assistant_text = ""
         gate_buffer = ""
         gate_released = False
+        active_step = self._pending_step_id or self._wf_state.last_agent_intent or self._wf_state.current_step
 
         # Reset per-turn counters for consistency.
         self._current_llm_text = ""
@@ -3961,7 +5348,7 @@ class WebCallSession:
                 # Gate the first sentence to block repeats/placeholders early.
                 if not gate_released:
                     gate_buffer += token
-                    boundary_hit = any(ch in gate_buffer for ch in [".", "?", "!", "।", "\n"]) or len(gate_buffer) >= 320
+                    boundary_hit = any(ch in gate_buffer for ch in [".", "?", "!", "।", "\n"]) or len(gate_buffer) >= 150
                     if not boundary_hit:
                         continue
 
@@ -3970,19 +5357,27 @@ class WebCallSession:
 
                     reason = self._policy_disallows_assistant_text(candidate)
                     if reason:
-                        candidate = self._policy_fallback_response(user_text)
+                        candidate = self._policy_fallback_response(user_text, language=language)
                         candidate = self._sanitize_placeholders(candidate)
                         candidate = self._dedupe_repeated_sentences(candidate)
-                    candidate = self._normalize_branding_text(candidate)
+                    candidate = self._enforce_enterprise_response(
+                        candidate,
+                        step=active_step,
+                        language=language,
+                    )
 
                     gate_released = True
                     await self.send_event({"type": "assistant_token", "text": candidate, "final": False})
                     assistant_text += candidate
                     gate_buffer = ""
+                    if self._should_end_stream_early(assistant_text, step=active_step):
+                        break
                     continue
 
                 await self.send_event({"type": "assistant_token", "text": token, "final": False})
                 assistant_text += token
+                if self._should_end_stream_early(assistant_text, step=active_step):
+                    break
 
             # Flush any leftover gate buffer
             if not gate_released and gate_buffer.strip():
@@ -3991,15 +5386,23 @@ class WebCallSession:
 
                 reason = self._policy_disallows_assistant_text(candidate)
                 if reason:
-                    candidate = self._policy_fallback_response(user_text)
+                    candidate = self._policy_fallback_response(user_text, language=language)
                     candidate = self._sanitize_placeholders(candidate)
                     candidate = self._dedupe_repeated_sentences(candidate)
-                candidate = self._normalize_branding_text(candidate)
+                candidate = self._enforce_enterprise_response(
+                    candidate,
+                    step=active_step,
+                    language=language,
+                )
 
                 await self.send_event({"type": "assistant_token", "text": candidate, "final": False})
                 assistant_text += candidate
 
-            assistant_text = self._normalize_branding_text(assistant_text)
+            assistant_text = self._enforce_enterprise_response(
+                assistant_text,
+                step=active_step,
+                language=language,
+            )
             await self.send_event({"type": "assistant_final", "text": assistant_text, "preview": True})
             await self.send_event({"type": "status", "state": "listening"})
 
@@ -4019,7 +5422,21 @@ class WebCallSession:
             return
         self.stt.language = new_lang
         log_event(logger, "stt_language_update", session_id=self._session_id, language=new_lang)
-        await self._reconnect_stt()
+        await self._request_stt_stream_restart()
+
+    def _should_resume_stt_after_stream_end(self) -> bool:
+        if not self._stt_stream_restart_requested:
+            return False
+        self._stt_stream_restart_requested = False
+        return True
+
+    async def _request_stt_stream_restart(self) -> None:
+        self._stt_stream_restart_requested = True
+        try:
+            await self._reconnect_stt()
+        except Exception:
+            self._stt_stream_restart_requested = False
+            raise
 
     # CHANGE: STT reconnect with backoff + timeout.
     async def _reconnect_stt(self) -> None:
@@ -4137,9 +5554,158 @@ class WebCallSession:
                 out.append(" ")
         return " ".join("".join(out).split())
 
+    def _detect_customer_meta_question(self, text: str) -> Optional[str]:
+        """Detect identity/purpose clarifications like 'who are you' / 'why calling'."""
+        t = self._normalize_intent_text(text)
+        if not t:
+            return None
+
+        identity_markers = (
+            "who are you",
+            "who r you",
+            "who is this",
+            "which company",
+            "from which company",
+            "aap kaun",
+            "kaun bol",
+            "कौन",
+            "कौन बोल",
+            "कौन हो",
+            "कौन हैं",
+        )
+        purpose_markers = (
+            "why are you calling",
+            "why calling",
+            "what is this call about",
+            "why did you call",
+            "kisliye call",
+            "kis liye call",
+            "kyu call",
+            "kyon call",
+            "kyu phone",
+            "kyon phone",
+            "क्यों कॉल",
+            "क्यों फोन",
+            "किसलिए",
+            "किस बारे में",
+        )
+
+        has_identity = any(m in t for m in identity_markers)
+        has_purpose = any(m in t for m in purpose_markers)
+        if has_identity and has_purpose:
+            return "identity_and_purpose"
+        if has_identity:
+            return "identity"
+        if has_purpose:
+            return "purpose"
+        return None
+
+    def _is_identity_reconfirmation_request(self, text: str) -> bool:
+        t = self._normalize_intent_text(text)
+        if not t:
+            return False
+        phrases = (
+            "did you hear my name",
+            "did you get my name",
+            "heard my name",
+            "what is my name",
+            "say my name",
+            "aapne mera naam suna",
+            "mera naam suna",
+            "mera naam kya",
+            "mera naam dohra",
+            "आपने मेरा नाम सुना",
+            "मेरा नाम सुना",
+            "मेरा नाम क्या",
+            "मेरा नाम दोहरा",
+            "ਮੇਰਾ ਨਾਮ ਸੁਣਿਆ",
+            "ਮੇਰਾ ਨਾਂ ਸੁਣਿਆ",
+            "ਨਾਮ ਸੁਣਿਆ",
+            "ਨਾਂ ਸੁਣਿਆ",
+            "ਮੇਰਾ ਨਾਮ ਕੀ",
+            "ਮੇਰਾ ਨਾਂ ਕੀ",
+        )
+        return any(phrase in t for phrase in phrases)
+
+    def _is_yes_no_challenge(self, text: str) -> bool:
+        t = self._normalize_intent_text(text)
+        if not t:
+            return False
+        phrases = (
+            "yes or no",
+            "haan ya nahi",
+            "han ya nahi",
+            "हाँ या नहीं",
+            "हां या नहीं",
+            "ਹਾਂ ਜਾਂ ਨਹੀਂ",
+        )
+        return any(phrase in t for phrase in phrases)
+
+    def _is_abusive_utterance(self, text: str) -> bool:
+        t = self._normalize_intent_text(text)
+        if not t:
+            return False
+        abusive_markers = (
+            "madarchod",
+            "mc ",
+            "bc ",
+            "motherf",
+            "fuck you",
+            "bhenchod",
+            "बहनचोद",
+            "भोसड़ी",
+            "भोसड़ी",
+            "चूतिया",
+            "तेरी मां",
+            "तेरी माँ",
+            "तेरी बहन",
+            "तेरी बेहन",
+            "आपकी मां की",
+            "आपकी माँ की",
+            "ਮਾਦਰ",
+            "ਭੈਣਚੋ",
+        )
+        return any(marker in t for marker in abusive_markers)
+
+    def _effective_reply_step_for_user_text(self, text: str, reply_step: Optional[str]) -> Optional[str]:
+        step = (reply_step or "").strip()
+        if step != "closing":
+            return step or reply_step
+        if self._is_closing_acknowledgment(text) or self._is_abusive_utterance(text):
+            return "closing"
+        if (
+            self._is_payment_negative_utterance(text)
+            or self._is_payment_progress_response(text)
+            or self._normalize_ptp_text(text)
+            or self._normalize_callback_text(text)
+        ):
+            return "ask_ptp_or_callback"
+        return "closing"
+
     def _is_payment_negative_utterance(self, text: str) -> bool:
         t = self._normalize_intent_text(text)
         if not t:
+            return False
+        uncertain_phrases = (
+            "not sure",
+            "don t know",
+            "dont know",
+            "do not know",
+            "cannot say",
+            "can t say",
+            "cant say",
+            "not decided",
+            "mujhe nahi pata",
+            "mujhe nahin pata",
+            "mere ko nahi pata",
+            "mere ko nahin pata",
+            "पता नहीं",
+            "मुझे नहीं पता",
+            "मुझे नहीं मालूम",
+            "मेरे को नहीं पता",
+            "मेरे को नहीं मालूम",
+        )
+        if any(phrase in t for phrase in uncertain_phrases):
             return False
         if self._is_no(text):
             return True
@@ -4170,6 +5736,35 @@ class WebCallSession:
             "didn t pay",
             "did not pay",
             "not yet",
+            "won t pay",
+            "wont pay",
+            "will not pay",
+            "what will you do",
+            "what can you do",
+            "nahi karunga",
+            "nahi karungi",
+            "nahi karenge",
+            "payment nahi karunga",
+            "payment nahi karungi",
+            "payment nahi kar sakta",
+            "payment nahi kar sakti",
+            "bhugtan nahi karunga",
+            "bhugtan nahi karungi",
+            "bhugtan nahi kar sakta",
+            "bhugtan nahi kar sakti",
+            "nahi kar sakta",
+            "nahi kar sakti",
+            "kar nahi sakta",
+            "kar nahi sakti",
+            "नहीं करूंगा",
+            "नहीं करूँगा",
+            "नहीं करूंगी",
+            "नहीं करूँगी",
+            "नहीं करेंगे",
+            "क्या कर लोगे",
+            "क्या कर लोगी",
+            "क्या कर लेगा",
+            "जो करना है कर लो",
             "नहीं",
             "नहि",
             "ना",
@@ -4177,14 +5772,169 @@ class WebCallSession:
             "भुगतान नही",
             "नहीं किया",
             "नही किया",
+            "भुगतान नहीं करूंगा",
+            "भुगतान नहीं करूँगा",
+            "भुगतान नहीं करूंगी",
+            "भुगतान नहीं करूँगी",
+            "भुगतान नहीं कर सकता",
+            "भुगतान नहीं कर सकती",
+            "पेमेंट नहीं करूंगा",
+            "पेमेंट नहीं करूँगा",
+            "पेमेंट नहीं कर सकता",
+            "पेमेंट नहीं कर सकती",
             "कर नहीं सकता",
             "कर नही सकता",
             "पैसे नहीं",
             "पैसे नही",
+            "नहीं कर सकता",
+            "नहीं कर सकती",
+            "ਨਹੀਂ ਕਰ ਸਕਦਾ",
+            "ਨਹੀਂ ਕਰ ਸਕਦੀ",
+            "ਨਹੀਂ ਕਰਾਂਗਾ",
+            "ਨਹੀਂ ਕਰਾਂਗੀ",
+            "ਕੀ ਕਰ ਲਓਗੇ",
+            "ਪੈਸੇ ਨਹੀਂ",
             "பணம் இல்லை",
             "கட்ட முடியாது",
         )
         return any(p in t for p in negative_phrases)
+
+    def _is_payment_progress_response(self, text: str) -> bool:
+        t = self._normalize_intent_text(text)
+        if not t:
+            return False
+        if self._is_yes(text) or self._is_no(text) or self._is_payment_negative_utterance(text):
+            return True
+        if self._normalize_ptp_text(text) or self._normalize_callback_text(text):
+            return True
+        commitment_markers = (
+            "tomorrow",
+            "today",
+            "next week",
+            "next month",
+            "by tomorrow",
+            "salary",
+            "payment date",
+            "callback",
+            "call back",
+            "call me",
+            "utr",
+            "reference",
+            "kal",
+            "aaj",
+            "parso",
+            "pay kar",
+            "kar dunga",
+            "kar dungi",
+            "kar denge",
+            "kar paunga",
+            "kar paungi",
+            "कर दूंगा",
+            "कर दूँगा",
+            "कर दूंगी",
+            "कर दूँगी",
+            "कर देंगे",
+            "कर पाएंगे",
+            "कर पाएँगे",
+            "कल",
+            "आज",
+            "परसों",
+            "तारीख",
+            "कॉलबैक",
+            "कॉल बैक",
+            "कॉल कर",
+            "भुगतान",
+            "पेमेंट",
+            "utr",
+            "ਕੱਲ",
+            "ਭੁਗਤਾਨ",
+            "ਪੇਮੈਂਟ",
+            "ਕਰ ਦੇਵਾਂਗੇ",
+            "ਕਰ ਦਿਆਂਗੇ",
+            "callback",
+        )
+        if any(marker in t for marker in commitment_markers):
+            return True
+        if re.search(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", t):
+            return True
+        return False
+
+    def _is_closing_acknowledgment(self, text: str) -> bool:
+        t = self._normalize_intent_text(text)
+        if not t or self._detect_language_switch_request(text):
+            return False
+        tokens = [tok for tok in t.split() if tok]
+        ack_phrases = (
+            "ok",
+            "okay",
+            "alright",
+            "all right",
+            "fine",
+            "thanks",
+            "thank you",
+            "bye",
+            "goodbye",
+            "take care",
+            "good evening",
+            "good night",
+            "theek hai",
+            "thik hai",
+            "ठीक है",
+            "धन्यवाद",
+            "शुक्रिया",
+            "शुभ शाम",
+            "शुभ रात्रि",
+            "जी ठीक है",
+            "ਠੀਕ ਹੈ",
+            "ਧੰਨਵਾਦ",
+            "ਸ਼ੁਭ ਸ਼ਾਮ",
+            "ਸ਼ੁਭ ਰਾਤ",
+            "ਸ਼ੁਭ ਸ਼ਾਮ",
+            "ਸ਼ੁਭ ਰਾਤ",
+        )
+        if any(phrase in t for phrase in ack_phrases):
+            return len(tokens) <= 6
+        return len(tokens) <= 3 and all(
+            tok in {
+                "ok",
+                "okay",
+                "ji",
+                "haan",
+                "ठीक",
+                "ठीकहै",
+                "ठीक",
+                "भाई",
+                "साहब",
+                "ठीकहैभाईसाहब",
+                "ਠੀਕ",
+                "ਹਾਂ",
+            }
+            for tok in tokens
+        )
+
+    def _is_awareness_denial_utterance(self, text: str) -> bool:
+        t = self._normalize_intent_text(text)
+        if not t:
+            return False
+        phrase_markers = (
+            "not aware",
+            "wasn t aware",
+            "wasnt aware",
+            "didn t know",
+            "didnt know",
+            "did not know",
+            "no idea",
+            "pata nahi",
+            "pata nahin",
+            "maloom nahi",
+            "malum nahi",
+            "jaankari nahi",
+        )
+        if any(p in t for p in phrase_markers):
+            return True
+        if re.search(r"\b(?:not|wasn t|was not|didn t|did not|no)\b(?:\s+\w+){0,3}\s+\b(?:aware|know)\b", t):
+            return True
+        return False
 
     def _is_low_information_user_text(self, text: str) -> bool:
         t = re.sub(r"[^a-z0-9\s]", " ", (text or "").lower())
@@ -4201,6 +5951,8 @@ class WebCallSession:
             "hey",
             "ok",
             "okay",
+            "but",
+            "so",
             "hmm",
             "hm",
             "uh",
@@ -4268,7 +6020,12 @@ class WebCallSession:
             "হ্যাঁ",
             "হ্যা",
             "હા",
+            "જી",
+            "હાજી",
             "ਹਾਂ",
+            "ਜੀ",
+            "ਹਾਂਜੀ",
+            "ਬਿਲਕੁਲ",
             "ହଁ",
         }
         no_tokens = {
@@ -4343,7 +6100,12 @@ class WebCallSession:
             "হ্যাঁ",
             "হ্যা",
             "હા",
+            "જી",
+            "હાજી",
             "ਹਾਂ",
+            "ਜੀ",
+            "ਹਾਂਜੀ",
+            "ਬਿਲਕੁਲ",
             "ହଁ",
         }
         no_tokens = {
@@ -4372,6 +6134,7 @@ class WebCallSession:
             "ના",
             "નહીં",
             "ਨਹੀਂ",
+            "ਨਹੀ",
             "ନା",
         }
         if any(tok in yes_tokens for tok in tokens):
@@ -4391,6 +6154,10 @@ class WebCallSession:
             or "am i speaking with" in t
             or "confirm your name" in t
             or "may i confirm your name" in t
+            or "tell me your name" in t
+            or "tell me your full name" in t
+            or "share your name" in t
+            or "what is your name" in t
         ):
             return "confirm_identity"
         if "have you made the payment" in t or ("payment" in t and "made" in t):
@@ -4408,8 +6175,31 @@ class WebCallSession:
             self._policy["asked"][intent] = True
 
     def _update_policy_from_user(self, user_text: str) -> None:
+        # Keep awareness-denial state even when pending intent was lost (for example after barge-in/fixed turns).
+        if self._is_awareness_denial_utterance(user_text):
+            self._policy["confirmed"]["awareness"] = False
+            self._facts["awareness_denied"] = True
+
         pending = self._policy.get("pending_intent")
         if not pending:
+            last_step = self._wf_state.last_asked_step
+            if last_step == "confirm_awareness":
+                if self._is_yes(user_text):
+                    self._policy["confirmed"]["awareness"] = True
+                elif self._is_no(user_text):
+                    self._policy["confirmed"]["awareness"] = False
+                    self._facts["awareness_denied"] = True
+            elif last_step == "confirm_identity":
+                known_name = bool(str(self._facts.get("customer_name") or "").strip())
+                if known_name and self._is_yes(user_text):
+                    self._policy["confirmed"]["identity"] = True
+                elif self._is_no(user_text):
+                    self._policy["confirmed"]["identity"] = False
+            elif last_step == "ask_payment_made":
+                if self._is_yes(user_text):
+                    self._policy["confirmed"]["payment_made"] = True
+                elif self._is_no(user_text):
+                    self._policy["confirmed"]["payment_made"] = False
             return
 
         if pending == "confirm_awareness":
@@ -4417,9 +6207,11 @@ class WebCallSession:
                 self._policy["confirmed"]["awareness"] = True
             elif self._is_no(user_text):
                 self._policy["confirmed"]["awareness"] = False
+                self._facts["awareness_denied"] = True
 
         if pending == "confirm_identity":
-            if self._is_yes(user_text):
+            known_name = bool(str(self._facts.get("customer_name") or "").strip())
+            if known_name and self._is_yes(user_text):
                 self._policy["confirmed"]["identity"] = True
             elif self._is_no(user_text):
                 self._policy["confirmed"]["identity"] = False
@@ -4461,8 +6253,9 @@ class WebCallSession:
         t = text or ""
         if not t:
             return ""
-        # Hard-normalize all spoken branding to TuringEdge.
-        return re.sub(r"\bkredit[\s\-]*bee\b", "TuringEdge", t, flags=re.IGNORECASE)
+        brand = self._effective_brand_name()
+        out = re.sub(r"\bkredit[\s\-]*bee\b", brand, t, flags=re.IGNORECASE)
+        return re.sub(r"\bturing\s*edge\b", brand, out, flags=re.IGNORECASE)
 
     def _has_consent_prompt(self, text: Optional[str]) -> bool:
         t = (text or "").strip()
@@ -4473,11 +6266,20 @@ class WebCallSession:
         t_norm = self._normalize_for_dedupe(t)
         if "do i have your consent to continue" in t_norm:
             return True
+        if "may i continue" in t_norm:
+            return True
+        if "यह कॉल रिकॉर्ड हो सकती है" in t or "क्या मैं आगे बढ़ूँ" in t:
+            return True
         # Be tolerant to minor ASR / copy variants to avoid double-speaking consent.
         has_recording_hint = "record" in t_norm or "quality" in t_norm or "qualit" in t_norm
         has_consent_hint = "consent" in t_norm or "permission" in t_norm or "permiss" in t_norm
         has_continue_hint = "continue" in t_norm or "proceed" in t_norm
-        return has_recording_hint and has_consent_hint and has_continue_hint
+        has_hindi_recording_hint = "रिकॉर्ड" in t
+        has_hindi_continue_hint = "आगे बढ़" in t or "जारी" in t
+        has_hindi_consent_hint = "सहमति" in t or "इजाजत" in t
+        return (has_recording_hint and has_consent_hint and has_continue_hint) or (
+            has_hindi_recording_hint and (has_hindi_continue_hint or has_hindi_consent_hint)
+        )
 
     def _strip_consent_like_fragments(self, text: str) -> str:
         """Remove consent-like fragments from greeting text.
@@ -4499,7 +6301,11 @@ class WebCallSession:
                 continue
             if "do i have your consent to continue" in p_norm:
                 continue
+            if "may i continue" in p_norm:
+                continue
             if "do i have your permission to continue" in p_norm:
+                continue
+            if "यह कॉल रिकॉर्ड हो सकती है" in p or "क्या मैं आगे बढ़ूँ" in p:
                 continue
 
             # Common malformed/ASR variants.
@@ -4512,15 +6318,21 @@ class WebCallSession:
             has_consent_hint = "consent" in p_norm or "permission" in p_norm or "permiss" in p_norm
             has_recording_hint = "record" in p_norm or "quality" in p_norm or "qualit" in p_norm
             has_continue_hint = "continue" in p_norm or "proceed" in p_norm
+            has_hindi_recording_hint = "रिकॉर्ड" in p
+            has_hindi_continue_hint = "आगे बढ़" in p or "जारी" in p
+            has_hindi_consent_hint = "सहमति" in p or "इजाजत" in p
             if has_consent_hint and (has_recording_hint or has_continue_hint):
+                continue
+            if has_hindi_recording_hint and (has_hindi_continue_hint or has_hindi_consent_hint):
                 continue
             kept.append(p)
         return " ".join(kept).strip()
 
     def _ensure_consent_prompt_once(self, text: Optional[str]) -> str:
         t = (text or "").strip()
+        consent_prompt = self._consent_prompt(self._resolve_output_language())
         if not t:
-            return _CONSENT_PROMPT
+            return consent_prompt
         # Remove all consent prompt variants, then append exactly one canonical copy.
         stripped = _CONSENT_PROMPT_RE.sub(" ", t).strip()
         stripped = self._strip_consent_like_fragments(stripped)
@@ -4529,8 +6341,8 @@ class WebCallSession:
         stripped = stripped.rstrip(". ")
 
         if stripped:
-            return stripped + ". " + _CONSENT_PROMPT
-        return _CONSENT_PROMPT
+            return stripped + ". " + consent_prompt
+        return consent_prompt
 
     def _sanitize_placeholders(self, text: str) -> str:
         """Replace obvious placeholders with known facts, if available."""
@@ -4582,17 +6394,64 @@ class WebCallSession:
         t = (text or "")
         return any(x in t for x in ["[amount]", "₹[amount]", "[date]", "[Customer", "[customer", "[name]"])
 
+    def _looks_like_payment_collection_ask(self, text: str) -> bool:
+        t = " ".join((text or "").lower().split())
+        if not t:
+            return False
+        return any(
+            phrase in t
+            for phrase in (
+                "have you made the payment",
+                "when can you pay",
+                "payment date",
+                "promise to pay",
+                "make payment",
+                "pay now",
+                "able to make the payment",
+                "payment by",
+            )
+        )
+
+    def _looks_like_immediate_pressure(self, text: str) -> bool:
+        t = " ".join((text or "").lower().split())
+        if not t:
+            return False
+        return any(
+            phrase in t
+            for phrase in (
+                "pay now",
+                "pay immediately",
+                "today itself",
+                "right now",
+                "immediately",
+                "without fail today",
+            )
+        )
+
     def _policy_disallows_assistant_text(self, first_sentence: str) -> Optional[str]:
         """Return a reason string if we should block this output."""
         # Block placeholder leakage.
         if self._contains_placeholders(first_sentence):
             return "placeholder_leak"
 
+        if self._wf_state.legal_hold and self._looks_like_payment_collection_ask(first_sentence):
+            return "legal_hold_payment_ask"
+
+        if (
+            self._wf_state.dispute_raised
+            and self._looks_like_payment_collection_ask(first_sentence)
+            and "undisputed" not in " ".join((first_sentence or "").lower().split())
+        ):
+            return "dispute_pressure"
+
+        if self._wf_state.hardship_detected and self._looks_like_immediate_pressure(first_sentence):
+            return "hardship_pressure"
+
         intent = self._classify_assistant_intent(first_sentence)
         c = self._policy.get("confirmed", {})
-        if intent == "confirm_awareness" and c.get("awareness") is True:
+        if intent == "confirm_awareness" and c.get("awareness") in {True, False}:
             return "repeat_awareness"
-        if intent == "confirm_identity" and c.get("identity") is True:
+        if intent == "confirm_identity" and c.get("identity") in {True, False}:
             return "repeat_identity"
 
         # Block immediate repeats of what we just said.
@@ -4603,28 +6462,76 @@ class WebCallSession:
             return "repeat_last"
         return None
 
-    def _policy_fallback_response(self, user_text: str) -> str:
-        """If we blocked the model's first sentence, produce a safe deterministic response."""
-        # Prefer continuing the flow without repeats.
-        c = self._policy.get("confirmed", {})
-        amt = self._facts.get("overdue_amount")
-        due = self._facts.get("due_date")
+    def _policy_fallback_response(self, user_text: str, language: Optional[str] = None) -> str:
+        """If we blocked model output, recover with a step-aligned deterministic response."""
+        lang = self._resolve_output_language(language)
+        is_hi = bool(lang and lang.lower().startswith("hi"))
+        meta_q = self._detect_customer_meta_question(user_text)
+        step = (
+            self._reply_to_step_id
+            or self._pending_step_id
+            or self._wf_state.last_agent_intent
+            or self._wf_state.current_step
+            or "confirm_awareness"
+        )
+        if self._wf_state.legal_hold:
+            if is_hi:
+                return "मैं आपकी कानूनी चिंता नोट कर रही हूँ। मैं इस कॉल पर भुगतान के लिए नहीं कहूँगी। हमारी टीम आगे संपर्क करेगी। धन्यवाद।"
+            return "I have noted the legal concern. I will not continue collection on this call. Our team will follow up. Thank you."
+        if self._wf_state.dispute_raised:
+            if is_hi:
+                return "मैं आपकी आपत्ति नोट कर रही हूँ। हम इसे समीक्षा के लिए भेजेंगे और टीम आपसे संपर्क करेगी।"
+            return "I have noted your dispute. We will send this for review and our team will follow up."
+        if self._wf_state.hardship_detected and step == "ask_ptp_or_callback":
+            return self._fixed_prompt_for_step("ask_ptp_or_callback", language=lang)
+        if meta_q:
+            brand = self._effective_brand_name()
+            amt = self._facts.get("overdue_amount")
+            if is_hi:
+                bridge = (
+                    f"मैं {brand} कलेक्शंस टीम से बोल रही हूँ। "
+                    + (f"मैं ₹{amt} की ओवरड्यू राशि के बारे में कॉल कर रही हूँ। " if amt else "मैं आपकी ओवरड्यू राशि के बारे में कॉल कर रही हूँ। ")
+                )
+            else:
+                bridge = (
+                    f"I'm from the {brand} collections team. "
+                    + (f"I'm calling about your overdue amount of ₹{amt}. " if amt else "I'm calling about your overdue payment. ")
+                )
+            return (bridge + self._fixed_prompt_for_step(step, language=lang)).strip()
+        if step in {
+            "consent",
+            "confirm_identity",
+            "confirm_awareness",
+            "ask_payment_made",
+            "ask_reference_number",
+            "ask_ptp_or_callback",
+            "closing",
+        }:
+            return self._fixed_prompt_for_step(step, language=lang)
+        if step == "reprompt":
+            if is_hi:
+                return "बस पुष्टि कर रही हूँ, क्या आप लाइन पर हैं?"
+            return "Just checking, are you still there?"
+        if step == "no_response_end":
+            if is_hi:
+                return "ठीक है, मैं बाद में कॉल करूँगी। धन्यवाद।"
+            return "Okay, I will call you later. Thank you."
 
+        # Conservative final fallback when step binding is unavailable.
+        brand = self._effective_brand_name()
+        c = self._policy.get("confirmed", {})
         if c.get("awareness") is True:
             if c.get("payment_made") is True:
-                return "Thanks. Please share the transaction reference/UTR and payment date so I can confirm it."
+                if is_hi:
+                    return "धन्यवाद। कृपया ट्रांज़ैक्शन रेफरेंस या UTR और भुगतान तारीख बताइए।"
+                return "Thanks. Please share the transaction reference or UTR and payment date."
             if c.get("payment_made") is False:
-                return "Okay. By when can you make the payment? Please share a date or a time I can call you back."
-            # Payment made not answered yet.
-            return "Okay. Have you made the payment? If yes, please share the transaction details. If not, can you commit to a payment date?"
-        # If awareness not confirmed yet, ask with known facts if available.
-        if amt and due:
-            return f"Thank you. Are you aware that your loan payment of ₹{amt} is overdue as of {due}?"
-        if amt:
-            return f"Thank you. Are you aware that your loan payment of ₹{amt} is overdue?"
-        if due:
-            return f"Thank you. Are you aware that your loan payment is overdue as of {due}?"
-        return "Thank you. Are you aware of the overdue payment on your TuringEdge loan?"
+                if is_hi:
+                    return "ठीक है। आप भुगतान कब तक कर पाएँगे, या कॉलबैक का समय बताइए।"
+                return "Okay. By when can you make the payment, or share a callback time."
+        if is_hi:
+            return f"धन्यवाद। क्या आपको अपने {brand} लोन की ओवरड्यू भुगतान राशि के बारे में पता है?"
+        return f"Thank you. Are you aware of the overdue payment on your {brand} loan?"
 
     def _dedupe_repeated_sentences(self, text: str) -> str:
         """Remove consecutive duplicate sentences/questions."""
@@ -4643,35 +6550,140 @@ class WebCallSession:
             last_norm = pn
         return " ".join(out).strip()
 
-    def _humanize_response(self, text: str, language: Optional[str] = None) -> str:
-        """Add natural disfluencies and filler words to make speech sound human.
-        Only apply to non-critical compliance statements.
-        """
-        lang = self._canonical_language_code(language) or self._resolve_output_language()
-        if lang and lang.lower().startswith("hi"):
-            # English fillers make Hindi responses sound broken/romanized.
-            return text
+    def _step_requires_question(self, step: Optional[str]) -> bool:
+        s = (step or "").strip()
+        if not s:
+            return True
+        return s not in {"closing", "reprompt", "no_response_end"}
 
-        # Don't modify if contains critical compliance info
+    def _enforce_enterprise_response(
+        self,
+        text: str,
+        *,
+        step: Optional[str],
+        language: Optional[str],
+    ) -> str:
+        t = self._dedupe_repeated_sentences((text or "").strip())
+        if not t:
+            return t
+        t = re.sub(r"\s+", " ", t).strip()
+        # Remove internal meta markers if model ever echoes them.
+        t = re.sub(r"\[(?:repair|meta):[^\]]+\]\s*", "", t, flags=re.IGNORECASE).strip()
+        if not t:
+            return t
+
+        parts = [p.strip() for p in re.split(r"(?<=[\.!\?।])\s+", t) if p.strip()]
+        kept: list[str] = []
+        question_count = 0
+        max_sentences = max(1, int(getattr(self, "_agent_max_sentences", 2) or 2))
+        max_questions = max(1, int(getattr(self, "_agent_max_questions", 1) or 1))
+        for p in parts:
+            kept.append(p)
+            if "?" in p:
+                question_count += p.count("?")
+            if len(kept) >= max_sentences or question_count >= max_questions:
+                break
+        out = " ".join(kept).strip()
+        max_chars = max(80, int(getattr(self, "_agent_max_chars", 220) or 220))
+        if len(out) > max_chars:
+            trimmed = out[:max_chars].rstrip()
+            if " " in trimmed:
+                trimmed = trimmed.rsplit(" ", 1)[0]
+            out = (trimmed or out[:max_chars]).strip()
+
+        # Keep step intent aligned; fallback to deterministic ask when model drifts.
+        if self._step_requires_question(step):
+            out_norm = self._normalize_for_dedupe(out)
+            looks_like_question = (
+                "?" in out
+                or any(
+                    marker in out_norm
+                    for marker in (
+                        "please share",
+                        "could you share",
+                        "can you",
+                        "when can",
+                        "what time",
+                        "what date",
+                        "कृपया",
+                        "बताइए",
+                        "कब",
+                        "क्या",
+                    )
+                )
+            )
+            if not looks_like_question:
+                try:
+                    out = self._fixed_prompt_for_step(step or self._wf_state.current_step, language=language)
+                except Exception:
+                    pass
+
+        out = self._maybe_acknowledge_customer_name(out, step=step, language=language)
+        out = self._apply_hindi_speaker_style(out, language)
+
+        # Avoid immediate verbatim repeats when possible.
+        if self._normalize_for_dedupe(out) == self._normalize_for_dedupe(self._last_assistant_text):
+            try:
+                out = self._fixed_prompt_for_step(step or self._wf_state.current_step, language=language)
+            except Exception:
+                pass
+            out = self._maybe_acknowledge_customer_name(out, step=step, language=language)
+            out = self._apply_hindi_speaker_style(out, language)
+
+        return self._normalize_branding_text(out)
+
+    def _should_end_stream_early(self, text: str, *, step: Optional[str]) -> bool:
+        t = (text or "").strip()
+        if not t:
+            return False
+        max_chars = max(80, int(getattr(self, "_agent_max_chars", 220) or 220))
+        if len(t) >= max_chars:
+            return True
+        sentence_count = len(re.findall(r"[\.!\?।]", t))
+        question_count = t.count("?")
+        max_sentences = max(1, int(getattr(self, "_agent_max_sentences", 2) or 2))
+        max_questions = max(1, int(getattr(self, "_agent_max_questions", 1) or 1))
+        if sentence_count >= max_sentences:
+            return True
+        if self._step_requires_question(step) and question_count >= max_questions and sentence_count >= 1:
+            return True
+        return False
+
+    def _humanize_response(self, text: str, language: Optional[str] = None) -> str:
+        """Apply controlled human-style phrasing without random filler noise."""
+        lang = self._canonical_language_code(language) or self._resolve_output_language()
+        t = (text or "").strip()
+        if not t:
+            return t
+        if lang and lang.lower().startswith("hi"):
+            # Keep Hindi responses natural and concise; avoid transliterated filler.
+            return t
+
+        # Don't alter critical factual/compliance snippets.
         critical_patterns = [r'\b\d{6,}\b', r'₹\s*\d+', r'UTR', r'reference number']
-        if any(re.search(p, text, re.I) for p in critical_patterns):
-            return text
-        
-        fillers = ["um", "uh", "you know", "like", "so", "well"]
-        hesitations = ["let me see", "just a moment", "okay so"]
-        
-        # 30% chance to add filler at start
-        if random.random() < 0.3:
-            text = f"{random.choice(hesitations).capitalize()}, {text[0].lower()}{text[1:]}"
-        
-        # 20% chance to add mid-sentence filler
-        sentences = re.split(r'(?<=[.!?])\s+', text)
-        if len(sentences) > 1 and random.random() < 0.2:
-            insert_pos = random.randint(0, len(sentences) - 2)
-            sentences[insert_pos] = sentences[insert_pos].rstrip('.') + f", {random.choice(fillers)}."
-            text = ' '.join(sentences)
-        
-        return text
+        if any(re.search(p, t, re.I) for p in critical_patterns):
+            return t
+
+        # Replace robotic wording with polite natural phrasing.
+        t = re.sub(r"^Okay\.\s*", "Got it. ", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bPlease share\b", "Could you share", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bPlease tell me\b", "Could you tell me", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bJust to confirm,\s*", "Just to confirm, ", t, flags=re.IGNORECASE)
+
+        # Add empathy only when stress is high and opening lacks acknowledgment.
+        if self._emotional_state.stress_level > 0.65:
+            lower = t.lower()
+            if not lower.startswith(("i understand", "got it", "thanks", "thank you", "understood")):
+                t = f"I understand. {t}"
+        return t.strip()
+
+    def _prepare_tts_text(self, text: str, language: Optional[str]) -> str:
+        t = text
+        if getattr(self, "_enable_tts_humanization", False):
+            t = self._humanize_response(t, language=language)
+        if getattr(self, "_enable_tts_prosody_hints", False):
+            t = self._add_prosody_hints(t, self._emotional_state)
+        return self._normalize_branding_text(t)
 
     def _should_backchannel(self, text: str, transcript: Transcript) -> Optional[str]:
         """Generate short acknowledgments during user speech.
@@ -4714,6 +6726,15 @@ class WebCallSession:
         )
 
         if bound_step in {"ask_payment_made", "ask_ptp_or_callback", "confirm_awareness"} and self._is_payment_negative_utterance(user_text):
+            return None
+        if self._is_identity_reconfirmation_request(user_text):
+            return None
+        if (
+            self._wf_state.last_transition_reason == "identity_reconfirm_requested"
+            and self._is_yes_no_challenge(user_text)
+        ):
+            return None
+        if bound_step == "ask_ptp_or_callback" and self._is_payment_progress_response(user_text):
             return None
         if bound_step in {
             "consent",
@@ -4818,17 +6839,20 @@ class WebCallSession:
             "Please continue."
         ]
         ack = random.choice(interrupt_acknowledgments)
+        fade_ms = self._barge_in_fade_ms
         
         # Tell the client to fade out audio and clear its queue.
         await self.send_event(
             {
                 "type": "barge_in",
                 "reason": reason,
-                "fade_ms": 120,
+                "fade_ms": fade_ms,
                 "utterance_id": self._reply_to_utterance_id or self._current_utterance_id,
             }
         )
         self._current_utterance_status = "interrupted"
+        self._pending_interrupt_ack = True
+        self._force_dynamic_reply_once = True
         await self._emit_timeline_event(
             "barge_in",
             utterance_id=self._reply_to_utterance_id or self._current_utterance_id,
@@ -4845,6 +6869,8 @@ class WebCallSession:
                   saved_chars=len(self._current_llm_text),
                   reason=reason)
         
+        if fade_ms > 0:
+            await asyncio.sleep(min(0.35, float(fade_ms) / 1000.0))
         await self._cancel_generation()
 
     def _should_resume_interrupted(self) -> Optional[str]:
@@ -5001,29 +7027,65 @@ class WebCallSession:
         """Rotate through natural greetings instead of fixed text."""
         # Use a session-scoped RNG; do not mutate global random state.
         rng = random.Random(hash(self._session_id) + int(time.time()) // 3600)
+        brand = self._effective_brand_name()
+        lang = self._resolve_output_language()
+        is_hi = bool(lang and lang.lower().startswith("hi"))
 
         if self.greeting_text:
             greeting = self._normalize_branding_text(self.greeting_text.strip())
         else:
-            greetings = [
-                "Hello, this is TuringEdge calling. Do you have a quick moment to discuss your loan?",
-                "Hi, I'm calling from TuringEdge about your outstanding payment. Is now a good time?",
-                "Good {time_of_day}, this is TuringEdge collections. Can we quickly go over your payment status?",
-                "Hello, this is TuringEdge. I'm reaching out about a pending payment - do you have two minutes?"
-            ]
             hour = time.localtime().tm_hour
-            time_of_day = "morning" if 5 <= hour < 12 else \
-                          "afternoon" if 12 <= hour < 17 else "evening"
+            if is_hi:
+                greetings = [
+                    f"नमस्ते, मैं {brand} से बोल रहा हूँ। क्या अभी बात करना ठीक रहेगा?",
+                    f"नमस्कार, मैं {brand} से आपके बकाया भुगतान के बारे में कॉल कर रहा हूँ। क्या अभी एक मिनट है?",
+                    f"शुभ {{time_of_day}}, मैं {brand} कलेक्शंस से बोल रहा हूँ। क्या हम जल्दी से बात कर सकते हैं?",
+                ]
+                time_of_day = "सुबह" if 5 <= hour < 12 else "दोपहर" if 12 <= hour < 17 else "शाम"
+            else:
+                greetings = [
+                    f"Hi, this is {brand}. Is this a good time to talk?",
+                    f"Hello, this is {brand} about your overdue payment. Do you have a minute?",
+                    f"Good {{time_of_day}}, this is {brand}. Can we talk briefly?",
+                ]
+                time_of_day = "morning" if 5 <= hour < 12 else "afternoon" if 12 <= hour < 17 else "evening"
             greeting = rng.choice(greetings).format(time_of_day=time_of_day)
         
         # Add slight personalization if name known
-        if self._facts.get('customer_name'):
-            greeting = greeting.replace("Hello", f"Hello {self._facts['customer_name']}")
+        if self._facts.get("customer_name"):
+            customer_name = str(self._facts["customer_name"]).strip()
+            if is_hi:
+                if re.match(r"^(नमस्कार|नमस्ते)\b", greeting):
+                    greeting = re.sub(
+                        r"^(नमस्कार|नमस्ते)\s*,?\s*",
+                        lambda m: f"{m.group(1)} {customer_name} जी, ",
+                        greeting,
+                        count=1,
+                    )
+                elif re.match(r"^(शुभ\s+\S+)\b", greeting):
+                    greeting = re.sub(
+                        r"^(शुभ\s+\S+)\s*,?\s*",
+                        lambda m: f"{m.group(1)} {customer_name} जी, ",
+                        greeting,
+                        count=1,
+                    )
+                else:
+                    greeting = f"{customer_name} जी, {greeting}"
+            else:
+                if greeting.startswith("Hello "):
+                    greeting = greeting.replace("Hello", f"Hello {customer_name}", 1)
+                elif greeting.startswith("Hi "):
+                    greeting = greeting.replace("Hi", f"Hi {customer_name}", 1)
+                elif greeting.startswith("Good "):
+                    greeting = re.sub(r"^(Good\s+\w+)", lambda m: f"{m.group(1)} {customer_name}", greeting, count=1)
+                else:
+                    greeting = f"{customer_name}, {greeting}"
 
         # If consent is required and not yet captured, append consent line.
         if self._wf_state.consent is not True:
             greeting = self._ensure_consent_prompt_once(greeting)
 
+        greeting = self._apply_hindi_speaker_style(greeting, lang)
         return self._normalize_branding_text(greeting)
 
     def _persist_state(self) -> None:

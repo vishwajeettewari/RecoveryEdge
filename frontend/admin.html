@@ -26,8 +26,9 @@
             <div class="kicker">Operations Control</div>
             <div class="panel-title">TuringEdge Supervisor Command <span id="buildInfoBadge" class="badge badge-soft">build: __BUILD_TOKEN__</span></div>
             <div class="panel-sub">Live sessions, KPIs, governance controls, and workflow oversight.</div>
+            <div class="badge badge-soft" style="margin-top:8px;display:inline-block;">Legacy UI (deprecated). Use the new product UI at <a href="/app" style="color:inherit;text-decoration:underline;">/app</a>.</div>
           </div>
-          <a class="badge badge-soft" href="/" target="_blank" rel="noreferrer">Open Call Console</a>
+          <a class="badge badge-soft" href="/console" target="_blank" rel="noreferrer">Open Call Console</a>
         </div>
 
         <div class="admin-toolbar">
@@ -134,11 +135,6 @@
         </div>
 
         <div class="transcript transcript-final admin-table-wrap">
-          <div><strong>Outbound Queue</strong></div>
-          <div id="outboundBox" style="margin-top:10px;">Loading…</div>
-        </div>
-
-        <div class="transcript transcript-final admin-table-wrap">
           <div><strong>Portfolio Wizard</strong></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
             <input id="portfolioFileInput" type="file" accept=".csv,.xlsx" class="demo-input" />
@@ -171,24 +167,39 @@
             <input id="bulkPayloadInput" class="demo-input" type="text" placeholder='payload json e.g. {"owner":"sup1"}' />
             <button id="bulkApplyBtn" class="secondary-btn btn-sm" type="button">Apply Bulk</button>
           </div>
-          <div class="admin-table-wrap" style="margin-top:10px;">
-            <table id="tasksTable" class="admin-table">
-              <thead>
-                <tr>
-                  <th>Task</th>
-                  <th>Campaign</th>
-                  <th>Customer</th>
-                  <th>State</th>
-                  <th>DPD</th>
-                  <th>SLA</th>
-                  <th>Compliance</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
+          <div id="kanbanBoard" style="margin-top:10px;display:grid;grid-template-columns:repeat(6,minmax(180px,1fr));gap:10px;overflow:auto;">
+            <div class="admin-table-wrap" style="padding:8px;min-height:300px;">
+              <div class="kicker">NEW</div>
+              <div id="laneNEW" style="display:flex;flex-direction:column;gap:8px;margin-top:8px;"></div>
+            </div>
+            <div class="admin-table-wrap" style="padding:8px;min-height:300px;">
+              <div class="kicker">IN_PROGRESS</div>
+              <div id="laneIN_PROGRESS" style="display:flex;flex-direction:column;gap:8px;margin-top:8px;"></div>
+            </div>
+            <div class="admin-table-wrap" style="padding:8px;min-height:300px;">
+              <div class="kicker">PTP</div>
+              <div id="lanePTP" style="display:flex;flex-direction:column;gap:8px;margin-top:8px;"></div>
+            </div>
+            <div class="admin-table-wrap" style="padding:8px;min-height:300px;">
+              <div class="kicker">CALLBACK</div>
+              <div id="laneCALLBACK" style="display:flex;flex-direction:column;gap:8px;margin-top:8px;"></div>
+            </div>
+            <div class="admin-table-wrap" style="padding:8px;min-height:300px;">
+              <div class="kicker">ESCALATED</div>
+              <div id="laneESCALATED" style="display:flex;flex-direction:column;gap:8px;margin-top:8px;"></div>
+            </div>
+            <div class="admin-table-wrap" style="padding:8px;min-height:300px;">
+              <div class="kicker">CLOSED</div>
+              <div id="laneCLOSED" style="display:flex;flex-direction:column;gap:8px;margin-top:8px;"></div>
+            </div>
           </div>
-          <div id="taskDetailBox" style="margin-top:10px;"></div>
+          <div id="taskDrawer" style="position:fixed;top:0;right:0;bottom:0;width:440px;max-width:96vw;background:linear-gradient(180deg,#0a2648,#081c34);border-left:1px solid rgba(92,172,255,0.4);z-index:50;transform:translateX(110%);transition:transform .2s ease;overflow:auto;padding:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+              <strong>Task Drawer</strong>
+              <button id="taskDrawerCloseBtn" class="secondary-btn btn-sm" type="button">Close</button>
+            </div>
+            <div id="taskDetailBox" style="margin-top:10px;"></div>
+          </div>
         </div>
 
         <div class="transcript transcript-final admin-table-wrap">
@@ -217,12 +228,49 @@
                 <th>Severity</th>
                 <th>Status</th>
                 <th>Message</th>
-                <th>Actions</th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
-          <div id="alertRulesBox" style="margin-top:10px;"></div>
+          <div class="admin-table-wrap" style="margin-top:10px;padding:10px;">
+            <div><strong>Alert Detail</strong></div>
+            <div id="alertDetailBox" style="margin-top:8px;white-space:pre-wrap;">Select an alert row.</div>
+            <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <input id="alertAssignInput" class="demo-input" type="text" placeholder="assign to user" />
+              <button id="alertAckBtn" class="secondary-btn btn-sm" type="button">ACK</button>
+              <button id="alertAssignBtn" class="secondary-btn btn-sm" type="button">Assign</button>
+              <button id="alertResolveBtn" class="secondary-btn btn-sm" type="button">Resolve</button>
+            </div>
+          </div>
+          <div class="admin-table-wrap" style="margin-top:10px;padding:10px;">
+            <div><strong>Rules</strong></div>
+            <table id="alertRulesTable" class="admin-table" style="margin-top:8px;">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Enabled</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <input id="ruleIdInput" class="demo-input" type="text" placeholder="rule id (blank for create)" />
+              <input id="ruleNameInput" class="demo-input" type="text" placeholder="rule name" />
+              <select id="ruleTypeInput" class="demo-input">
+                <option value="PTP_MISS">PTP_MISS</option>
+                <option value="SLA_BREACH">SLA_BREACH</option>
+                <option value="COMPLIANCE_VIOLATION">COMPLIANCE_VIOLATION</option>
+                <option value="COMPLIANCE_BLOCK">COMPLIANCE_BLOCK</option>
+                <option value="ESCALATION_SPIKE">ESCALATION_SPIKE</option>
+              </select>
+              <label style="display:flex;align-items:center;gap:6px;"><input id="ruleEnabledInput" type="checkbox" checked /> enabled</label>
+            </div>
+            <textarea id="ruleThresholdJsonInput" class="demo-input" rows="4" style="margin-top:8px;width:100%;" placeholder='threshold_json, e.g. {"window_hours":24}'></textarea>
+            <textarea id="ruleRoutingJsonInput" class="demo-input" rows="3" style="margin-top:8px;width:100%;" placeholder='routing_json, e.g. {"channels":["inapp"]}'></textarea>
+            <button id="saveRuleBtn" class="secondary-btn btn-sm" type="button" style="margin-top:8px;">Save Rule</button>
+          </div>
         </div>
 
         <div class="transcript transcript-final admin-table-wrap">
@@ -252,39 +300,219 @@
             <button id="refreshIntegrationsBtn" class="secondary-btn btn-sm" type="button">Refresh Integrations</button>
             <button id="sendInboundSampleBtn" class="secondary-btn btn-sm" type="button">Send Inbound Sample</button>
           </div>
-          <div style="margin-top:10px;"><strong>Inbound Events</strong></div>
-          <table id="syncEventsTable" class="admin-table" style="margin-top:8px;">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">
+            <button class="secondary-btn btn-sm integration-tab-btn" type="button" data-tab="outbound">Outbound Queue</button>
+            <button class="secondary-btn btn-sm integration-tab-btn" type="button" data-tab="inbound">Inbound Events</button>
+            <button class="secondary-btn btn-sm integration-tab-btn" type="button" data-tab="deadletters">Dead Letters</button>
+            <button class="secondary-btn btn-sm integration-tab-btn" type="button" data-tab="conflicts">Conflicts</button>
+          </div>
+          <div id="integrationTabOutbound" style="margin-top:10px;">
+            <div><strong>Outbound Queue</strong></div>
+            <div id="outboundBox" style="margin-top:8px;">Loading…</div>
+          </div>
+          <div id="integrationTabInbound" style="margin-top:10px;display:none;">
+            <table id="syncEventsTable" class="admin-table" style="margin-top:8px;">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Direction</th>
+                  <th>Entity</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="integrationTabDeadletters" style="margin-top:10px;display:none;">
+            <table id="deadLettersTable" class="admin-table" style="margin-top:8px;">
+              <thead>
+                <tr>
+                  <th>Queue ID</th>
+                  <th>Attempts</th>
+                  <th>Updated</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="integrationTabConflicts" style="margin-top:10px;display:none;">
+            <table id="conflictsTable" class="admin-table" style="margin-top:8px;">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Entity</th>
+                  <th>Status</th>
+                  <th>Resolution</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ======================================================== -->
+        <!-- ANALYTICS TAB                                            -->
+        <!-- ======================================================== -->
+        <div class="transcript transcript-final admin-table-wrap" id="analyticsSection">
+          <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
+            <div><strong>Analytics</strong></div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <select id="analyticsDaysSelect" class="demo-input">
+                <option value="7">Last 7 days</option>
+                <option value="30" selected>Last 30 days</option>
+                <option value="90">Last 90 days</option>
+              </select>
+              <button id="refreshAnalyticsBtn" class="secondary-btn btn-sm" type="button">Refresh</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">
+            <button class="secondary-btn btn-sm analytics-tab-btn active-tab-btn" type="button" data-atab="rollforward">Roll-Forward Matrix</button>
+            <button class="secondary-btn btn-sm analytics-tab-btn" type="button" data-atab="recovery">Recovery Trend</button>
+            <button class="secondary-btn btn-sm analytics-tab-btn" type="button" data-atab="agents">Agent Leaderboard</button>
+          </div>
+
+          <!-- Roll-Forward Matrix -->
+          <div id="analyticsTabRollforward" style="margin-top:14px;">
+            <div style="margin-bottom:8px;color:rgba(255,255,255,0.55);font-size:12px;">Each cell shows how many customers moved from the row bucket to the column bucket over the selected period. Darker = more migrations.</div>
+            <div id="rollForwardMatrixBox" style="overflow:auto;">Loading…</div>
+            <div id="rollForwardSummary" style="margin-top:8px;font-size:12px;color:rgba(255,255,255,0.55);"></div>
+          </div>
+
+          <!-- Recovery Trend -->
+          <div id="analyticsTabRecovery" style="margin-top:14px;display:none;">
+            <div id="recoveryKpis" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;"></div>
+            <svg id="recoverySparkline" width="100%" height="80" style="display:block;margin-bottom:12px;"></svg>
+            <div><strong style="font-size:12px;">Reconciliation Trail</strong></div>
+            <table class="admin-table" id="reconciliationTable" style="margin-top:6px;">
+              <thead>
+                <tr><th>Date</th><th>Session</th><th>Customer</th><th>Amount</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <!-- Agent Leaderboard -->
+          <div id="analyticsTabAgents" style="margin-top:14px;display:none;">
+            <table class="admin-table" id="agentLeaderboardTable">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Agent</th>
+                  <th>Calls</th>
+                  <th>Connect %</th>
+                  <th>Avg Handle (s)</th>
+                  <th>PTP Count</th>
+                  <th>PTP Conv %</th>
+                  <th>Escalations</th>
+                  <th>Violations</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ======================================================== -->
+        <!-- BORROWER 360 TAB                                         -->
+        <!-- ======================================================== -->
+        <div class="transcript transcript-final admin-table-wrap" id="borrower360Section">
+          <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
+            <div><strong>Borrower 360</strong></div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="borrowerSearchInput" class="demo-input" type="text" placeholder="Customer ID (e.g. C001)" />
+              <button id="borrowerSearchBtn" class="secondary-btn btn-sm" type="button">Load</button>
+            </div>
+          </div>
+
+          <div id="borrower360Content" style="display:none;margin-top:12px;">
+            <!-- Profile card -->
+            <div id="borrowerProfileCard" style="display:flex;gap:16px;flex-wrap:wrap;padding:10px;background:rgba(255,255,255,0.04);border-radius:8px;margin-bottom:12px;"></div>
+
+            <!-- Sub-tabs -->
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+              <button class="secondary-btn btn-sm b360-tab-btn active-tab-btn" type="button" data-b360tab="timeline">Timeline</button>
+              <button class="secondary-btn btn-sm b360-tab-btn" type="button" data-b360tab="loans">Loans</button>
+              <button class="secondary-btn btn-sm b360-tab-btn" type="button" data-b360tab="nba">Next Best Action</button>
+              <button class="secondary-btn btn-sm b360-tab-btn" type="button" data-b360tab="settlements">Settlements</button>
+            </div>
+
+            <!-- Timeline -->
+            <div id="b360TabTimeline">
+              <div id="borrowerTimeline" style="max-height:400px;overflow:auto;"></div>
+            </div>
+
+            <!-- Loans -->
+            <div id="b360TabLoans" style="display:none;">
+              <table class="admin-table" id="borrowerLoansTable">
+                <thead><tr><th>Loan ID</th><th>Product</th><th>Outstanding</th><th>EMI</th><th>Due Date</th><th>DPD</th><th>Status</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+
+            <!-- NBA -->
+            <div id="b360TabNba" style="display:none;">
+              <div id="nbaCard" style="padding:12px;background:rgba(255,255,255,0.04);border-radius:8px;"></div>
+            </div>
+
+            <!-- Settlements -->
+            <div id="b360TabSettlements" style="display:none;">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+                <input id="settlementAmountInput" class="demo-input" type="number" placeholder="Offered amount" min="0" />
+                <input id="settlementOriginalInput" class="demo-input" type="number" placeholder="Original amount" min="0" />
+                <button id="createSettlementBtn" class="secondary-btn btn-sm" type="button">Create Offer</button>
+              </div>
+              <div id="settlementMessage" style="font-size:12px;color:rgba(255,255,255,0.55);margin-bottom:8px;"></div>
+              <table class="admin-table" id="settlementsTable">
+                <thead><tr><th>Offer ID</th><th>Amount</th><th>Status</th><th>Expiry</th><th>Created</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="borrower360Placeholder" style="color:rgba(255,255,255,0.35);margin-top:10px;">Enter a Customer ID above and click Load.</div>
+        </div>
+
+        <!-- ======================================================== -->
+        <!-- CALL SUMMARIES TAB                                       -->
+        <!-- ======================================================== -->
+        <div class="transcript transcript-final admin-table-wrap" id="summariesSection">
+          <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
+            <div><strong>Call Summaries</strong></div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="summarySearchInput" class="demo-input" type="text" placeholder="Search summaries…" />
+              <button id="summarySearchBtn" class="secondary-btn btn-sm" type="button">Search</button>
+              <button id="summaryRefreshBtn" class="secondary-btn btn-sm" type="button">Recent</button>
+            </div>
+          </div>
+          <div id="summaryList" style="margin-top:12px;display:flex;flex-direction:column;gap:10px;max-height:520px;overflow:auto;"></div>
+        </div>
+
+        <!-- ======================================================== -->
+        <!-- CRM SYNC PANEL                                           -->
+        <!-- ======================================================== -->
+        <div class="transcript transcript-final admin-table-wrap" id="crmSyncSection">
+          <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
+            <div>
+              <strong>CRM Sync</strong>
+              <span class="badge badge-soft" style="margin-left:8px;">Zoho</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button id="crmSyncNowBtn" class="secondary-btn btn-sm" type="button">Sync Now</button>
+              <button id="crmStatusRefreshBtn" class="secondary-btn btn-sm" type="button">Refresh</button>
+            </div>
+          </div>
+          <div id="crmStatusKpis" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;"></div>
+          <table class="admin-table" id="crmSyncLogTable" style="margin-top:10px;">
             <thead>
               <tr>
                 <th>Time</th>
+                <th>Session</th>
+                <th>Customer</th>
                 <th>Direction</th>
-                <th>Entity</th>
                 <th>Status</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-          <div style="margin-top:10px;"><strong>Conflicts</strong></div>
-          <table id="conflictsTable" class="admin-table" style="margin-top:8px;">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Entity</th>
-                <th>Status</th>
-                <th>Resolution</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-          <div style="margin-top:10px;"><strong>Dead Letters</strong></div>
-          <table id="deadLettersTable" class="admin-table" style="margin-top:8px;">
-            <thead>
-              <tr>
-                <th>Queue ID</th>
-                <th>Attempts</th>
-                <th>Updated</th>
-                <th>Action</th>
+                <th>Zoho ID</th>
+                <th>Retries</th>
               </tr>
             </thead>
             <tbody></tbody>

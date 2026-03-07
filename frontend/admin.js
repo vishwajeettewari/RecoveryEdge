@@ -35,7 +35,14 @@ const excludePredicateInput = document.getElementById("excludePredicateInput");
 
 const workbenchCampaignFilter = document.getElementById("workbenchCampaignFilter");
 const workbenchRefreshBtn = document.getElementById("workbenchRefreshBtn");
-const tasksTable = document.getElementById("tasksTable");
+const laneNEW = document.getElementById("laneNEW");
+const laneIN_PROGRESS = document.getElementById("laneIN_PROGRESS");
+const lanePTP = document.getElementById("lanePTP");
+const laneCALLBACK = document.getElementById("laneCALLBACK");
+const laneESCALATED = document.getElementById("laneESCALATED");
+const laneCLOSED = document.getElementById("laneCLOSED");
+const taskDrawer = document.getElementById("taskDrawer");
+const taskDrawerCloseBtn = document.getElementById("taskDrawerCloseBtn");
 const taskDetailBox = document.getElementById("taskDetailBox");
 const bulkIdsInput = document.getElementById("bulkIdsInput");
 const bulkActionSelect = document.getElementById("bulkActionSelect");
@@ -46,7 +53,19 @@ const alertStatusFilter = document.getElementById("alertStatusFilter");
 const alertTypeFilter = document.getElementById("alertTypeFilter");
 const evaluateAlertsBtn = document.getElementById("evaluateAlertsBtn");
 const alertsTable = document.getElementById("alertsTable");
-const alertRulesBox = document.getElementById("alertRulesBox");
+const alertDetailBox = document.getElementById("alertDetailBox");
+const alertAssignInput = document.getElementById("alertAssignInput");
+const alertAckBtn = document.getElementById("alertAckBtn");
+const alertAssignBtn = document.getElementById("alertAssignBtn");
+const alertResolveBtn = document.getElementById("alertResolveBtn");
+const alertRulesTable = document.getElementById("alertRulesTable");
+const ruleIdInput = document.getElementById("ruleIdInput");
+const ruleNameInput = document.getElementById("ruleNameInput");
+const ruleTypeInput = document.getElementById("ruleTypeInput");
+const ruleEnabledInput = document.getElementById("ruleEnabledInput");
+const ruleThresholdJsonInput = document.getElementById("ruleThresholdJsonInput");
+const ruleRoutingJsonInput = document.getElementById("ruleRoutingJsonInput");
+const saveRuleBtn = document.getElementById("saveRuleBtn");
 
 const reportTimeInput = document.getElementById("reportTimeInput");
 const reportEnabledInput = document.getElementById("reportEnabledInput");
@@ -60,6 +79,11 @@ const syncEventsTable = document.getElementById("syncEventsTable");
 const conflictsTable = document.getElementById("conflictsTable");
 const deadLettersTable = document.getElementById("deadLettersTable");
 const integrationsSection = document.getElementById("integrationsSection");
+const integrationTabBtns = Array.from(document.querySelectorAll(".integration-tab-btn"));
+const integrationTabOutbound = document.getElementById("integrationTabOutbound");
+const integrationTabInbound = document.getElementById("integrationTabInbound");
+const integrationTabDeadletters = document.getElementById("integrationTabDeadletters");
+const integrationTabConflicts = document.getElementById("integrationTabConflicts");
 
 const ADMIN_TOKEN_KEY = "te_admin_token";
 
@@ -73,6 +97,19 @@ const runtimeFlags = {
   demo_mode: true,
   pilot_mode: false,
 };
+const workbenchLanes = {
+  NEW: laneNEW,
+  IN_PROGRESS: laneIN_PROGRESS,
+  PTP: lanePTP,
+  CALLBACK: laneCALLBACK,
+  ESCALATED: laneESCALATED,
+  CLOSED: laneCLOSED,
+};
+const workbenchStates = ["NEW", "IN_PROGRESS", "PTP", "CALLBACK", "ESCALATED", "CLOSED"];
+let selectedAlertId = null;
+let alertRowsCache = [];
+let alertRulesCache = [];
+let activeIntegrationTab = "conflicts";
 
 function setStatus(msg) {
   if (!adminStatus) return;
@@ -92,6 +129,25 @@ async function fetchJson(path, opts) {
   const res = await fetch(path, options);
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return res.json();
+}
+
+function setIntegrationTab(tab) {
+  activeIntegrationTab = tab || "conflicts";
+  const panels = {
+    outbound: integrationTabOutbound,
+    inbound: integrationTabInbound,
+    deadletters: integrationTabDeadletters,
+    conflicts: integrationTabConflicts,
+  };
+  Object.entries(panels).forEach(([name, panel]) => {
+    if (!panel) return;
+    panel.style.display = name === activeIntegrationTab ? "" : "none";
+  });
+  integrationTabBtns.forEach((btn) => {
+    const isActive = btn.dataset.tab === activeIntegrationTab;
+    btn.style.opacity = isActive ? "1" : "0.7";
+    btn.style.borderColor = isActive ? "#5cacff" : "";
+  });
 }
 
 function renderMetrics(m) {
@@ -123,6 +179,9 @@ async function loadBuildInfo() {
     }
     if (integrationsSection) {
       integrationsSection.style.display = runtimeFlags.pilot_mode ? "" : "none";
+    }
+    if (runtimeFlags.pilot_mode) {
+      setIntegrationTab(activeIntegrationTab || "conflicts");
     }
   } catch (e) {
     // ignore
@@ -521,72 +580,93 @@ function complianceBadgesHtml(task) {
 }
 
 function renderTasks(rows) {
-  if (!tasksTable) return;
-  const tbody = tasksTable.querySelector("tbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-
+  Object.values(workbenchLanes).forEach((lane) => {
+    if (lane) lane.innerHTML = "";
+  });
+  const grouped = {};
+  workbenchStates.forEach((s) => {
+    grouped[s] = [];
+  });
   (rows || []).forEach((t) => {
-    const tr = document.createElement("tr");
-    const sla = t.sla_due_at ? new Date(t.sla_due_at * 1000).toLocaleString() : "-";
-    const cells = [t.id, t.campaign_id, `${t.customer_id}${t.customer_name ? " — " + t.customer_name : ""}`, t.state, String(t.dpd ?? ""), `${sla}${t.sla_breach ? " (BREACH)" : ""}`];
-    cells.forEach((v) => {
-      const td = document.createElement("td");
-      td.textContent = v;
-      tr.appendChild(td);
+    const s = String(t.state || "NEW").toUpperCase();
+    if (!grouped[s]) grouped[s] = [];
+    grouped[s].push(t);
+  });
+
+  workbenchStates.forEach((state) => {
+    const lane = workbenchLanes[state];
+    if (!lane) return;
+    const tasks = grouped[state] || [];
+    if (!tasks.length) {
+      const empty = document.createElement("div");
+      empty.style.opacity = "0.7";
+      empty.style.fontSize = "12px";
+      empty.textContent = "No tasks";
+      lane.appendChild(empty);
+      return;
+    }
+    tasks.forEach((t) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.style.textAlign = "left";
+      card.style.padding = "8px";
+      card.style.borderRadius = "10px";
+      card.style.border = "1px solid rgba(92,172,255,0.45)";
+      card.style.background = "rgba(5,20,38,0.85)";
+      card.style.color = "inherit";
+      card.style.cursor = "pointer";
+      card.innerHTML =
+        `<div><strong>${t.customer_id || "-"}</strong></div>` +
+        `<div style="margin-top:4px;font-size:12px;">amount: ${Number(t.amount_due || 0).toFixed(2)} | dpd: ${t.dpd ?? "-"}</div>` +
+        `<div style="margin-top:4px;font-size:12px;">SLA: ${t.sla_due_at ? new Date(t.sla_due_at * 1000).toLocaleString() : "-"}</div>` +
+        `<div style="margin-top:4px;font-size:12px;color:${t.sla_breach ? "#ff8a80" : "#90caf9"};">${t.sla_breach ? "SLA BREACH" : "SLA OK"}${t.compliance_block ? " | COMPLIANCE BLOCK" : ""}</div>` +
+        `<div style="margin-top:4px;font-size:12px;opacity:.8;">last action: ${t.last_action_at ? new Date(t.last_action_at * 1000).toLocaleString() : "-"}</div>`;
+      card.onclick = () => loadTaskDetail(t.id);
+      lane.appendChild(card);
     });
-
-    const tdComp = document.createElement("td");
-    tdComp.innerHTML = complianceBadgesHtml(t) + (t.compliance_block ? " <strong>BLOCKED</strong>" : "");
-    tr.appendChild(tdComp);
-
-    const tdAction = document.createElement("td");
-    const claimBtn = document.createElement("button");
-    claimBtn.className = "secondary-btn btn-sm";
-    claimBtn.textContent = "Claim";
-    claimBtn.onclick = async () => {
-      try {
-        const out = await fetchJson(`/api/tasks/${encodeURIComponent(t.id)}/claim`, { method: "POST" });
-        if (!out.ok) throw new Error(out.error || "claim_failed");
-        await refreshTasks();
-      } catch (e) {
-        setStatus(`Claim error: ${e.message}`);
-      }
-    };
-
-    const detailBtn = document.createElement("button");
-    detailBtn.className = "secondary-btn btn-sm";
-    detailBtn.style.marginLeft = "6px";
-    detailBtn.textContent = "Detail";
-    detailBtn.onclick = () => loadTaskDetail(t.id);
-
-    tdAction.appendChild(claimBtn);
-    tdAction.appendChild(detailBtn);
-    tr.appendChild(tdAction);
-    tbody.appendChild(tr);
   });
 }
 
 async function loadTaskDetail(taskId) {
   try {
     const t = await fetchJson(`/api/tasks/${encodeURIComponent(taskId)}`);
-    if (!taskDetailBox) return;
-    const events = (t.events || []).slice(0, 20).map((e) => `${new Date((e.ts || 0) * 1000).toLocaleTimeString()} | ${e.event_type} | ${e.payload_json || ""}`);
+    if (!taskDetailBox || !taskDrawer) return;
+    const sessions = await fetchJson("/api/sessions");
+    const matching = (sessions.sessions || []).find((s) => String(s.customer_id || "") === String(t.customer_id || ""));
+    const transcriptLink = matching && matching.session_id ? `/api/sessions/${encodeURIComponent(matching.session_id)}/timeline` : "";
+    const events = (t.events || []).slice(0, 30).map((e) => `${new Date((e.ts || 0) * 1000).toLocaleTimeString()} | ${e.event_type} | ${e.payload_json || ""}`);
     taskDetailBox.innerHTML =
       `<div><strong>Task ${t.id}</strong> (${t.state})</div>` +
-      `<div>Compliance: ${complianceBadgesHtml(t)} ${t.compliance_block ? "<strong>BLOCKED</strong>" : ""}</div>` +
+      `<div style="margin-top:6px;">customer: ${t.customer_id || "-"} | campaign: ${t.campaign_id || "-"}</div>` +
+      `<div style="margin-top:6px;">transcript: ${transcriptLink ? `<a href="${transcriptLink}" target="_blank" rel="noreferrer">open timeline</a>` : "no linked live session"}</div>` +
+      `<div style="margin-top:6px;">Compliance: ${complianceBadgesHtml(t)} ${t.compliance_block ? "<strong>BLOCKED</strong>" : ""}</div>` +
       `<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">` +
       `<select id="taskStateInput" class="demo-input">` +
-      ["NEW", "IN_PROGRESS", "PTP", "CALLBACK", "ESCALATED", "CLOSED"].map((s) => `<option value="${s}" ${t.state === s ? "selected" : ""}>${s}</option>`).join("") +
+      workbenchStates.map((s) => `<option value="${s}" ${t.state === s ? "selected" : ""}>${s}</option>`).join("") +
       `</select>` +
       `<input id="taskDispositionInput" class="demo-input" placeholder="disposition" value="${t.disposition || ""}" />` +
       `<input id="taskNotesInput" class="demo-input" placeholder="notes" value="${t.notes || ""}" />` +
-      `<label><input id="taskOverrideInput" type="checkbox" /> supervisor override</label>` +
+      `<label style="display:flex;align-items:center;gap:4px;"><input id="taskOverrideInput" type="checkbox" /> override</label>` +
+      `<button id="claimTaskBtn" class="secondary-btn btn-sm" type="button">Claim</button>` +
       `<button id="saveTaskBtn" class="secondary-btn btn-sm" type="button">Save Task</button>` +
       `</div>` +
-      `<pre style="margin-top:10px;max-height:180px;overflow:auto;">${events.join("\n") || "No events"}</pre>`;
+      `<pre style="margin-top:10px;max-height:220px;overflow:auto;">${events.join("\n") || "No events"}</pre>`;
+    taskDrawer.style.transform = "translateX(0)";
 
     const saveBtn = document.getElementById("saveTaskBtn");
+    const claimBtn = document.getElementById("claimTaskBtn");
+    if (claimBtn) {
+      claimBtn.onclick = async () => {
+        try {
+          const out = await fetchJson(`/api/tasks/${encodeURIComponent(taskId)}/claim`, { method: "POST" });
+          if (!out.ok) throw new Error(out.error || "claim_failed");
+          await refreshTasks();
+          await loadTaskDetail(taskId);
+        } catch (e) {
+          setStatus(`Claim error: ${e.message}`);
+        }
+      };
+    }
     if (saveBtn) {
       saveBtn.onclick = async () => {
         try {
@@ -639,8 +719,10 @@ function renderAlerts(rows) {
   const tbody = alertsTable.querySelector("tbody");
   if (!tbody) return;
   tbody.innerHTML = "";
+  alertRowsCache = rows || [];
   (rows || []).forEach((a) => {
     const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
     const cells = [
       a.ts ? new Date(a.ts * 1000).toLocaleTimeString() : "",
       a.type || "",
@@ -653,44 +735,124 @@ function renderAlerts(rows) {
       td.textContent = v;
       tr.appendChild(td);
     });
-    const tdAction = document.createElement("td");
-
-    const ackBtn = document.createElement("button");
-    ackBtn.className = "secondary-btn btn-sm";
-    ackBtn.textContent = "Ack";
-    ackBtn.onclick = async () => {
-      try {
-        await fetchJson(`/api/alerts/${encodeURIComponent(a.id)}/ack`, { method: "POST" });
-        await refreshAlerts();
-      } catch (e) {
-        setStatus(`Alert ack error: ${e.message}`);
-      }
-    };
-
-    const resBtn = document.createElement("button");
-    resBtn.className = "secondary-btn btn-sm";
-    resBtn.style.marginLeft = "6px";
-    resBtn.textContent = "Resolve";
-    resBtn.onclick = async () => {
-      try {
-        await fetchJson(`/api/alerts/${encodeURIComponent(a.id)}/resolve`, { method: "POST" });
-        await refreshAlerts();
-      } catch (e) {
-        setStatus(`Alert resolve error: ${e.message}`);
-      }
-    };
-
-    tdAction.appendChild(ackBtn);
-    tdAction.appendChild(resBtn);
-    tr.appendChild(tdAction);
+    tr.onclick = () => selectAlert(a.id);
+    if (selectedAlertId && selectedAlertId === a.id) {
+      tr.style.outline = "1px solid #5cacff";
+      tr.style.background = "rgba(23, 56, 90, 0.45)";
+    }
     tbody.appendChild(tr);
   });
 }
 
 function renderAlertRules(rows) {
-  if (!alertRulesBox) return;
-  const text = (rows || []).map((r) => `${r.name} [${r.type}] enabled=${r.enabled}`).join("\n");
-  alertRulesBox.textContent = text || "No alert rules";
+  if (!alertRulesTable) return;
+  alertRulesCache = rows || [];
+  const tbody = alertRulesTable.querySelector("tbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  (rows || []).forEach((r) => {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.onclick = () => {
+      if (ruleIdInput) ruleIdInput.value = r.id || "";
+      if (ruleNameInput) ruleNameInput.value = r.name || "";
+      if (ruleTypeInput) ruleTypeInput.value = r.type || "PTP_MISS";
+      if (ruleEnabledInput) ruleEnabledInput.checked = Number(r.enabled || 0) === 1;
+      if (ruleThresholdJsonInput) ruleThresholdJsonInput.value = (() => {
+        try {
+          return JSON.stringify(JSON.parse(r.threshold_json || "{}"), null, 2);
+        } catch (e) {
+          return r.threshold_json || "{}";
+        }
+      })();
+      if (ruleRoutingJsonInput) ruleRoutingJsonInput.value = (() => {
+        try {
+          return JSON.stringify(JSON.parse(r.routing_json || "{}"), null, 2);
+        } catch (e) {
+          return r.routing_json || "{}";
+        }
+      })();
+    };
+    const tdId = document.createElement("td");
+    tdId.textContent = r.id || "";
+    tr.appendChild(tdId);
+    const tdName = document.createElement("td");
+    tdName.textContent = r.name || "";
+    tr.appendChild(tdName);
+    const tdType = document.createElement("td");
+    tdType.textContent = r.type || "";
+    tr.appendChild(tdType);
+    const tdEnabled = document.createElement("td");
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.checked = Number(r.enabled || 0) === 1;
+    toggle.onclick = async (event) => {
+      event.stopPropagation();
+      try {
+        await fetchJson(`/api/alert_rules/${encodeURIComponent(r.id)}/toggle`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: toggle.checked }),
+        });
+        await refreshAlerts();
+      } catch (e) {
+        setStatus(`Rule toggle error: ${e.message}`);
+      }
+    };
+    tdEnabled.appendChild(toggle);
+    tr.appendChild(tdEnabled);
+    tbody.appendChild(tr);
+  });
+}
+
+async function selectAlert(alertId) {
+  selectedAlertId = alertId;
+  renderAlerts(alertRowsCache);
+  if (!alertDetailBox || !selectedAlertId) return;
+  try {
+    const a = await fetchJson(`/api/alerts/${encodeURIComponent(selectedAlertId)}`);
+    let payload = a.payload_json || "";
+    try {
+      payload = JSON.stringify(JSON.parse(a.payload_json || "{}"), null, 2);
+    } catch (e) {
+      payload = a.payload_json || "";
+    }
+    alertDetailBox.textContent =
+      `id: ${a.id}\n` +
+      `type: ${a.type}\n` +
+      `severity: ${a.severity}\n` +
+      `status: ${a.status}\n` +
+      `assigned_to: ${a.assigned_to || "-"}\n` +
+      `entity: ${(a.entity_type || "-") + ":" + (a.entity_id || "-")}\n` +
+      `message: ${a.message || ""}\n` +
+      `ts: ${a.ts ? new Date(a.ts * 1000).toLocaleString() : "-"}\n` +
+      `payload:\n${payload}`;
+  } catch (e) {
+    alertDetailBox.textContent = `Failed to load alert: ${e.message}`;
+  }
+}
+
+async function saveRule() {
+  try {
+    const threshold = JSON.parse((ruleThresholdJsonInput && ruleThresholdJsonInput.value ? ruleThresholdJsonInput.value : "{}") || "{}");
+    const routing = JSON.parse((ruleRoutingJsonInput && ruleRoutingJsonInput.value ? ruleRoutingJsonInput.value : "{}") || "{}");
+    await fetchJson("/api/alert_rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: ruleIdInput && ruleIdInput.value ? ruleIdInput.value.trim() : null,
+        name: ruleNameInput && ruleNameInput.value ? ruleNameInput.value.trim() : "Rule",
+        type: ruleTypeInput && ruleTypeInput.value ? ruleTypeInput.value : "PTP_MISS",
+        enabled: !!(ruleEnabledInput && ruleEnabledInput.checked),
+        threshold_json: threshold,
+        routing_json: routing,
+      }),
+    });
+    setStatus("Rule saved.");
+    await refreshAlerts();
+  } catch (e) {
+    setStatus(`Rule save error: ${e.message}`);
+  }
 }
 
 async function refreshAlerts() {
@@ -706,6 +868,17 @@ async function refreshAlerts() {
     ]);
     renderAlerts(alerts.rows || []);
     renderAlertRules(rules.rows || []);
+    if (selectedAlertId) {
+      const exists = (alerts.rows || []).some((r) => r.id === selectedAlertId);
+      if (exists) {
+        await selectAlert(selectedAlertId);
+      } else {
+        selectedAlertId = null;
+        if (alertDetailBox) alertDetailBox.textContent = "Select an alert row.";
+      }
+    } else if ((alerts.rows || []).length > 0) {
+      await selectAlert(alerts.rows[0].id);
+    }
   } catch (e) {
     setStatus(`Alerts refresh error: ${e.message}`);
   }
@@ -917,6 +1090,7 @@ async function refreshIntegrations() {
     renderSyncEvents(events.rows || []);
     renderConflicts(conflicts.rows || []);
     renderDeadLetters(dead.rows || []);
+    setIntegrationTab(activeIntegrationTab || "conflicts");
   } catch (e) {
     setStatus(`Integrations refresh error: ${e.message}`);
   }
@@ -1024,16 +1198,63 @@ if (uploadExclusionBtn) uploadExclusionBtn.addEventListener("click", uploadExclu
 
 if (workbenchRefreshBtn) workbenchRefreshBtn.addEventListener("click", refreshTasks);
 if (bulkApplyBtn) bulkApplyBtn.addEventListener("click", runBulkUpdate);
+if (taskDrawerCloseBtn) {
+  taskDrawerCloseBtn.addEventListener("click", () => {
+    if (taskDrawer) taskDrawer.style.transform = "translateX(110%)";
+  });
+}
 
 if (evaluateAlertsBtn) evaluateAlertsBtn.addEventListener("click", evaluateAlerts);
 if (alertStatusFilter) alertStatusFilter.addEventListener("change", refreshAlerts);
 if (alertTypeFilter) alertTypeFilter.addEventListener("change", refreshAlerts);
+if (alertAckBtn) {
+  alertAckBtn.addEventListener("click", async () => {
+    if (!selectedAlertId) return;
+    try {
+      await fetchJson(`/api/alerts/${encodeURIComponent(selectedAlertId)}/ack`, { method: "POST" });
+      await refreshAlerts();
+    } catch (e) {
+      setStatus(`Alert ack error: ${e.message}`);
+    }
+  });
+}
+if (alertAssignBtn) {
+  alertAssignBtn.addEventListener("click", async () => {
+    if (!selectedAlertId) return;
+    try {
+      const assignee = alertAssignInput && alertAssignInput.value ? alertAssignInput.value.trim() : "";
+      await fetchJson(`/api/alerts/${encodeURIComponent(selectedAlertId)}/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignee }),
+      });
+      await refreshAlerts();
+    } catch (e) {
+      setStatus(`Alert assign error: ${e.message}`);
+    }
+  });
+}
+if (alertResolveBtn) {
+  alertResolveBtn.addEventListener("click", async () => {
+    if (!selectedAlertId) return;
+    try {
+      await fetchJson(`/api/alerts/${encodeURIComponent(selectedAlertId)}/resolve`, { method: "POST" });
+      await refreshAlerts();
+    } catch (e) {
+      setStatus(`Alert resolve error: ${e.message}`);
+    }
+  });
+}
+if (saveRuleBtn) saveRuleBtn.addEventListener("click", saveRule);
 
 if (saveReportScheduleBtn) saveReportScheduleBtn.addEventListener("click", saveReportSchedule);
 if (generateReportsBtn) generateReportsBtn.addEventListener("click", generateReportsNow);
 
 if (refreshIntegrationsBtn) refreshIntegrationsBtn.addEventListener("click", refreshIntegrations);
 if (sendInboundSampleBtn) sendInboundSampleBtn.addEventListener("click", sendInboundSample);
+integrationTabBtns.forEach((btn) => {
+  btn.addEventListener("click", () => setIntegrationTab(btn.dataset.tab || "conflicts"));
+});
 
 if (adminTokenInput) {
   try {
@@ -1081,5 +1302,514 @@ if (exportLink) {
   });
 }
 
+setIntegrationTab("conflicts");
 refresh();
 setInterval(refresh, 5000);
+
+// ===========================================================================
+// ANALYTICS TAB
+// ===========================================================================
+
+const refreshAnalyticsBtn = document.getElementById("refreshAnalyticsBtn");
+const analyticsDaysSelect = document.getElementById("analyticsDaysSelect");
+const rollForwardMatrixBox = document.getElementById("rollForwardMatrixBox");
+const rollForwardSummary = document.getElementById("rollForwardSummary");
+const agentLeaderboardTable = document.getElementById("agentLeaderboardTable");
+const recoveryKpis = document.getElementById("recoveryKpis");
+const recoverySparkline = document.getElementById("recoverySparkline");
+const reconciliationTable = document.getElementById("reconciliationTable");
+const analyticsTabBtns = Array.from(document.querySelectorAll(".analytics-tab-btn"));
+
+let activeAnalyticsTab = "rollforward";
+
+function setAnalyticsTab(tab) {
+  activeAnalyticsTab = tab;
+  const panels = {
+    rollforward: document.getElementById("analyticsTabRollforward"),
+    recovery: document.getElementById("analyticsTabRecovery"),
+    agents: document.getElementById("analyticsTabAgents"),
+  };
+  Object.entries(panels).forEach(([name, panel]) => {
+    if (panel) panel.style.display = name === activeAnalyticsTab ? "" : "none";
+  });
+  analyticsTabBtns.forEach((btn) => {
+    btn.style.opacity = btn.dataset.atab === activeAnalyticsTab ? "1" : "0.65";
+  });
+}
+
+analyticsTabBtns.forEach((btn) => {
+  btn.addEventListener("click", () => setAnalyticsTab(btn.dataset.atab));
+});
+setAnalyticsTab("rollforward");
+
+function fmt(n) {
+  if (n == null) return "—";
+  if (typeof n === "number") return n.toLocaleString();
+  return String(n);
+}
+
+async function loadRollForward() {
+  if (!rollForwardMatrixBox) return;
+  const days = analyticsDaysSelect ? analyticsDaysSelect.value : 30;
+  try {
+    const data = await fetchJson(`/api/metrics/roll-forward?days=${days}`);
+    const buckets = data.buckets || [];
+    const matrix = data.matrix || {};
+    if (!buckets.length) {
+      rollForwardMatrixBox.textContent = "No DPD snapshot data yet. Run some calls to populate.";
+      return;
+    }
+    // Find max value for heat-map scaling
+    let maxVal = 0;
+    buckets.forEach((from) => {
+      buckets.forEach((to) => {
+        const v = (matrix[from] || {})[to] || 0;
+        if (v > maxVal) maxVal = v;
+      });
+    });
+    let html = '<table class="admin-table" style="border-collapse:collapse;">';
+    html += "<thead><tr><th>From \\ To</th>";
+    buckets.forEach((b) => { html += `<th>${b}</th>`; });
+    html += "</tr></thead><tbody>";
+    buckets.forEach((from) => {
+      html += `<tr><td style="font-weight:600;">${from}</td>`;
+      buckets.forEach((to) => {
+        const v = (matrix[from] || {})[to] || 0;
+        const pct = maxVal > 0 ? Math.round((v / maxVal) * 80) : 0;
+        const bg = `rgba(92,172,255,${(pct / 100).toFixed(2)})`;
+        html += `<td style="text-align:center;background:${bg};padding:6px 10px;">${v > 0 ? v : ""}</td>`;
+      });
+      html += "</tr>";
+    });
+    html += "</tbody></table>";
+    rollForwardMatrixBox.innerHTML = html;
+    if (rollForwardSummary) {
+      const pct = typeof data.roll_forward_pct === "number" ? data.roll_forward_pct.toFixed(1) + "%" : "—";
+      rollForwardSummary.textContent = `Overall roll-forward rate: ${pct} over last ${days} days`;
+    }
+  } catch (e) {
+    if (rollForwardMatrixBox) rollForwardMatrixBox.textContent = `Error: ${e.message}`;
+  }
+}
+
+async function loadRecoveryTrend() {
+  const days = analyticsDaysSelect ? analyticsDaysSelect.value : 30;
+  try {
+    const data = await fetchJson(`/api/metrics/recovery?days=${days}`);
+    if (recoveryKpis) {
+      const kpis = [
+        { label: "Total Recovered", value: "₹" + (data.total_recovered || 0).toLocaleString() },
+        { label: "Portfolio Value", value: "₹" + (data.portfolio_value || 0).toLocaleString() },
+        { label: "Recovery Rate", value: (data.recovery_rate_pct || 0).toFixed(2) + "%" },
+      ];
+      recoveryKpis.innerHTML = kpis.map((k) =>
+        `<div class="admin-metric"><div class="admin-metric-label">${k.label}</div><div class="admin-metric-value">${k.value}</div></div>`
+      ).join("");
+    }
+    // Draw sparkline
+    const dates = data.dates || [];
+    const amounts = data.amounts || [];
+    if (recoverySparkline && dates.length > 1) {
+      const w = recoverySparkline.clientWidth || 600;
+      const h = 70;
+      const maxAmt = Math.max(...amounts, 1);
+      const pts = amounts.map((a, i) => {
+        const x = (i / (amounts.length - 1)) * w;
+        const y = h - (a / maxAmt) * (h - 8) - 4;
+        return `${x},${y}`;
+      }).join(" ");
+      recoverySparkline.innerHTML = `
+        <polyline fill="none" stroke="rgba(92,172,255,0.85)" stroke-width="2" points="${pts}"/>
+        <text x="4" y="12" fill="rgba(255,255,255,0.45)" font-size="10">${dates[0] || ""}</text>
+        <text x="${w - 50}" y="12" fill="rgba(255,255,255,0.45)" font-size="10">${dates[dates.length - 1] || ""}</text>
+      `;
+    }
+    // Reconciliation table
+    if (reconciliationTable) {
+      const tbody = reconciliationTable.querySelector("tbody");
+      const rows = data.reconciliation || [];
+      tbody.innerHTML = rows.map((r) =>
+        `<tr><td>${r.date || "—"}</td><td>${r.session_id || "—"}</td><td>${r.customer_id || "—"}</td><td>₹${(r.amount || 0).toLocaleString()}</td></tr>`
+      ).join("") || "<tr><td colspan='4' style='text-align:center;opacity:.45;'>No data yet</td></tr>";
+    }
+  } catch (e) {
+    setStatus(`Recovery trend error: ${e.message}`);
+  }
+}
+
+async function loadAgentLeaderboard() {
+  if (!agentLeaderboardTable) return;
+  try {
+    const data = await fetchJson("/api/metrics/agents");
+    const agents = data.agents || [];
+    const tbody = agentLeaderboardTable.querySelector("tbody");
+    if (!agents.length) {
+      tbody.innerHTML = "<tr><td colspan='9' style='text-align:center;opacity:.45;'>No agent data yet</td></tr>";
+      return;
+    }
+    tbody.innerHTML = agents.map((a) => `
+      <tr>
+        <td>${a.rank || "—"}</td>
+        <td>${a.display_name || a.agent_id || "—"}</td>
+        <td>${a.total_calls || 0}</td>
+        <td>${(a.connect_rate_pct || 0).toFixed(1)}%</td>
+        <td>${(a.avg_handle_time_s || 0).toFixed(0)}</td>
+        <td>${a.ptp_count || 0}</td>
+        <td>${(a.ptp_conversion_pct || 0).toFixed(1)}%</td>
+        <td>${a.escalations || 0}</td>
+        <td>${a.compliance_violations || 0}</td>
+      </tr>
+    `).join("");
+  } catch (e) {
+    setStatus(`Agent leaderboard error: ${e.message}`);
+  }
+}
+
+async function loadAnalytics() {
+  await Promise.allSettled([loadRollForward(), loadRecoveryTrend(), loadAgentLeaderboard()]);
+}
+
+if (refreshAnalyticsBtn) {
+  refreshAnalyticsBtn.addEventListener("click", loadAnalytics);
+}
+if (analyticsDaysSelect) {
+  analyticsDaysSelect.addEventListener("change", loadAnalytics);
+}
+loadAnalytics();
+
+// ===========================================================================
+// BORROWER 360 TAB
+// ===========================================================================
+
+const borrowerSearchInput = document.getElementById("borrowerSearchInput");
+const borrowerSearchBtn = document.getElementById("borrowerSearchBtn");
+const borrower360Content = document.getElementById("borrower360Content");
+const borrower360Placeholder = document.getElementById("borrower360Placeholder");
+const borrowerProfileCard = document.getElementById("borrowerProfileCard");
+const borrowerTimeline = document.getElementById("borrowerTimeline");
+const borrowerLoansTable = document.getElementById("borrowerLoansTable");
+const nbaCard = document.getElementById("nbaCard");
+const settlementsTable = document.getElementById("settlementsTable");
+const settlementAmountInput = document.getElementById("settlementAmountInput");
+const settlementOriginalInput = document.getElementById("settlementOriginalInput");
+const createSettlementBtn = document.getElementById("createSettlementBtn");
+const settlementMessage = document.getElementById("settlementMessage");
+const b360TabBtns = Array.from(document.querySelectorAll(".b360-tab-btn"));
+
+let activeB360Tab = "timeline";
+let currentBorrowerCustomerId = null;
+let lastBorrower360Session = null;
+let latestNegotiableOfferId = null;
+
+function setB360Tab(tab) {
+  activeB360Tab = tab;
+  const panels = {
+    timeline: document.getElementById("b360TabTimeline"),
+    loans: document.getElementById("b360TabLoans"),
+    nba: document.getElementById("b360TabNba"),
+    settlements: document.getElementById("b360TabSettlements"),
+  };
+  Object.entries(panels).forEach(([name, panel]) => {
+    if (panel) panel.style.display = name === activeB360Tab ? "" : "none";
+  });
+  b360TabBtns.forEach((btn) => {
+    btn.style.opacity = btn.dataset.b360tab === activeB360Tab ? "1" : "0.65";
+  });
+}
+
+b360TabBtns.forEach((btn) => {
+  btn.addEventListener("click", () => setB360Tab(btn.dataset.b360tab));
+});
+setB360Tab("timeline");
+
+function timelineEventHtml(event) {
+  const icons = {
+    call: "📞", payment: "💳", settlement: "🤝", followup: "📅",
+    summary: "📝", ptp_saved: "📌", escalation: "⚠️", compliance_violation: "🚨", event: "•",
+  };
+  const icon = icons[event.type] || "•";
+  const ts = event.ts ? new Date(event.ts * 1000).toLocaleString() : "—";
+  let detail = "";
+  if (event.type === "call") {
+    detail = `Disposition: <strong>${event.disposition || "—"}</strong>${event.ptp_date ? ` · PTP: ${event.ptp_date}` : ""}`;
+  } else if (event.type === "payment") {
+    detail = `₹${(event.amount || 0).toLocaleString()} via ${event.rail || "—"} · <strong>${event.status || "—"}</strong>`;
+  } else if (event.type === "settlement") {
+    detail = `₹${(event.offered_amount || 0).toLocaleString()} offer · <strong>${event.status || "—"}</strong>`;
+  } else if (event.type === "summary") {
+    detail = `Sentiment: ${event.sentiment || "—"} · ${event.commitment || ""}`;
+  } else if (event.type === "followup") {
+    detail = `Channel: ${event.channel || "—"} · ${event.status || "—"}`;
+  } else {
+    detail = JSON.stringify(event.payload || {}).slice(0, 80);
+  }
+  return `<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
+    <div style="font-size:18px;min-width:24px;text-align:center;">${icon}</div>
+    <div style="flex:1;">
+      <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;">
+        <span class="badge badge-soft">${event.type}</span>
+        <span style="font-size:11px;color:rgba(255,255,255,0.45);">${ts}</span>
+        ${event.session_id ? `<span style="font-size:11px;color:rgba(255,255,255,0.35);">${event.session_id}</span>` : ""}
+      </div>
+      <div style="font-size:13px;margin-top:3px;color:rgba(255,255,255,0.8);">${detail}</div>
+    </div>
+  </div>`;
+}
+
+async function loadBorrower360(customerId) {
+  currentBorrowerCustomerId = customerId;
+  try {
+    const data = await fetchJson(`/api/customers/${encodeURIComponent(customerId)}/360`);
+    if (borrower360Content) borrower360Content.style.display = "";
+    if (borrower360Placeholder) borrower360Placeholder.style.display = "none";
+
+    // Profile card
+    if (borrowerProfileCard) {
+      const p = data.profile || {};
+      borrowerProfileCard.innerHTML = [
+        `<div><div class="admin-metric-label">Customer ID</div><div class="admin-metric-value" style="font-size:14px;">${p.customer_id || customerId}</div></div>`,
+        `<div><div class="admin-metric-label">Name</div><div class="admin-metric-value" style="font-size:14px;">${p.full_name || "—"}</div></div>`,
+        `<div><div class="admin-metric-label">Phone</div><div class="admin-metric-value" style="font-size:14px;">${p.phone || "—"}</div></div>`,
+        `<div><div class="admin-metric-label">DPD</div><div class="admin-metric-value" style="font-size:14px;color:${(p.dpd || 0) > 60 ? "#ff6b6b" : "inherit"}">${p.dpd ?? "—"}</div></div>`,
+        `<div><div class="admin-metric-label">Risk Band</div><div class="admin-metric-value" style="font-size:14px;">${p.risk_band || "—"}</div></div>`,
+      ].join("");
+    }
+
+    // Timeline
+    if (borrowerTimeline) {
+      const events = data.timeline || [];
+      borrowerTimeline.innerHTML = events.length
+        ? events.map(timelineEventHtml).join("")
+        : "<div style='opacity:.45;'>No timeline events yet.</div>";
+    }
+
+    // Loans
+    if (borrowerLoansTable) {
+      const tbody = borrowerLoansTable.querySelector("tbody");
+      const loans = data.loan_accounts || [];
+      tbody.innerHTML = loans.map((l) =>
+        `<tr><td>${l.loan_account_id || "—"}</td><td>${l.product_type || "—"}</td><td>₹${(l.principal_outstanding || 0).toLocaleString()}</td><td>₹${(l.emi_amount || 0).toLocaleString()}</td><td>${l.due_date || "—"}</td><td>${l.dpd ?? "—"}</td><td>${l.status || "—"}</td></tr>`
+      ).join("") || "<tr><td colspan='7' style='text-align:center;opacity:.45;'>No loans</td></tr>";
+    }
+
+    setStatus(`Borrower 360 loaded for ${customerId}`);
+  } catch (e) {
+    setStatus(`Borrower 360 error: ${e.message}`);
+  }
+}
+
+async function loadNba(customerId) {
+  if (!nbaCard) return;
+  try {
+    const data = await fetchJson(`/api/customers/${encodeURIComponent(customerId)}/nba`);
+    const nba = data.nba || {};
+    const action = nba.action || nba.recommended_action || nba.recommendation || {};
+    const actionType = action.action_type || action.action || nba.action_type || "—";
+    const channel = action.channel || nba.channel || "—";
+    const timing = action.timing || action.delay || "immediate";
+    const msgTemplate = action.message_template || action.script || (nba.message && nba.message.text) || "—";
+    const rationale = action.rationale || nba.rationale || "—";
+    nbaCard.innerHTML = `
+      <div style="display:grid;gap:8px;">
+        <div><span class="admin-metric-label">Recommended Action</span><br/><strong>${actionType}</strong></div>
+        <div><span class="admin-metric-label">Channel</span> ${channel}</div>
+        <div><span class="admin-metric-label">Timing</span> ${timing}</div>
+        <div><span class="admin-metric-label">Message Template</span><br/><span style="font-size:12px;opacity:.75;">${msgTemplate}</span></div>
+        <div><span class="admin-metric-label">Rationale</span><br/><span style="font-size:12px;opacity:.75;">${rationale}</span></div>
+        ${nba.requires_approval ? '<div><span class="badge badge-soft" style="color:#ffa94d;">Requires Approval</span></div>' : ""}
+      </div>
+    `;
+  } catch (e) {
+    if (nbaCard) nbaCard.innerHTML = `<span style="opacity:.45;">NBA error: ${e.message}</span>`;
+  }
+}
+
+async function loadSettlements(customerId) {
+  if (!settlementsTable) return;
+  try {
+    const data = await fetchJson(`/api/customers/${encodeURIComponent(customerId)}/settlements`);
+    const tbody = settlementsTable.querySelector("tbody");
+    const offers = data.offers || [];
+    latestNegotiableOfferId = null;
+    for (const offer of offers) {
+      const st = String(offer.status || "").toUpperCase();
+      if (st === "OPEN" || st === "PENDING" || st === "COUNTERED") {
+        latestNegotiableOfferId = offer.id || null;
+        break;
+      }
+    }
+    tbody.innerHTML = offers.map((o) => {
+      const expiry = o.expiry_ts ? new Date(o.expiry_ts * 1000).toLocaleDateString() : "—";
+      const created = o.created_at ? new Date(o.created_at * 1000).toLocaleDateString() : "—";
+      return `<tr><td>${o.id || "—"}</td><td>₹${(o.offered_amount || 0).toLocaleString()}</td><td>${o.status || "—"}</td><td>${expiry}</td><td>${created}</td></tr>`;
+    }).join("") || "<tr><td colspan='5' style='text-align:center;opacity:.45;'>No settlement offers</td></tr>";
+  } catch (e) {
+    setStatus(`Settlements error: ${e.message}`);
+  }
+}
+
+if (borrowerSearchBtn) {
+  borrowerSearchBtn.addEventListener("click", async () => {
+    const cid = borrowerSearchInput ? borrowerSearchInput.value.trim() : "";
+    if (!cid) return;
+    await loadBorrower360(cid);
+    await Promise.allSettled([loadNba(cid), loadSettlements(cid)]);
+  });
+}
+
+if (createSettlementBtn) {
+  createSettlementBtn.addEventListener("click", async () => {
+    if (!currentBorrowerCustomerId) return;
+    const offered = parseFloat(settlementAmountInput ? settlementAmountInput.value : 0);
+    const original = parseFloat(settlementOriginalInput ? settlementOriginalInput.value : 0);
+    if (!offered || offered <= 0) { setStatus("Enter offered amount"); return; }
+    // We use a fake session_id based on customer for the demo
+    const sessionId = `demo-${currentBorrowerCustomerId}`;
+    try {
+      const body = { offered_amount: offered, customer_id: currentBorrowerCustomerId };
+      if (original > 0) body.original_amount = original;
+      if (latestNegotiableOfferId) body.counter_offer_of = latestNegotiableOfferId;
+      const data = await fetchJson(`/api/sessions/${sessionId}/settlement`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const discount = (data.discount_pct || 0).toFixed(1);
+      const round = data.round || data.offer?.terms?.round || 1;
+      const counterOf = data.counter_offer_of || data.offer?.terms?.counter_of || null;
+      const msg = `Offer created: ${data.offer?.id || "—"} · Round ${round}${counterOf ? ` · Counter of ${counterOf}` : ""} · Discount: ${discount}%${data.requires_approval ? " · ⚠️ Requires manager approval" : ""}`;
+      if (settlementMessage) settlementMessage.textContent = msg;
+      await loadSettlements(currentBorrowerCustomerId);
+    } catch (e) {
+      setStatus(`Create settlement error: ${e.message}`);
+    }
+  });
+}
+
+// ===========================================================================
+// CALL SUMMARIES TAB
+// ===========================================================================
+
+const summarySearchInput = document.getElementById("summarySearchInput");
+const summarySearchBtn = document.getElementById("summarySearchBtn");
+const summaryRefreshBtn = document.getElementById("summaryRefreshBtn");
+const summaryList = document.getElementById("summaryList");
+
+function renderSummaryCard(s) {
+  const ts = s.generated_ts ? new Date(s.generated_ts * 1000).toLocaleString() : "—";
+  const facts = Array.isArray(s.key_facts) ? s.key_facts : [];
+  const factsHtml = facts.slice(0, 3).map((f) => `<span class="badge badge-soft" style="font-size:11px;">${f}</span>`).join(" ");
+  return `<div style="padding:10px;background:rgba(255,255,255,0.04);border-radius:8px;border:1px solid rgba(92,172,255,0.12);">
+    <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:6px;">
+      <span class="badge badge-soft">${s.disposition || "—"}</span>
+      <span style="font-size:12px;opacity:.55;">${ts}</span>
+      <span style="font-size:12px;opacity:.45;">${s.session_id || "—"}</span>
+      ${s.customer_id ? `<span style="font-size:12px;opacity:.55;">Customer: ${s.customer_id}</span>` : ""}
+      ${s.sentiment ? `<span style="font-size:12px;opacity:.7;">Sentiment: ${s.sentiment}</span>` : ""}
+    </div>
+    <div style="margin-bottom:6px;">${factsHtml}</div>
+    ${s.commitment ? `<div style="font-size:12px;margin-bottom:4px;"><strong>Commitment:</strong> ${s.commitment}</div>` : ""}
+    ${s.next_step ? `<div style="font-size:12px;opacity:.75;"><strong>Next Step:</strong> ${s.next_step}</div>` : ""}
+  </div>`;
+}
+
+async function loadSummaries(query) {
+  if (!summaryList) return;
+  summaryList.innerHTML = "<div style='opacity:.45;'>Loading…</div>";
+  try {
+    const q = encodeURIComponent(query || "");
+    const data = await fetchJson(`/api/summaries/search?q=${q}&limit=30`);
+    const rows = data.summaries || [];
+    summaryList.innerHTML = rows.length
+      ? rows.map(renderSummaryCard).join("")
+      : "<div style='opacity:.45;'>No summaries found. Summaries are generated after each call ends.</div>";
+  } catch (e) {
+    summaryList.innerHTML = `<div style="opacity:.45;">Error: ${e.message}</div>`;
+  }
+}
+
+if (summarySearchBtn) {
+  summarySearchBtn.addEventListener("click", () => {
+    loadSummaries(summarySearchInput ? summarySearchInput.value.trim() : "");
+  });
+}
+if (summaryRefreshBtn) {
+  summaryRefreshBtn.addEventListener("click", () => loadSummaries(""));
+}
+if (summarySearchInput) {
+  summarySearchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") loadSummaries(summarySearchInput.value.trim());
+  });
+}
+loadSummaries("");
+
+// ===========================================================================
+// CRM SYNC TAB
+// ===========================================================================
+
+const crmSyncNowBtn = document.getElementById("crmSyncNowBtn");
+const crmStatusRefreshBtn = document.getElementById("crmStatusRefreshBtn");
+const crmStatusKpis = document.getElementById("crmStatusKpis");
+const crmSyncLogTable = document.getElementById("crmSyncLogTable");
+
+async function loadCrmStatus() {
+  try {
+    const data = await fetchJson("/api/crm/status");
+    const status = data.status || {};
+    const counts = status.counts || {};
+    if (crmStatusKpis) {
+      const kpis = [
+        { label: "Provider", value: "Zoho" },
+        { label: "Pushed (OK)", value: counts.ok || 0 },
+        { label: "Failed", value: counts.failed || 0 },
+        { label: "Conflicts", value: counts.conflict || 0 },
+        { label: "Last Sync", value: status.last_sync_ts ? new Date(status.last_sync_ts * 1000).toLocaleTimeString() : "Never" },
+      ];
+      crmStatusKpis.innerHTML = kpis.map((k) =>
+        `<div class="admin-metric"><div class="admin-metric-label">${k.label}</div><div class="admin-metric-value" style="font-size:14px;">${k.value}</div></div>`
+      ).join("");
+    }
+    if (crmSyncLogTable) {
+      const tbody = crmSyncLogTable.querySelector("tbody");
+      const rows = data.log || [];
+      tbody.innerHTML = rows.map((r) => {
+        const ts = r.created_at ? new Date(r.created_at * 1000).toLocaleString() : "—";
+        return `<tr>
+          <td>${ts}</td>
+          <td>${r.session_id || "—"}</td>
+          <td>${r.customer_id || "—"}</td>
+          <td>${r.direction || "—"}</td>
+          <td><span class="badge badge-soft" style="${r.status === "ok" ? "color:#63e6be;" : r.status === "failed" ? "color:#ff6b6b;" : ""}">${r.status || "—"}</span></td>
+          <td>${r.zoho_record_id || "—"}</td>
+          <td>${r.retry_count || 0}</td>
+        </tr>`;
+      }).join("") || "<tr><td colspan='7' style='text-align:center;opacity:.45;'>No sync log entries yet</td></tr>";
+    }
+  } catch (e) {
+    setStatus(`CRM status error: ${e.message}`);
+  }
+}
+
+if (crmStatusRefreshBtn) {
+  crmStatusRefreshBtn.addEventListener("click", loadCrmStatus);
+}
+
+if (crmSyncNowBtn) {
+  crmSyncNowBtn.addEventListener("click", async () => {
+    crmSyncNowBtn.disabled = true;
+    crmSyncNowBtn.textContent = "Syncing…";
+    try {
+      const data = await fetchJson("/api/crm/sync", { method: "POST" });
+      const stats = data.stats || {};
+      setStatus(`CRM sync done: retried=${stats.retried || 0}, recovered=${stats.recovered || 0}, still_failed=${stats.still_failed || 0}`);
+      await loadCrmStatus();
+    } catch (e) {
+      setStatus(`CRM sync error: ${e.message}`);
+    } finally {
+      crmSyncNowBtn.disabled = false;
+      crmSyncNowBtn.textContent = "Sync Now";
+    }
+  });
+}
+
+loadCrmStatus();

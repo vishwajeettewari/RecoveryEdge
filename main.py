@@ -28,10 +28,10 @@ async def _run() -> None:
         raise RuntimeError("Missing SAARIKA_API_KEY for STT.")
 
     llm_model = get_env("SARVAM_CHAT_MODEL", get_env("SARVAM_LLM_MODEL", "sarvam-m"))
-    tts_speaker = get_env("SARVAM_TTS_SPEAKER")
+    tts_speaker = get_env("SARVAM_TTS_SPEAKER", "shubh")
     tts_voice = get_env("BULBUL_VOICE")
     stt_model = get_env("SARVAM_STT_MODEL")
-    tts_model = get_env("SARVAM_TTS_MODEL")
+    tts_model = get_env("SARVAM_TTS_MODEL", "bulbul:v3")
     stt_language = get_env("SARVAM_STT_LANGUAGE", "en-IN")
     stt_language_key = get_env("SARVAM_STT_LANGUAGE_PARAM", "language_code")
 

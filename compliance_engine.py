@@ -37,6 +37,36 @@ class ComplianceEngine:
         "cheater",
         "ghar pe aayenge",
     )
+    _THIRD_PARTY_DISCLOSURE_PATTERNS = (
+        "family",
+        "relative",
+        "neighbor",
+        "neighbour",
+        "office",
+        "employer",
+        "manager",
+        "colleague",
+        "friends",
+        "whatsapp group",
+        "social media",
+    )
+    _LEGAL_MISREPRESENTATION_PATTERNS = (
+        "arrest",
+        "warrant",
+        "criminal case",
+        "fir",
+        "passport",
+        "salary attachment",
+        "property seizure",
+    )
+    _HARDSHIP_PRESSURE_PATTERNS = (
+        "pay now",
+        "pay immediately",
+        "today itself",
+        "right now",
+        "immediately",
+        "without fail today",
+    )
 
     def evaluate_assistant_text(
         self,
@@ -45,6 +75,9 @@ class ComplianceEngine:
         consent: bool | None,
         identity_confirmed: bool,
         current_step: str,
+        hardship_detected: bool = False,
+        dispute_raised: bool = False,
+        legal_hold: bool = False,
     ) -> List[ComplianceViolation]:
         t = (text or "").lower()
         out: List[ComplianceViolation] = []
@@ -67,6 +100,26 @@ class ComplianceEngine:
                     rule_code="HARASSMENT_OR_THREAT",
                     severity="high",
                     detail="Assistant language appears threatening/harassing.",
+                    excerpt=text[:200],
+                )
+            )
+
+        if any(p in t for p in self._THIRD_PARTY_DISCLOSURE_PATTERNS):
+            out.append(
+                ComplianceViolation(
+                    rule_code="THIRD_PARTY_DISCLOSURE_RISK",
+                    severity="high",
+                    detail="Assistant appears to threaten or imply disclosure to third parties.",
+                    excerpt=text[:200],
+                )
+            )
+
+        if any(p in t for p in self._LEGAL_MISREPRESENTATION_PATTERNS):
+            out.append(
+                ComplianceViolation(
+                    rule_code="LEGAL_MISREPRESENTATION_RISK",
+                    severity="high",
+                    detail="Assistant appears to imply legal consequences that may be misleading or coercive.",
                     excerpt=text[:200],
                 )
             )
@@ -94,6 +147,33 @@ class ComplianceEngine:
                     rule_code="MISSING_IDENTITY_GATE",
                     severity="medium",
                     detail="Payment collection ask before identity confirmation.",
+                    excerpt=text[:200],
+                )
+            )
+        if payment_ask and legal_hold:
+            out.append(
+                ComplianceViolation(
+                    rule_code="LEGAL_HOLD_COLLECTION_ASK",
+                    severity="high",
+                    detail="Assistant asked for payment after legal escalation was detected.",
+                    excerpt=text[:200],
+                )
+            )
+        if payment_ask and dispute_raised and "undisputed" not in t and "review" not in t:
+            out.append(
+                ComplianceViolation(
+                    rule_code="DISPUTE_COLLECTION_PRESSURE",
+                    severity="medium",
+                    detail="Assistant may be pressing collection despite an active dispute.",
+                    excerpt=text[:200],
+                )
+            )
+        if hardship_detected and any(p in t for p in self._HARDSHIP_PRESSURE_PATTERNS):
+            out.append(
+                ComplianceViolation(
+                    rule_code="HARDSHIP_PRESSURE_RISK",
+                    severity="medium",
+                    detail="Assistant used immediate-payment pressure even though hardship was detected.",
                     excerpt=text[:200],
                 )
             )

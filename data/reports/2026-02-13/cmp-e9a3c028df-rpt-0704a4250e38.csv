@@ -1,0 +1,2 @@
+report_date,campaign_id,attempts,connected,connected_rate,ptp_count,ptp_conversion,ptp_amount_sum,expected_recovery_amount,escalations,compliance_violations,bucket_1_30,bucket_31_60,bucket_61_90,bucket_90_plus,queue_new,queue_in_progress,queue_ptp,queue_callback,queue_escalated,queue_closed,top_5_escalation_reasons_json
+2026-02-13,cmp-e9a3c028df,0,0,0.0,0,0.0,0.0,0.0,0,0,0,1,0,0,0,0,0,0,0,1,"[{""reason"": ""unknown"", ""count"": 1}]"
