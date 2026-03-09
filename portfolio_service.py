@@ -13,9 +13,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from openpyxl import load_workbook
 
 
-REQUIRED_FIELDS = ["customer_id", "phone", "amount_due", "dpd"]
-OPTIONAL_FIELDS = ["due_date", "language", "customer_name"]
-ALLOWED_FIELDS = set(REQUIRED_FIELDS + OPTIONAL_FIELDS)
+CORE_REQUIRED_FIELDS = ["customer_id", "phone", "dpd"]
+AMOUNT_FIELDS = ["amount_due", "remaining_amount"]
+OPTIONAL_FIELDS = ["due_date", "language", "customer_name", "initial_amount"]
+ALL_FIELDS = CORE_REQUIRED_FIELDS + AMOUNT_FIELDS + OPTIONAL_FIELDS
+ALLOWED_FIELDS = set(ALL_FIELDS)
 
 
 class PortfolioService:
@@ -24,6 +26,7 @@ class PortfolioService:
         self.base_dir = os.path.join(data_dir, "portfolio_uploads")
         os.makedirs(self.base_dir, exist_ok=True)
         self._init_db()
+        self._migrate_db()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -84,6 +87,8 @@ class PortfolioService:
                     customer_id TEXT,
                     phone TEXT,
                     amount_due REAL,
+                    initial_amount REAL,
+                    remaining_amount REAL,
                     dpd INTEGER,
                     due_date TEXT,
                     language TEXT,
@@ -119,6 +124,18 @@ class PortfolioService:
                 )
                 """
             )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _migrate_db(self) -> None:
+        conn = self._connect()
+        try:
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(portfolio_rows)").fetchall()}
+            if "initial_amount" not in cols:
+                conn.execute("ALTER TABLE portfolio_rows ADD COLUMN initial_amount REAL")
+            if "remaining_amount" not in cols:
+                conn.execute("ALTER TABLE portfolio_rows ADD COLUMN remaining_amount REAL")
             conn.commit()
         finally:
             conn.close()
@@ -189,7 +206,9 @@ class PortfolioService:
         portfolio_id = str(upload["portfolio_id"])
 
         mapped_values = {v for v in mappings.values() if v}
-        missing = [f for f in REQUIRED_FIELDS if f not in mapped_values]
+        missing = [f for f in CORE_REQUIRED_FIELDS if f not in mapped_values]
+        if not ({"amount_due", "remaining_amount"} & mapped_values):
+            missing.append("amount_due_or_remaining_amount")
         if missing:
             raise ValueError(f"required_mappings_missing:{','.join(missing)}")
 
@@ -204,7 +223,7 @@ class PortfolioService:
             source_cols = list(rows[0].keys()) if rows else list(mappings.keys())
             for source_col in source_cols:
                 mapped_field = mappings.get(source_col)
-                required = 1 if mapped_field in REQUIRED_FIELDS else 0
+                required = 1 if mapped_field in CORE_REQUIRED_FIELDS or mapped_field == "amount_due" else 0
                 inferred_type = self._infer_value_type([r.get(source_col) for r in rows[:50]])
                 sample_values = [str(r.get(source_col) or "") for r in rows[:5]]
                 conn.execute(
@@ -212,20 +231,34 @@ class PortfolioService:
                     INSERT INTO portfolio_columns (portfolio_id, source_col, mapped_field, required, inferred_type, sample_values_json)
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (portfolio_id, source_col, mapped_field, required, inferred_type, json.dumps(sample_values, ensure_ascii=False)),
+                    (
+                        portfolio_id,
+                        source_col,
+                        mapped_field,
+                        required,
+                        inferred_type,
+                        json.dumps(sample_values, ensure_ascii=False),
+                    ),
                 )
 
             for idx, row in enumerate(rows, start=1):
-                mapped = {f: None for f in REQUIRED_FIELDS + OPTIONAL_FIELDS}
+                mapped = {f: None for f in ALL_FIELDS}
                 for source_col, target in mappings.items():
                     if not target or target not in ALLOWED_FIELDS:
                         continue
                     mapped[target] = row.get(source_col)
+                if mapped.get("amount_due") is None and mapped.get("remaining_amount") is not None:
+                    mapped["amount_due"] = mapped.get("remaining_amount")
+                if mapped.get("remaining_amount") is None and mapped.get("amount_due") is not None:
+                    mapped["remaining_amount"] = mapped.get("amount_due")
                 extra = {k: v for k, v in row.items() if k not in mappings or mappings.get(k) not in ALLOWED_FIELDS}
                 conn.execute(
                     """
-                    INSERT INTO portfolio_rows (portfolio_id, row_index, customer_id, phone, amount_due, dpd, due_date, language, customer_name, extra_json, is_valid, is_duplicate, normalized_phone, error_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, NULL)
+                    INSERT INTO portfolio_rows (
+                        portfolio_id, row_index, customer_id, phone, amount_due, initial_amount, remaining_amount,
+                        dpd, due_date, language, customer_name, extra_json, is_valid, is_duplicate, normalized_phone, error_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, NULL)
                     """,
                     (
                         portfolio_id,
@@ -233,6 +266,8 @@ class PortfolioService:
                         self._to_text(mapped.get("customer_id")),
                         self._to_text(mapped.get("phone")),
                         self._to_float(mapped.get("amount_due")),
+                        self._to_float(mapped.get("initial_amount")),
+                        self._to_float(mapped.get("remaining_amount")),
                         self._to_int(mapped.get("dpd")),
                         self._to_text(mapped.get("due_date")),
                         self._to_text(mapped.get("language")),
@@ -261,7 +296,7 @@ class PortfolioService:
         try:
             rows = conn.execute(
                 """
-                SELECT id, row_index, customer_id, phone, amount_due, dpd, due_date, language, customer_name, extra_json
+                SELECT id, row_index, customer_id, phone, amount_due, initial_amount, remaining_amount, dpd, due_date, language, customer_name, extra_json
                 FROM portfolio_rows
                 WHERE portfolio_id = ?
                 ORDER BY id ASC
@@ -452,7 +487,7 @@ class PortfolioService:
         try:
             rows = conn.execute(
                 """
-                SELECT customer_id, normalized_phone AS phone, amount_due, dpd, due_date, language, customer_name
+                SELECT customer_id, normalized_phone AS phone, amount_due, initial_amount, remaining_amount, dpd, due_date, language, customer_name
                 FROM portfolio_rows
                 WHERE portfolio_id = ?
                   AND is_valid = 1
@@ -533,7 +568,9 @@ class PortfolioService:
                 out = {
                     "customer_id": cid,
                     "phone": rec.get("normalized_phone") or rec.get("phone"),
-                    "amount_due": rec.get("amount_due"),
+                    "amount_due": rec.get("amount_due") if rec.get("amount_due") is not None else rec.get("remaining_amount"),
+                    "initial_amount": rec.get("initial_amount"),
+                    "remaining_amount": rec.get("remaining_amount"),
                     "dpd": rec.get("dpd"),
                     "due_date": rec.get("due_date"),
                     "language": rec.get("language"),
@@ -813,7 +850,7 @@ class PortfolioService:
             field = m.group(1)
             op = m.group(2)
             val = float(m.group(3))
-            if field not in {"dpd", "amount_due"}:
+            if field not in {"dpd", "amount_due", "remaining_amount", "initial_amount"}:
                 continue
             parsed.append((field, op, val))
         if not parsed:

@@ -98,7 +98,9 @@ function percent(n?: number | null): string {
 }
 
 function heatColor(value: number, max: number): string {
-  if (!value || max <= 0) return "rgba(18, 93, 255, 0.06)";
+  if (!value || max <= 0) {
+    return "rgba(18, 93, 255, 0.06)";
+  }
   const alpha = 0.12 + (value / max) * 0.58;
   return `rgba(18, 93, 255, ${Math.min(0.7, alpha).toFixed(2)})`;
 }

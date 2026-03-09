@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from contextlib import suppress
+from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -434,6 +435,182 @@ class V2PlatformApiTests(unittest.TestCase):
             self.assertEqual(metrics_payload["expected_recovery_amount"], 1750.0)
             self.assertEqual(metrics_payload["followups_scheduled_total"], 3)
             self.assertEqual(metrics_payload["queue_snapshot"]["PTP"], 1)
+
+    def test_portfolio_to_agent_to_dashboard_and_ops_copilot_flow(self):
+        with self._client() as client:
+            mgr_token = self._login(client, "mgr", "mgr123")
+            agent_token = self._login(client, "agent", "agent123")
+            mgr_headers = self._headers(mgr_token, "default")
+            agent_headers = self._headers(agent_token, "default")
+
+            csv_text = "\n".join(
+                [
+                    "customer_id,customer_name,phone,dpd,initial_amount,remaining_amount,language,due_date",
+                    "FLOW-1,Asha Rao,9876543210,42,100000,22000,en,2026-03-14",
+                    "FLOW-2,Rohan Verma,9876543211,68,135000,41000,hi,2026-03-16",
+                ]
+            )
+            upload = client.post(
+                "/api/portfolio/upload",
+                files={"file": ("portfolio.csv", csv_text.encode("utf-8"), "text/csv")},
+                headers=mgr_headers,
+            )
+            self.assertEqual(upload.status_code, 200, upload.text)
+            upload_payload = upload.json()
+            upload_id = upload_payload["upload_id"]
+
+            mapped = client.post(
+                f"/api/portfolio/{upload_id}/map",
+                json={
+                    "portfolio_name": "Ops Proof Portfolio",
+                    "mappings": {
+                        "customer_id": "customer_id",
+                        "customer_name": "customer_name",
+                        "phone": "phone",
+                        "dpd": "dpd",
+                        "initial_amount": "initial_amount",
+                        "remaining_amount": "remaining_amount",
+                        "language": "language",
+                        "due_date": "due_date",
+                    },
+                },
+                headers=mgr_headers,
+            )
+            self.assertEqual(mapped.status_code, 200, mapped.text)
+            portfolio_id = mapped.json()["portfolio_id"]
+
+            validate = client.post(f"/api/portfolio/{portfolio_id}/validate", headers=mgr_headers)
+            self.assertEqual(validate.status_code, 200, validate.text)
+            validate_payload = validate.json()
+            self.assertEqual(validate_payload["valid_rows"], 2)
+
+            preview = client.get(f"/api/portfolio/{portfolio_id}/preview?limit=5", headers=mgr_headers)
+            self.assertEqual(preview.status_code, 200, preview.text)
+            preview_rows = preview.json()["rows"]
+            self.assertEqual(preview_rows[0]["initial_amount"], 100000.0)
+            self.assertEqual(preview_rows[0]["remaining_amount"], 22000.0)
+            self.assertEqual(preview_rows[0]["amount_due"], 22000.0)
+
+            launch = client.post(
+                f"/api/portfolio/{portfolio_id}/launch",
+                json={"campaign_name": "Ops Proof Campaign", "retry_policy": {"max_attempts": 2, "retry_delay_minutes": 15}, "throttle": 25},
+                headers=mgr_headers,
+            )
+            self.assertEqual(launch.status_code, 200, launch.text)
+            launch_payload = launch.json()
+            campaign_id = launch_payload["campaign_id"]
+            self.assertEqual(launch_payload["seeded_accounts"], 2)
+            self.assertEqual(launch_payload["tasks_created"], 2)
+
+            demo = web_app._get_demo_singletons()
+            campaign = demo["campaign_service"]
+            workbench = demo["workbench"]
+            audit = demo["audit"]
+
+            batch = campaign.run_pending_batch(campaign_id)
+            self.assertGreaterEqual(batch["processed"], 1)
+
+            tasks = workbench.list_tasks(campaign_id=campaign_id, page=1, page_size=10)["rows"]
+            task_by_customer = {row["customer_id"]: row for row in tasks}
+            callback_at = (datetime.now() + timedelta(hours=2)).isoformat()
+
+            callback_update = client.post(
+                f"/api/tasks/{task_by_customer['FLOW-1']['id']}/update",
+                json={
+                    "state": "CALLBACK",
+                    "disposition": "callback_scheduled",
+                    "callback_at": callback_at,
+                    "notes": "Customer requested afternoon callback",
+                },
+                headers=agent_headers,
+            )
+            self.assertEqual(callback_update.status_code, 200, callback_update.text)
+            callback_payload = callback_update.json()
+            self.assertTrue(callback_payload["ok"])
+            self.assertEqual(len(callback_payload.get("followups") or []), 1)
+
+            ptp_date = (datetime.now() + timedelta(days=2)).date().isoformat()
+            ptp_update = client.post(
+                f"/api/tasks/{task_by_customer['FLOW-2']['id']}/update",
+                json={
+                    "state": "PTP",
+                    "disposition": "ptp_captured",
+                    "ptp_date": ptp_date,
+                    "notes": "Customer committed after salary credit",
+                },
+                headers=agent_headers,
+            )
+            self.assertEqual(ptp_update.status_code, 200, ptp_update.text)
+            ptp_payload = ptp_update.json()
+            self.assertTrue(ptp_payload["ok"])
+            self.assertEqual(len(ptp_payload.get("followups") or []), 3)
+
+            agent_queue = client.get(f"/api/tasks?campaign_id={campaign_id}", headers=agent_headers)
+            self.assertEqual(agent_queue.status_code, 200, agent_queue.text)
+            agent_rows = agent_queue.json()["rows"]
+            self.assertEqual(len(agent_rows), 2)
+            self.assertTrue(all(str(row.get("owner") or "") == "agent" for row in agent_rows))
+
+            audit.record_dpd_snapshot(customer_id="FLOW-1", dpd_value=42, dpd_bucket="31-60", source="test")
+            audit.record_dpd_snapshot(customer_id="FLOW-1", dpd_value=0, dpd_bucket="0", source="test")
+            audit.record_dpd_snapshot(customer_id="FLOW-2", dpd_value=68, dpd_bucket="61-90", source="test")
+            audit.record_dpd_snapshot(customer_id="FLOW-2", dpd_value=92, dpd_bucket="90+", source="test")
+            audit.record_violation(
+                session_id=f"task-{task_by_customer['FLOW-1']['id']}",
+                kind="profanity",
+                detail="Customer used abusive language before accepting a callback",
+            )
+
+            metrics = client.get(f"/api/metrics?campaign_id={campaign_id}", headers=mgr_headers)
+            self.assertEqual(metrics.status_code, 200, metrics.text)
+            metrics_payload = metrics.json()
+            self.assertEqual(metrics_payload["accounts_assigned"], 2)
+            self.assertGreaterEqual(metrics_payload["accounts_contacted"], 1)
+            self.assertEqual(metrics_payload["callback_count"], 1)
+            self.assertEqual(metrics_payload["ptp_count"], 1)
+            self.assertEqual(metrics_payload["expected_recovery_amount"], 41000.0)
+            self.assertEqual(metrics_payload["followups_scheduled_total"], 4)
+            self.assertEqual(metrics_payload["queue_snapshot"]["CALLBACK"], 1)
+            self.assertEqual(metrics_payload["queue_snapshot"]["PTP"], 1)
+            self.assertEqual(metrics_payload["profanity_incidents"], 1)
+
+            roll = client.get(f"/api/metrics/roll-forward?campaign_id={campaign_id}&days=30", headers=mgr_headers)
+            self.assertEqual(roll.status_code, 200, roll.text)
+            roll_payload = roll.json()
+            self.assertEqual(roll_payload["total_transitions"], 2)
+            self.assertEqual(roll_payload["cure_count"], 1)
+            self.assertEqual(roll_payload["roll_forward_count"], 1)
+            self.assertGreater(roll_payload["cure_rate_pct"], 0)
+
+            copilot = client.post(
+                "/api/control-layer/chat",
+                json={"campaign_id": campaign_id, "message": "Which bucket is underperforming, why, and what should I change?"},
+                headers=mgr_headers,
+            )
+            self.assertEqual(copilot.status_code, 200, copilot.text)
+            copilot_payload = copilot.json()
+            self.assertEqual(copilot_payload["scope"]["campaign_id"], campaign_id)
+            self.assertGreaterEqual(len(copilot_payload["evidence"]), 2)
+            self.assertGreaterEqual(len(copilot_payload["recommendations"]), 1)
+
+            first_rec = copilot_payload["recommendations"][0]
+            exp_action = [row for row in first_rec["actions"] if row["action_type"] == "launch_experiment"][0]
+            exp_response = client.post(
+                "/api/control-layer/actions",
+                json={"action_type": exp_action["action_type"], "payload": exp_action["payload"]},
+                headers=mgr_headers,
+            )
+            self.assertEqual(exp_response.status_code, 200, exp_response.text)
+            self.assertEqual(exp_response.json()["result_type"], "experiment_created")
+
+            strategy_action = [row for row in first_rec["actions"] if row["action_type"] == "request_strategy_change"][0]
+            strategy_response = client.post(
+                "/api/control-layer/actions",
+                json={"action_type": strategy_action["action_type"], "payload": strategy_action["payload"]},
+                headers=mgr_headers,
+            )
+            self.assertEqual(strategy_response.status_code, 200, strategy_response.text)
+            self.assertEqual(strategy_response.json()["result_type"], "approval_queued")
 
 
 if __name__ == "__main__":

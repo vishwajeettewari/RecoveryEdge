@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TuringEdge Recovery OS | Product Surface Library</title>
+    <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+    <style>
+      :root {
+        --bg: #08111d;
+        --panel: rgba(10, 21, 36, 0.82);
+        --panel-soft: rgba(255, 255, 255, 0.04);
+        --stroke: rgba(145, 180, 250, 0.18);
+        --text: #eef4ff;
+        --muted: #aac0de;
+        --accent: #76a8ff;
+        --accent-2: #66efcf;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "SF Pro Display", "Segoe UI", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(118, 168, 255, 0.2), transparent 28%),
+          radial-gradient(circle at top right, rgba(102, 239, 207, 0.14), transparent 22%),
+          linear-gradient(180deg, #06101b 0%, #09131f 100%);
+      }
+
+      .page {
+        width: min(calc(100vw - 64px), 1760px);
+        margin: 0 auto;
+        padding: 42px 0 90px;
+      }
+
+      .hero {
+        margin-bottom: 28px;
+        padding: 30px 34px;
+        border: 1px solid var(--stroke);
+        border-radius: 34px;
+        background: var(--panel);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 14px;
+        border-radius: 999px;
+        background: rgba(118, 168, 255, 0.1);
+        border: 1px solid rgba(118, 168, 255, 0.24);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--accent-2), var(--accent));
+      }
+
+      h1 {
+        margin: 18px 0 0;
+        font-size: clamp(48px, 7vw, 96px);
+        line-height: 0.95;
+        letter-spacing: -0.05em;
+      }
+
+      .hero p {
+        max-width: 860px;
+        margin: 18px 0 0;
+        color: var(--muted);
+        font-size: 21px;
+        line-height: 1.5;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 20px;
+      }
+
+      .card {
+        overflow: hidden;
+        border-radius: 30px;
+        border: 1px solid var(--stroke);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)),
+          var(--panel);
+        box-shadow: 0 18px 54px rgba(0, 0, 0, 0.28);
+      }
+
+      .card img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        object-fit: cover;
+      }
+
+      .copy {
+        padding: 22px 24px 26px;
+      }
+
+      .copy strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 25px;
+        letter-spacing: -0.02em;
+      }
+
+      .route {
+        color: var(--accent-2);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .copy p {
+        margin: 12px 0 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.55;
+      }
+
+      .full {
+        grid-column: 1 / -1;
+      }
+
+      @media (max-width: 1180px) {
+        .page {
+          width: min(calc(100vw - 32px), 1760px);
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .full {
+          grid-column: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div class="eyebrow">Raw Product Surfaces</div>
+        <h1>Verified UI screens for the client demo build.</h1>
+        <p>
+          This page is the clean design library handoff for Figma. It keeps the strongest product
+          surfaces large, labeled, and easy to duplicate into decks, trailers, or role-specific demo
+          cuts.
+        </p>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <img src="./screenshots/01-login-hero.png" alt="Login and app shell" />
+          <div class="copy">
+            <span class="route">/login</span>
+            <strong>Login / Branded Shell</strong>
+            <p>Use as the opening beat to establish the product shell and brand before the workflow starts.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <img src="./screenshots/02-overview-control-room.png" alt="Early bucket control room" />
+          <div class="copy">
+            <span class="route">/app/dashboard</span>
+            <strong>Early Bucket Control Room</strong>
+            <p>Supervisory proof layer for follow-through discipline, containment, and recovery pressure.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <img src="./screenshots/03-ops-copilot-hero.png" alt="Operations Copilot hero" />
+          <div class="copy">
+            <span class="route">/app/control</span>
+            <strong>Operations Copilot Hero</strong>
+            <p>Category-setting screen for the product story and the strongest opener for a client-facing cut.</p>
+          </div>
+        </article>
+
+        <article class="card full">
+          <img src="./screenshots/04-ops-copilot-response.png" alt="Operations Copilot response" />
+          <div class="copy">
+            <span class="route">/app/control</span>
+            <strong>Operations Copilot Response</strong>
+            <p>Evidence-backed answer panel with recommendations, expected impact, and governance-ready next steps.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <img src="./screenshots/05-portfolio-launch.png" alt="Portfolio upload and launch" />
+          <div class="copy">
+            <span class="route">/app/portfolio</span>
+            <strong>Portfolios &amp; Campaign Launch</strong>
+            <p>Shows how a spreadsheet becomes a governed campaign without an ops handoff gap.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <img src="./screenshots/06-workbench-queue.png" alt="Workbench queue" />
+          <div class="copy">
+            <span class="route">/app/workbench</span>
+            <strong>Supervisor Workbench</strong>
+            <p>Queue management and intervention space for controlled operational execution.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <img src="./screenshots/07-calling-console-live.png" alt="Calling console live" />
+          <div class="copy">
+            <span class="route">/app/calling</span>
+            <strong>Calling Console</strong>
+            <p>Borrower brief, desk controls, and call-journey context in one aligned workspace.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <img src="./screenshots/08-calling-console-commitment.png" alt="Commitment capture" />
+          <div class="copy">
+            <span class="route">/app/calling</span>
+            <strong>Commitment Capture</strong>
+            <p>PTP and callback capture panel that turns agent outcomes into structured operating data.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <img src="./screenshots/09-alerts-compliance.png" alt="Alerts and compliance" />
+          <div class="copy">
+            <span class="route">/app/alerts</span>
+            <strong>Alerts &amp; Compliance</strong>
+            <p>Operational exceptions and compliance ownership stay inside the same system.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <img src="./screenshots/10-reports-download-center.png" alt="Reports" />
+          <div class="copy">
+            <span class="route">/app/reports</span>
+            <strong>Reports &amp; Download Center</strong>
+            <p>Scheduled exports and audit-ready reporting for finance and leadership stakeholders.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <img src="./screenshots/11-integrations-reconciliation.png" alt="Integrations" />
+          <div class="copy">
+            <span class="route">/app/integrations</span>
+            <strong>Integrations &amp; Reconciliation</strong>
+            <p>Enterprise systems-fit proof covering sync issues, conflicts, and resolution flows.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <img src="./screenshots/12-users-access.png" alt="Users and access" />
+          <div class="copy">
+            <span class="route">/app/users</span>
+            <strong>Users &amp; Access</strong>
+            <p>Role-based control for admin, manager, agent, CFO, CEO, and compliance personas.</p>
+          </div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

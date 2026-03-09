@@ -37,7 +37,7 @@ interface UploadResponse {
   row_count: number;
 }
 
-const MAPPABLE_FIELDS = ["", "customer_id", "phone", "amount_due", "dpd", "due_date", "language", "customer_name"];
+const MAPPABLE_FIELDS = ["", "customer_id", "phone", "amount_due", "initial_amount", "remaining_amount", "dpd", "due_date", "language", "customer_name"];
 
 function inferMapping(columns: ColumnInfo[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -45,6 +45,8 @@ function inferMapping(columns: ColumnInfo[]): Record<string, string> {
     const n = (c.source_col || "").toLowerCase();
     if (n.includes("customer") && n.includes("id")) out[c.source_col] = "customer_id";
     else if (n === "phone" || n.includes("mobile")) out[c.source_col] = "phone";
+    else if (n.includes("initial") || n.includes("principal") || n.includes("sanction") || n.includes("disbursed") || n.includes("original_amount")) out[c.source_col] = "initial_amount";
+    else if (n.includes("remaining") || n.includes("outstanding") || n.includes("balance")) out[c.source_col] = "remaining_amount";
     else if (n.includes("amount") || n.includes("due")) out[c.source_col] = "amount_due";
     else if (n === "dpd" || n.includes("days_past_due")) out[c.source_col] = "dpd";
     else if (n.includes("due_date") || n === "duedate") out[c.source_col] = "due_date";
@@ -73,7 +75,8 @@ export function PortfolioPage() {
 
   const mappedRequired = useMemo(() => {
     const selected = new Set(Object.values(mapping).filter(Boolean));
-    return ["customer_id", "phone", "amount_due", "dpd"].every((x) => selected.has(x));
+    const hasAmount = selected.has("amount_due") || selected.has("remaining_amount");
+    return ["customer_id", "phone", "dpd"].every((x) => selected.has(x)) && hasAmount;
   }, [mapping]);
 
   const onUpload = async () => {
@@ -246,7 +249,7 @@ export function PortfolioPage() {
               </Table>
               <Group justify="space-between">
                 <Badge color={mappedRequired ? "green" : "orange"} variant="light">
-                  {mappedRequired ? "Required fields mapped" : "Map customer_id, phone, amount_due, dpd"}
+                  {mappedRequired ? "Required fields mapped" : "Map customer_id, phone, amount_due or remaining_amount, dpd"}
                 </Badge>
                 <Button onClick={onMap} disabled={!upload || !mappedRequired || busy}>Save Mapping</Button>
               </Group>

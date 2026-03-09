@@ -2070,6 +2070,13 @@ async def api_task_update(task_id: str, request: Request):
         strategy_decision = strategy.classify(dpd_i or 0)
         callback_time = time.strftime("%H:%M", time.localtime(callback_ts)) if callback_ts is not None else None
         manual_session_id = f"task-{task_id}"
+        if task.get("customer_id") and dpd_i is not None:
+            audit.record_dpd_snapshot(
+                customer_id=str(task.get("customer_id") or ""),
+                dpd_value=dpd_i,
+                dpd_bucket=dpd_bucket,
+                source="task_update",
+            )
         audit.upsert_outcome(
             session_id=manual_session_id,
             customer_id=str(task.get("customer_id") or "") or None,
@@ -2091,20 +2098,29 @@ async def api_task_update(task_id: str, request: Request):
                 "actor": actor,
             },
         )
+        auto_followups = []
         if ptp_date and str(task.get("state") or "").upper() == "PTP":
-            auto_followups = followups.schedule_ptp_followups(
+            auto_followups.extend(followups.schedule_ptp_followups(
                 session_id=manual_session_id,
                 customer_id=str(task.get("customer_id") or "") or None,
                 ptp_date=ptp_date,
                 phone=str(task.get("phone") or "") or None,
                 channel="whatsapp",
+            ))
+        if callback_ts is not None:
+            auto_followups.extend(followups.schedule_callback_followup(
+                session_id=manual_session_id,
+                customer_id=str(task.get("customer_id") or "") or None,
+                phone=str(task.get("phone") or "") or None,
+                callback_ts=callback_ts,
+                channel="voice",
+            ))
+        if auto_followups:
+            audit.record_event(
+                event_type="followup_scheduled",
+                session_id=manual_session_id,
+                payload={"source": "task_update", "items": auto_followups},
             )
-            if auto_followups:
-                audit.record_event(
-                    event_type="followup_scheduled",
-                    session_id=manual_session_id,
-                    payload={"source": "task_update", "items": auto_followups},
-                )
             result["followups"] = auto_followups
     status = 200 if result.get("ok") else 400
     return JSONResponse(result, status_code=status)

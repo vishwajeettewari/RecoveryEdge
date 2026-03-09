@@ -900,6 +900,7 @@ class WebCallSession:
             },
             reply_to_step_id=reply_step,
         )
+        self._apply_abusive_language_guard(text=t, reply_step=reply_step)
         self._debug_trace(
             "typed_user_turn_processed",
             text=t,
@@ -1039,6 +1040,20 @@ class WebCallSession:
 
     def _redact(self, text: str) -> str:
         return redact_pii(text) if self._log_redact_pii else text
+
+    def _apply_abusive_language_guard(self, *, text: str, reply_step: Optional[str]) -> None:
+        if reply_step != "closing" or not self._is_abusive_utterance(text):
+            return
+        self._wf_state.last_transition_reason = "abusive_language"
+        if self._audit_store:
+            try:
+                self._audit_store.record_violation(
+                    session_id=self._session_id,
+                    kind="profanity",
+                    detail=self._redact(text)[:240],
+                )
+            except Exception:
+                pass
 
     def _log_message(self, *, role: str, content: str) -> None:
         """Persist message to Excel + SQLite audit (redacted)."""
@@ -2139,6 +2154,7 @@ class WebCallSession:
                 self._facts["ptp_date"] = str(ptp_date)
             if callback_time:
                 self._wf_state.callback_time = str(callback_time)
+                self._facts["callback_time"] = str(callback_time)
             self._set_workflow_step(reason="save_ptp_or_callback")
 
             customer_id = str(self._facts.get("customer_id") or "") or None
@@ -2189,21 +2205,35 @@ class WebCallSession:
                     log_event(logger, "auto_send_link_error", session_id=self._session_id, error=str(exc))
             if self._followup_service and self._wf_state.ptp_date:
                 try:
-                    auto_followups = self._followup_service.schedule_ptp_followups(
+                    auto_followups.extend(self._followup_service.schedule_ptp_followups(
                         session_id=self._session_id,
                         customer_id=customer_id,
                         ptp_date=str(self._wf_state.ptp_date),
                         phone=str(self._facts.get("phone") or ""),
                         channel=str(payload.get("channel") or "whatsapp"),
-                    )
-                    if self._audit_store and auto_followups:
-                        self._audit_store.record_event(
-                            event_type="followup_scheduled",
-                            session_id=self._session_id,
-                            payload={"items": auto_followups},
-                        )
+                    ))
                 except Exception as exc:
                     log_event(logger, "followup_schedule_error", session_id=self._session_id, error=str(exc))
+            if self._followup_service and self._wf_state.callback_time:
+                try:
+                    auto_followups.extend(self._followup_service.schedule_callback_followup(
+                        session_id=self._session_id,
+                        customer_id=customer_id,
+                        callback_time=str(self._wf_state.callback_time),
+                        phone=str(self._facts.get("phone") or ""),
+                        channel=str(payload.get("channel") or "voice"),
+                    ))
+                except Exception as exc:
+                    log_event(logger, "callback_followup_schedule_error", session_id=self._session_id, error=str(exc))
+            if self._audit_store and auto_followups:
+                try:
+                    self._audit_store.record_event(
+                        event_type="followup_scheduled",
+                        session_id=self._session_id,
+                        payload={"items": auto_followups},
+                    )
+                except Exception:
+                    pass
             if self._crm_adapter:
                 try:
                     self._crm_adapter.enqueue_outcome(
@@ -2848,8 +2878,7 @@ class WebCallSession:
                             },
                             reply_to_step_id=effective_reply_step,
                         )
-                        if effective_reply_step == "closing" and self._is_abusive_utterance(text):
-                            self._wf_state.last_transition_reason = "abusive_language"
+                        self._apply_abusive_language_guard(text=text, reply_step=effective_reply_step)
                         self._debug_trace(
                             "stt_final_processed",
                             text=text,
