@@ -385,6 +385,56 @@ class V2PlatformApiTests(unittest.TestCase):
             due_after_tick = followups.due_followups(limit=20)
             self.assertEqual(len(due_after_tick), 0)
 
+    def test_task_ptp_update_schedules_followups_and_updates_metrics(self):
+        with self._client() as client:
+            admin_token = self._login(client, "admin", "admin123")
+            auth = {"Authorization": f"Bearer {admin_token}"}
+            demo = web_app._get_demo_singletons()
+            campaign = demo["campaign_service"]
+            workbench = demo["workbench"]
+
+            created = campaign.create_campaign(name="Buyer Demo", customer_ids=["BUY-1"], max_attempts=2, retry_delay_minutes=15, batch_size=20)
+            campaign_id = created["campaign_id"]
+            workbench.seed_tasks(
+                campaign_id=campaign_id,
+                portfolio_id="pfl-buyer",
+                rows=[
+                    {
+                        "customer_id": "BUY-1",
+                        "phone": "+919999999981",
+                        "amount_due": 1750,
+                        "dpd": 18,
+                        "customer_name": "Buyer Demo Customer",
+                    }
+                ],
+                actor="seed",
+            )
+            task = workbench.list_tasks(campaign_id=campaign_id, page=1, page_size=10)["rows"][0]
+
+            update = client.post(
+                f"/api/tasks/{task['id']}/update",
+                json={
+                    "state": "PTP",
+                    "disposition": "ptp_captured",
+                    "ptp_date": "2026-03-12",
+                    "notes": "manual demo commitment",
+                },
+                headers=auth,
+            )
+            self.assertEqual(update.status_code, 200, update.text)
+            payload = update.json()
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["task"]["ptp_date"], "2026-03-12")
+            self.assertEqual(len(payload.get("followups") or []), 3)
+
+            metrics = client.get(f"/api/metrics?campaign_id={campaign_id}", headers=auth)
+            self.assertEqual(metrics.status_code, 200, metrics.text)
+            metrics_payload = metrics.json()
+            self.assertEqual(metrics_payload["accounts_assigned"], 1)
+            self.assertEqual(metrics_payload["expected_recovery_amount"], 1750.0)
+            self.assertEqual(metrics_payload["followups_scheduled_total"], 3)
+            self.assertEqual(metrics_payload["queue_snapshot"]["PTP"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

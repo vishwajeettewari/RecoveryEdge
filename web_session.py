@@ -1384,11 +1384,14 @@ class WebCallSession:
                 log_event(logger, "excel_commitment_persist_error", session_id=self._session_id, error=str(exc))
         if self._audit_store:
             try:
+                strategy = self._get_strategy_decision()
                 self._audit_store.upsert_outcome(
                     session_id=self._session_id,
                     customer_id=str(self._facts.get("customer_id") or "") or None,
                     campaign_id=str(self._facts.get("campaign_id") or "") or None,
-                    dpd_bucket=(self._get_strategy_decision().dpd_bucket if self._get_strategy_decision() else None),
+                    dpd_bucket=(strategy.dpd_bucket if strategy else None),
+                    strategy_mode=(strategy.strategy_mode if strategy else None),
+                    tone_profile=(strategy.tone_profile if strategy else None),
                     disposition=self._wf_state.disposition,
                     ptp_date=ptp,
                     callback_time=cb,
@@ -2153,11 +2156,14 @@ class WebCallSession:
                     pass
             if self._audit_store:
                 try:
+                    strategy = self._get_strategy_decision()
                     self._audit_store.upsert_outcome(
                         session_id=self._session_id,
                         customer_id=customer_id,
                         campaign_id=str(self._facts.get("campaign_id") or "") or None,
-                        dpd_bucket=(self._get_strategy_decision().dpd_bucket if self._get_strategy_decision() else None),
+                        dpd_bucket=(strategy.dpd_bucket if strategy else None),
+                        strategy_mode=(strategy.strategy_mode if strategy else None),
+                        tone_profile=(strategy.tone_profile if strategy else None),
                         ptp_date=self._wf_state.ptp_date,
                         callback_time=self._wf_state.callback_time,
                         disposition=self._wf_state.disposition,
@@ -2252,11 +2258,14 @@ class WebCallSession:
                     pass
             if self._audit_store:
                 try:
+                    strategy = self._get_strategy_decision()
                     self._audit_store.upsert_outcome(
                         session_id=self._session_id,
                         customer_id=customer_id,
                         campaign_id=str(self._facts.get("campaign_id") or "") or None,
-                        dpd_bucket=(self._get_strategy_decision().dpd_bucket if self._get_strategy_decision() else None),
+                        dpd_bucket=(strategy.dpd_bucket if strategy else None),
+                        strategy_mode=(strategy.strategy_mode if strategy else None),
+                        tone_profile=(strategy.tone_profile if strategy else None),
                         escalations_inc=1,
                     )
                     self._audit_store.record_event(event_type="action", session_id=self._session_id, payload={"name": name, "payload": payload, "result": result, "ok": True})
@@ -2362,11 +2371,14 @@ class WebCallSession:
 
         if self._audit_store:
             try:
+                strategy = self._get_strategy_decision()
                 self._audit_store.upsert_outcome(
                     session_id=self._session_id,
                     customer_id=str(self._facts.get("customer_id") or "") or None,
                     campaign_id=str(self._facts.get("campaign_id") or "") or None,
-                    dpd_bucket=(self._get_strategy_decision().dpd_bucket if self._get_strategy_decision() else None),
+                    dpd_bucket=(strategy.dpd_bucket if strategy else None),
+                    strategy_mode=(strategy.strategy_mode if strategy else None),
+                    tone_profile=(strategy.tone_profile if strategy else None),
                     disposition=disp,
                     ptp_date=self._wf_state.ptp_date,
                     callback_time=self._wf_state.callback_time,
