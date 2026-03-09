@@ -7,6 +7,7 @@ import { PERMS, ROLES } from "../auth/roles";
 import { useAuth } from "../auth/AuthProvider";
 import { AlertsPage } from "../features/alerts/AlertsPage";
 import { CallingConsolePage } from "../features/calling/CallingConsolePage";
+import { ControlLayerPage } from "../features/control/ControlLayerPage";
 import { ForgotPasswordPage } from "../features/auth/ForgotPasswordPage";
 import { LoginPage } from "../features/auth/LoginPage";
 import { IntegrationsPage } from "../features/integrations/IntegrationsPage";
@@ -42,6 +43,15 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={PERMS.VIEW_DASHBOARD}>
                 <OverviewPage />
+              </RequirePermission>
+            }
+          />
+
+          <Route
+            path="control"
+            element={
+              <RequirePermission permission={PERMS.VIEW_DASHBOARD}>
+                <ControlLayerPage />
               </RequirePermission>
             }
           />

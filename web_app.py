@@ -12,6 +12,7 @@ import io
 import secrets
 import struct
 import uuid
+from datetime import datetime
 from typing import Dict, Optional, List, Any, Tuple
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, UploadFile, File
@@ -48,6 +49,7 @@ from event_bus_service import EventBusService
 from experiment_service import ExperimentService
 from journey_orchestrator_service import JourneyOrchestratorService
 from model_router_service import ModelRouterService
+from ops_control_service import OpsControlService
 from payment_orchestration_service import PaymentOrchestrationService
 from recovery_brain_service import RecoveryBrainService
 from settlement_service import SettlementService
@@ -1518,6 +1520,14 @@ def _get_demo_singletons() -> Dict[str, object]:
         experiments=experiments,
         approvals=approvals,
     )
+    ops_control = OpsControlService(
+        db_path,
+        audit=audit,
+        campaign_service=campaign_service,
+        approvals=approvals,
+        experiments=experiments,
+        strategy_engine=strategy,
+    )
     # Best-effort reindex on startup for demos (fast for small docs).
     try:
         knowledge.reindex()
@@ -1553,6 +1563,7 @@ def _get_demo_singletons() -> Dict[str, object]:
             "experiment_service": experiments,
             "model_router": model_router,
             "recovery_brain": recovery_brain,
+            "ops_control": ops_control,
             "campaign_tasks": {},
             "sessions": {},  # session_id -> snapshot dict
             "session_objs": {},  # session_id -> WebCallSession
@@ -2008,17 +2019,93 @@ async def api_task_update(task_id: str, request: Request):
         body = await request.json()
     except Exception:
         body = {}
+    ptp_date = str(body.get("ptp_date") or "").strip() or None
+    callback_ts: Optional[float] = None
+    callback_raw = body.get("callback_at")
+    if callback_raw not in (None, ""):
+        if isinstance(callback_raw, (int, float)):
+            callback_ts = float(callback_raw)
+        elif isinstance(callback_raw, str):
+            raw = callback_raw.strip()
+            if raw:
+                try:
+                    callback_ts = float(raw)
+                except Exception:
+                    try:
+                        callback_ts = datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+                    except Exception:
+                        return JSONResponse({"ok": False, "error": "invalid_callback_at"}, status_code=400)
     result = workbench.update_task(
         task_id=task_id,
         actor=actor,
         role=role,
         state=body.get("state"),
+        ptp_date=ptp_date,
         disposition=body.get("disposition"),
         notes=body.get("notes"),
-        callback_at=body.get("callback_at"),
+        callback_at=callback_ts,
         compliance_override=bool(body.get("compliance_override", False)),
         escalate_reason=body.get("escalate_reason"),
     )
+    if result.get("ok") and (ptp_date or callback_ts is not None):
+        audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
+        followups: FollowupService = demo["followups"]  # type: ignore[assignment]
+        strategy: StrategyEngine = demo["strategy"]  # type: ignore[assignment]
+        task = result.get("task") or {}
+        dpd = task.get("dpd")
+        try:
+            dpd_i = int(dpd)
+        except Exception:
+            dpd_i = None
+        if dpd_i is None or dpd_i <= 0:
+            dpd_bucket = "0"
+        elif dpd_i <= 30:
+            dpd_bucket = "1-30"
+        elif dpd_i <= 60:
+            dpd_bucket = "31-60"
+        elif dpd_i <= 90:
+            dpd_bucket = "61-90"
+        else:
+            dpd_bucket = "90+"
+        strategy_decision = strategy.classify(dpd_i or 0)
+        callback_time = time.strftime("%H:%M", time.localtime(callback_ts)) if callback_ts is not None else None
+        manual_session_id = f"task-{task_id}"
+        audit.upsert_outcome(
+            session_id=manual_session_id,
+            customer_id=str(task.get("customer_id") or "") or None,
+            campaign_id=str(task.get("campaign_id") or "") or None,
+            dpd_bucket=dpd_bucket,
+            strategy_mode=strategy_decision.strategy_mode,
+            tone_profile=strategy_decision.tone_profile,
+            disposition=str(task.get("disposition") or body.get("disposition") or "") or None,
+            ptp_date=ptp_date,
+            callback_time=callback_time,
+        )
+        audit.record_event(
+            event_type="task_commitment_saved",
+            session_id=manual_session_id,
+            payload={
+                "task_id": task_id,
+                "ptp_date": ptp_date,
+                "callback_time": callback_time,
+                "actor": actor,
+            },
+        )
+        if ptp_date and str(task.get("state") or "").upper() == "PTP":
+            auto_followups = followups.schedule_ptp_followups(
+                session_id=manual_session_id,
+                customer_id=str(task.get("customer_id") or "") or None,
+                ptp_date=ptp_date,
+                phone=str(task.get("phone") or "") or None,
+                channel="whatsapp",
+            )
+            if auto_followups:
+                audit.record_event(
+                    event_type="followup_scheduled",
+                    session_id=manual_session_id,
+                    payload={"source": "task_update", "items": auto_followups},
+                )
+            result["followups"] = auto_followups
     status = 200 if result.get("ok") else 400
     return JSONResponse(result, status_code=status)
 
@@ -4539,6 +4626,8 @@ async def voice_socket(websocket: WebSocket) -> None:
         customer_id=snap.get("customer_id"),
         campaign_id=snap.get("campaign_id"),
         dpd_bucket=snap.get("dpd_bucket"),
+        strategy_mode=snap.get("strategy_mode"),
+        tone_profile=snap.get("tone_profile"),
     )
     session_objs[session._session_id] = session
 
@@ -4709,6 +4798,8 @@ async def voice_socket(websocket: WebSocket) -> None:
                 customer_id=session.get_snapshot().get("customer_id"),
                 campaign_id=session.get_snapshot().get("campaign_id"),
                 dpd_bucket=session.get_snapshot().get("dpd_bucket"),
+                strategy_mode=session.get_snapshot().get("strategy_mode"),
+                tone_profile=session.get_snapshot().get("tone_profile"),
                 disposition=session.get_snapshot().get("disposition"),
                 ptp_date=session.get_snapshot().get("ptp_date"),
                 callback_time=session.get_snapshot().get("callback_time"),
@@ -4727,45 +4818,112 @@ async def voice_socket(websocket: WebSocket) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Ops control layer
+# ---------------------------------------------------------------------------
+
+@app.post("/api/control-layer/chat")
+async def api_control_layer_chat(request: Request):
+    deny = _require_permissions(request, (VIEW_DASHBOARD,))
+    if deny:
+        return deny
+    demo = _get_demo_singletons()
+    ops_control: OpsControlService = demo["ops_control"]  # type: ignore[assignment]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    ctx = _get_auth_context(request)
+    campaign_id = str(body.get("campaign_id") or "").strip() or None
+    out = ops_control.chat(
+        tenant_id=_tenant_id(request),
+        actor=_actor(request),
+        role=str(ctx.get("role") or ""),
+        request_id=_request_id(request),
+        message=str(body.get("message") or ""),
+        campaign_id=campaign_id,
+    )
+    return out
+
+
+@app.post("/api/control-layer/actions")
+async def api_control_layer_actions(request: Request):
+    deny = _require_permissions(request, (VIEW_DASHBOARD,))
+    if deny:
+        return deny
+    demo = _get_demo_singletons()
+    ops_control: OpsControlService = demo["ops_control"]  # type: ignore[assignment]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    action_type = str(body.get("action_type") or "").strip()
+    payload = body.get("payload") if isinstance(body.get("payload"), dict) else {}
+    if not action_type:
+        return JSONResponse({"error": "action_type_required"}, status_code=400)
+    ctx = _get_auth_context(request)
+    role = str(ctx.get("role") or "")
+    try:
+        out = ops_control.apply_action(
+            tenant_id=_tenant_id(request),
+            actor=_actor(request),
+            role=role,
+            request_id=_request_id(request),
+            action_type=action_type,
+            payload=payload,
+            can_mutate=has_permissions(role, (WORKBENCH_MUTATE,)),
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Analytics endpoints
 # ---------------------------------------------------------------------------
 
 @app.get("/api/metrics/roll-forward")
 async def api_metrics_roll_forward(request: Request):
-    deny = _require_admin(request)
+    deny = _require_permissions(request, (VIEW_DASHBOARD,))
     if deny:
         return deny
     try:
         days = int(request.query_params.get("days") or 30)
     except Exception:
         days = 30
+    campaign_id = (request.query_params.get("campaign_id") or "").strip() or None
     demo = _get_demo_singletons()
     audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
-    return audit.roll_forward_matrix(days=days)
+    return audit.roll_forward_matrix(days=days, campaign_id=campaign_id)
 
 
 @app.get("/api/metrics/recovery")
 async def api_metrics_recovery(request: Request):
-    deny = _require_admin(request)
+    deny = _require_permissions(request, (VIEW_DASHBOARD,))
     if deny:
         return deny
     try:
         days = int(request.query_params.get("days") or 30)
     except Exception:
         days = 30
+    campaign_id = (request.query_params.get("campaign_id") or "").strip() or None
     demo = _get_demo_singletons()
     audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
-    return audit.realized_recovery_trend(days=days)
+    return audit.realized_recovery_trend(days=days, campaign_id=campaign_id)
 
 
 @app.get("/api/metrics/agents")
 async def api_metrics_agents(request: Request):
-    deny = _require_admin(request)
+    deny = _require_permissions(request, (VIEW_DASHBOARD,))
     if deny:
         return deny
+    campaign_id = (request.query_params.get("campaign_id") or "").strip() or None
     demo = _get_demo_singletons()
     audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
-    return {"agents": audit.agent_metrics()}
+    return {"agents": audit.agent_metrics(campaign_id=campaign_id)}
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 import {
   Bell,
+  Bot,
   BriefcaseBusiness,
   ChartColumnBig,
   CircleUserRound,
@@ -26,6 +27,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { to: "/app/dashboard", label: "Home / Overview", icon: Gauge, permission: PERMS.VIEW_DASHBOARD },
+  { to: "/app/control", label: "Operations Copilot", icon: Bot, permission: PERMS.VIEW_DASHBOARD },
   { to: "/app/portfolio", label: "Portfolios & Campaigns", icon: FileUp, permission: PERMS.PORTFOLIO_MANAGE },
   { to: "/app/workbench", label: "Workbench (Supervisor)", icon: BriefcaseBusiness, permission: PERMS.WORKBENCH_VIEW },
   { to: "/app/calling", label: "Calling Console (Agent)", icon: PhoneCall, permission: PERMS.WORKBENCH_VIEW },
