@@ -276,6 +276,9 @@ export function CallingConsolePage() {
   const [testCallStatus, setTestCallStatus] = useState("");
   const [selectedLanguage, setSelectedLanguage] = useState("hi-IN");
   const [selectedVoice, setSelectedVoice] = useState("shubh");
+  const [ptpDateDraft, setPtpDateDraft] = useState("");
+  const [callbackDateDraft, setCallbackDateDraft] = useState(dayjs().format("YYYY-MM-DD"));
+  const [callbackTimeDraft, setCallbackTimeDraft] = useState("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -358,10 +361,22 @@ export function CallingConsolePage() {
   }, [sessionByCustomer, task?.customer_id]);
 
   useEffect(() => {
-    if (linkedSession?.step) {
-      setWorkflowStep(String(linkedSession.step));
+    const nextStep = linkedSession?.current_step || linkedSession?.step;
+    if (nextStep) {
+      setWorkflowStep(String(nextStep));
     }
-  }, [linkedSession?.step]);
+  }, [linkedSession?.current_step, linkedSession?.step]);
+
+  useEffect(() => {
+    setPtpDateDraft(String(task?.ptp_date || linkedSession?.ptp_date || ""));
+    if (task?.callback_at) {
+      setCallbackDateDraft(dayjs.unix(Number(task.callback_at)).format("YYYY-MM-DD"));
+      setCallbackTimeDraft(dayjs.unix(Number(task.callback_at)).format("HH:mm"));
+      return;
+    }
+    setCallbackDateDraft(dayjs().format("YYYY-MM-DD"));
+    setCallbackTimeDraft(String(linkedSession?.callback_time || ""));
+  }, [task?.id, task?.ptp_date, task?.callback_at, linkedSession?.ptp_date, linkedSession?.callback_time]);
 
   const timelineQuery = useQuery({
     queryKey: ["calling_timeline", linkedSession?.session_id],
@@ -973,20 +988,41 @@ export function CallingConsolePage() {
           ? "callback_scheduled"
           : action === "PAID"
             ? "paid"
-            : action === "ESCALATE"
+          : action === "ESCALATE"
               ? "escalated"
               : "closed";
     try {
-      await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/update`, {
+      const body: Record<string, unknown> = { state, disposition, notes: `action:${action}` };
+      if (action === "PTP") {
+        const ptpDate = (ptpDateDraft || linkedSession?.ptp_date || task.ptp_date || "").trim();
+        if (!ptpDate) {
+          notifications.show({ color: "orange", message: "Enter or confirm a PTP date before saving the commitment." });
+          return;
+        }
+        body.ptp_date = ptpDate;
+      }
+      if (action === "CALLBACK") {
+        const callbackTime = (callbackTimeDraft || linkedSession?.callback_time || "").trim();
+        if (!callbackTime) {
+          notifications.show({ color: "orange", message: "Enter a callback time before saving the follow-up." });
+          return;
+        }
+        body.callback_at = `${callbackDateDraft || dayjs().format("YYYY-MM-DD")}T${callbackTime}`;
+      }
+      const out = await apiFetch<{ followups?: Array<unknown> }>(`/api/tasks/${encodeURIComponent(task.id)}/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ state, disposition, notes: `action:${action}` }),
+        body: JSON.stringify(body),
       });
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "set_disposition", disposition }));
       }
-      notifications.show({ color: "green", message: `Task marked ${action}` });
+      const scheduled = Array.isArray(out.followups) ? out.followups.length : 0;
+      notifications.show({
+        color: "green",
+        message: action === "PTP" && scheduled ? `Task marked ${action}. ${scheduled} follow-ups scheduled.` : `Task marked ${action}`,
+      });
       await refresh();
     } catch (err) {
       notifications.show({ color: "red", message: String(err) });
@@ -999,7 +1035,7 @@ export function CallingConsolePage() {
   const complianceScore = complianceEntries.length
     ? Math.round((complianceEntries.filter(([, ok]) => ok).length / complianceEntries.length) * 100)
     : 100;
-  const currentStep = workflowStep || linkedSession?.step || "consent";
+  const currentStep = workflowStep || linkedSession?.current_step || linkedSession?.step || "consent";
   const currentFlowIndex = flowIndexForStep(currentStep);
   const strategyCues = callCues(strategy, currentStep, task?.compliance_block);
   const selectedQueueIndex = selectedTaskId ? assignedQueue.findIndex((row) => row.id === selectedTaskId) + 1 : 0;
@@ -1008,6 +1044,12 @@ export function CallingConsolePage() {
   const activeSessionCount = (sessionsQuery.data?.sessions || []).filter((session) => session.customer_id && sessionByCustomer.has(String(session.customer_id))).length;
   const currentStageMeta = CALL_FLOW[Math.min(currentFlowIndex, CALL_FLOW.length - 1)] || CALL_FLOW[0];
   const selectedBorrowerLabel = task?.customer_name || task?.customer_id || "No borrower selected";
+  const trackedPtpDate = ptpDateDraft || task?.ptp_date || linkedSession?.ptp_date || "";
+  const trackedCallbackTime =
+    callbackTimeDraft ||
+    (task?.callback_at ? dayjs.unix(Number(task.callback_at)).format("HH:mm") : "") ||
+    linkedSession?.callback_time ||
+    "";
   const timelineItems = useMemo(() => {
     const liveTimeline =
       (timelineQuery.data?.timeline || [])
@@ -1390,6 +1432,25 @@ export function CallingConsolePage() {
                       {voiceHeadline(voiceStatus)}
                     </Text>
                   </Paper>
+                  <Paper className="te-calling-brief-card" p="md" radius="xl">
+                    <Text size="10px" tt="uppercase" fw={700} c="#6f8db9">
+                      Commitment
+                    </Text>
+                    <Text fw={700} c="#f5f9ff">
+                      {trackedPtpDate
+                        ? dayjs(trackedPtpDate).format("DD MMM YYYY")
+                        : trackedCallbackTime
+                          ? `Callback ${trackedCallbackTime}`
+                          : "Awaiting commitment"}
+                    </Text>
+                    <Text size="sm" c="#b2c7e7">
+                      {trackedPtpDate
+                        ? "PTP tracked for follow-up scheduling"
+                        : trackedCallbackTime
+                          ? `Next touch on ${callbackDateDraft || dayjs().format("YYYY-MM-DD")}`
+                          : "Capture PTP date or callback to lock next action"}
+                    </Text>
+                  </Paper>
                 </div>
 
                 <div className="te-calling-control-grid">
@@ -1515,6 +1576,48 @@ export function CallingConsolePage() {
                         Add Note
                       </Button>
                     </Group>
+                  </Stack>
+                </Paper>
+
+                <Paper className="te-calling-inline-note" p="md" radius="xl">
+                  <Stack gap="sm">
+                    <Group justify="space-between" wrap="wrap">
+                      <div>
+                        <Text className="te-calling-section-label">Commitment Capture</Text>
+                        <Title order={5} c="#f5f9ff">
+                          Save the promise or callback from the desk
+                        </Title>
+                      </div>
+                      <Badge variant="outline" color="blue">
+                        Ops Proof
+                      </Badge>
+                    </Group>
+                    <SimpleGrid cols={{ base: 1, md: 3 }}>
+                      <TextInput
+                        label="PTP date"
+                        type="date"
+                        value={ptpDateDraft}
+                        onChange={(e) => setPtpDateDraft(e.currentTarget.value)}
+                        description="Required before using Capture PTP."
+                      />
+                      <TextInput
+                        label="Callback date"
+                        type="date"
+                        value={callbackDateDraft}
+                        onChange={(e) => setCallbackDateDraft(e.currentTarget.value)}
+                        description="Used when a borrower asks for a follow-up."
+                      />
+                      <TextInput
+                        label="Callback time"
+                        type="time"
+                        value={callbackTimeDraft}
+                        onChange={(e) => setCallbackTimeDraft(e.currentTarget.value)}
+                        description="Required before using Callback."
+                      />
+                    </SimpleGrid>
+                    <Text size="xs" c="#8aa4cb">
+                      Saving a PTP from here creates the commitment trail the dashboard, alerts, and follow-up metrics depend on.
+                    </Text>
                   </Stack>
                 </Paper>
 

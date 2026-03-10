@@ -70,6 +70,7 @@ export interface TaskRow {
   phone?: string;
   amount_due?: number;
   dpd?: number;
+  ptp_date?: string;
   state: "NEW" | "IN_PROGRESS" | "PTP" | "CALLBACK" | "ESCALATED" | "CLOSED";
   disposition?: string;
   owner?: string;
@@ -112,6 +113,9 @@ export interface SessionSnapshot {
   compliance_flags?: string[];
   disposition?: string;
   step?: string;
+  current_step?: string;
+  ptp_date?: string;
+  callback_time?: string;
 }
 
 export interface AlertRow {

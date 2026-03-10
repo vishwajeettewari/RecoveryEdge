@@ -1,5 +1,7 @@
 # Lessons
 
+- 2026-03-09: When delivering captured media assets, do not trust the filename or the earlier run summary. Open the actual exported image files and verify the pixels before handing them off, especially after any server restarts or browser-focus workarounds.
+- 2026-03-09: When shipping a new flagship surface, “working” is not enough. The first pass must meet production-marketing quality for hierarchy, layout, and action presentation, especially on customer-facing AI control panels.
 - 2026-03-07: Voice identity confirmation must normalize Unicode punctuation and recover from fragmented STT finals before workflow progression, otherwise mixed-script names can be dropped and the call can loop or stall.
 - 2026-03-07: Voice workflow turns must distinguish "please tell me your name" from "am I speaking with X", and awareness denials like "I didn't know" must trigger an explain-first overdue prompt instead of jumping straight to payment pressure or looping callback requests.
 - 2026-03-07: Voice fixes must cover both deterministic prompts and interrupted dynamic LLM turns. If the parser, name acknowledgement, or Hindi voice-gender logic only exists in fixed prompts, barge-ins will bypass it and reintroduce the bug.
