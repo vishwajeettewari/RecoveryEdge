@@ -1,5 +1,23 @@
 # Current Task
 
+## AI Command Center Theme Alignment
+
+- [x] Audit the merged AI Command Center page for hard-coded light-only surfaces, chart chrome, and data-label styles that ignore the shell theme.
+- [x] Refactor the AI Command Center theme bindings so dark mode and light mode share the same token system as the rest of the shell.
+- [x] Run focused frontend verification for the AI Command Center changes and document the outcome in the review section below.
+
+## AI Command Center Theme Alignment Review
+
+- The root cause was a split theme system inside the merged `AI Collections Command Center`: the shell was already tokenized for dark mode, but `frontend-react/src/styles.css` still gave the command-center filter bar, section cards, KPI cards, chart cards, grid lines, legend text, and tooltip surfaces fixed light-mode values.
+- Added dedicated command-center light/dark CSS variables in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/styles.css` and rewired the `.te-command-*` surfaces to those variables so the page now follows the same theme switch as the rest of the shell.
+- Updated `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/features/command-center/CommandCenterPage.tsx` so Recharts axis ticks, grid lines, tooltips, funnel tracks, and forecast/sub-metric panels read from theme-aware CSS variables instead of hard-coded white or black values.
+- Added `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/features/command-center/CommandCenterPage.test.tsx` as a focused regression check that renders the page and verifies the token-bound subtle panel surface used by the forecast cards.
+- Verified with:
+  - `npm test -- --run src/features/command-center/CommandCenterPage.test.tsx`
+  - `npm run build`
+- Verification note:
+  - the production build still emits the existing Vite chunk-size warning for the main bundle, but the build completes successfully and this task did not increase it into a failure.
+
 ## Restore Dark Mode And Voice Agent Merge
 
 - [x] Merge the committed changes from `codex/evaluate-wiring-portfolio-metrics-to` back into this worktree so the missing dark mode and voice-agent work is restored.

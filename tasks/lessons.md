@@ -1,5 +1,6 @@
 # Lessons
 
+- 2026-03-10: If a user references `agents.mmd` but the repo uses `AGENTS.md`, verify the actual root instruction file first and then restart the project workflow from that file instead of assuming the name mismatch is harmless.
 - 2026-03-09: When splitting two dashboards, do not stop at separate routes. Remove repeated sections and repeated metrics so each dashboard has a distinct job-to-be-done.
 - 2026-03-09: When a user says two dashboards should stay separate, keep their information architecture separate in the product too. Do not assume a combined page is acceptable just because the metrics are related.
 - 2026-03-09: When a user says similar product surfaces should stay separate, do not keep them on a combined raw board. Split them into distinct handoff pages instead of assuming adjacency is acceptable.

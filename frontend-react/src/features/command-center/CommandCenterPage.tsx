@@ -102,6 +102,35 @@ const RISK_COLORS = {
   severe: "#ef4444",
 };
 
+const CHART_THEME = {
+  grid: "var(--te-command-chart-grid)",
+  axisText: "var(--te-command-chart-axis)",
+  axisLine: "var(--te-command-chart-axis-line)",
+  tooltipBg: "var(--te-command-tooltip-bg)",
+  tooltipBorder: "var(--te-command-tooltip-border)",
+  tooltipShadow: "var(--te-command-tooltip-shadow)",
+  tooltipText: "var(--te-command-tooltip-text)",
+  subtleSurface: "var(--te-command-subtle-surface)",
+  subtleBorder: "var(--te-command-subtle-border)",
+  trackBg: "var(--te-command-track-bg)",
+};
+
+const CHART_AXIS_TICK = { fontSize: 12, fill: CHART_THEME.axisText };
+const CHART_AXIS_TICK_SMALL = { fontSize: 11, fill: CHART_THEME.axisText };
+const CHART_AXIS_LINE = { stroke: CHART_THEME.axisLine };
+const CHART_TOOLTIP_STYLE = {
+  background: CHART_THEME.tooltipBg,
+  border: `1px solid ${CHART_THEME.tooltipBorder}`,
+  borderRadius: 12,
+  boxShadow: CHART_THEME.tooltipShadow,
+  color: CHART_THEME.tooltipText,
+};
+const CHART_TOOLTIP_TEXT_STYLE = { color: CHART_THEME.tooltipText };
+const CHART_SUBTLE_PANEL_STYLE = {
+  background: CHART_THEME.subtleSurface,
+  border: `1px solid ${CHART_THEME.subtleBorder}`,
+};
+
 function rupees(n: number): string {
   try {
     return new Intl.NumberFormat("en-IN", {
@@ -454,16 +483,14 @@ function PortfolioHealthSection() {
         <div style={{ height: 280 }}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={trendData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-              <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-              <YAxis yAxisId="left" tick={{ fontSize: 12 }} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+              <XAxis dataKey="month" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
+              <YAxis yAxisId="left" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
+              <YAxis yAxisId="right" orientation="right" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
               <RechartsTooltip
-                contentStyle={{
-                  background: "rgba(255,255,255,0.96)",
-                  border: "1px solid rgba(0,0,0,0.08)",
-                  borderRadius: 8,
-                }}
+                contentStyle={CHART_TOOLTIP_STYLE}
+                labelStyle={CHART_TOOLTIP_TEXT_STYLE}
+                itemStyle={CHART_TOOLTIP_TEXT_STYLE}
               />
               <Legend />
               <Area
@@ -556,15 +583,13 @@ function DelinquencyRiskSection() {
             <div style={{ height: 280 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={bucketData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-                  <XAxis type="number" tick={{ fontSize: 12 }} />
-                  <YAxis dataKey="bucket" type="category" tick={{ fontSize: 11 }} width={80} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+                  <XAxis type="number" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
+                  <YAxis dataKey="bucket" type="category" tick={CHART_AXIS_TICK_SMALL} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} width={80} />
                   <RechartsTooltip
-                    contentStyle={{
-                      background: "rgba(255,255,255,0.96)",
-                      border: "1px solid rgba(0,0,0,0.08)",
-                      borderRadius: 8,
-                    }}
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                    labelStyle={CHART_TOOLTIP_TEXT_STYLE}
+                    itemStyle={CHART_TOOLTIP_TEXT_STYLE}
                     formatter={(value, name) => [
                       name === "count" ? formatNumber(Number(value)) : `₹${value}Cr`,
                       name === "count" ? "Accounts" : "Amount",
@@ -918,7 +943,8 @@ function RecoveryPerformanceSection() {
                     <div
                       style={{
                         height: 28,
-                        background: "rgba(0,0,0,0.04)",
+                        background: CHART_THEME.trackBg,
+                        border: `1px solid ${CHART_THEME.subtleBorder}`,
                         borderRadius: 6,
                         overflow: "hidden",
                       }}
@@ -953,15 +979,13 @@ function RecoveryPerformanceSection() {
             <div style={{ height: 260 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={channelData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-                  <XAxis type="number" tick={{ fontSize: 12 }} />
-                  <YAxis dataKey="channel" type="category" tick={{ fontSize: 11 }} width={110} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+                  <XAxis type="number" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
+                  <YAxis dataKey="channel" type="category" tick={CHART_AXIS_TICK_SMALL} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} width={110} />
                   <RechartsTooltip
-                    contentStyle={{
-                      background: "rgba(255,255,255,0.96)",
-                      border: "1px solid rgba(0,0,0,0.08)",
-                      borderRadius: 8,
-                    }}
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                    labelStyle={CHART_TOOLTIP_TEXT_STYLE}
+                    itemStyle={CHART_TOOLTIP_TEXT_STYLE}
                     formatter={(value) => [`₹${value}Cr`, "Amount"]}
                   />
                   <Bar dataKey="amount" fill={COLORS.primary} radius={[0, 4, 4, 0]}>
@@ -969,7 +993,7 @@ function RecoveryPerformanceSection() {
                       dataKey="percentage"
                       position="right"
                       formatter={(v: number) => `${v}%`}
-                      style={{ fontSize: 11, fill: COLORS.slate }}
+                      style={{ fontSize: 11, fill: CHART_THEME.axisText }}
                     />
                   </Bar>
                 </BarChart>
@@ -1116,15 +1140,13 @@ function CollectionsOperationsSection() {
             <div style={{ height: 240 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={ptpTrendData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-                  <XAxis dataKey="day" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+                  <XAxis dataKey="day" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
+                  <YAxis tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
                   <RechartsTooltip
-                    contentStyle={{
-                      background: "rgba(255,255,255,0.96)",
-                      border: "1px solid rgba(0,0,0,0.08)",
-                      borderRadius: 8,
-                    }}
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                    labelStyle={CHART_TOOLTIP_TEXT_STYLE}
+                    itemStyle={CHART_TOOLTIP_TEXT_STYLE}
                   />
                   <Legend />
                   <Bar dataKey="given" name="PTP Given" fill={COLORS.primary} radius={[4, 4, 0, 0]} />
@@ -1134,7 +1156,7 @@ function CollectionsOperationsSection() {
               </ResponsiveContainer>
             </div>
             <SimpleGrid cols={3} mt="md">
-              <Paper p="sm" radius="md" style={{ background: COLORS.primaryLight }}>
+              <Paper p="sm" radius="md" style={{ ...CHART_SUBTLE_PANEL_STYLE, background: COLORS.primaryLight }}>
                 <Text size="xs" c="dimmed">
                   PTP Rate
                 </Text>
@@ -1142,7 +1164,7 @@ function CollectionsOperationsSection() {
                   {operationsData.ptpRate}%
                 </Text>
               </Paper>
-              <Paper p="sm" radius="md" style={{ background: COLORS.successLight }}>
+              <Paper p="sm" radius="md" style={{ ...CHART_SUBTLE_PANEL_STYLE, background: COLORS.successLight }}>
                 <Text size="xs" c="dimmed">
                   Fulfillment
                 </Text>
@@ -1150,7 +1172,7 @@ function CollectionsOperationsSection() {
                   {operationsData.ptpFulfilled}%
                 </Text>
               </Paper>
-              <Paper p="sm" radius="md" style={{ background: COLORS.dangerLight }}>
+              <Paper p="sm" radius="md" style={{ ...CHART_SUBTLE_PANEL_STYLE, background: COLORS.dangerLight }}>
                 <Text size="xs" c="dimmed">
                   Broken
                 </Text>
@@ -1241,11 +1263,9 @@ function AIDecisionIntelligenceSection() {
                     ))}
                   </Pie>
                   <RechartsTooltip
-                    contentStyle={{
-                      background: "rgba(255,255,255,0.96)",
-                      border: "1px solid rgba(0,0,0,0.08)",
-                      borderRadius: 8,
-                    }}
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                    labelStyle={CHART_TOOLTIP_TEXT_STYLE}
+                    itemStyle={CHART_TOOLTIP_TEXT_STYLE}
                     formatter={(value) => [formatNumber(Number(value)), "Borrowers"]}
                   />
                 </PieChart>
@@ -1288,15 +1308,13 @@ function AIDecisionIntelligenceSection() {
             <div style={{ height: 220 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={recoveryProbability}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-                  <XAxis dataKey="range" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 12 }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+                  <XAxis dataKey="range" tick={CHART_AXIS_TICK_SMALL} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
+                  <YAxis tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
                   <RechartsTooltip
-                    contentStyle={{
-                      background: "rgba(255,255,255,0.96)",
-                      border: "1px solid rgba(0,0,0,0.08)",
-                      borderRadius: 8,
-                    }}
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                    labelStyle={CHART_TOOLTIP_TEXT_STYLE}
+                    itemStyle={CHART_TOOLTIP_TEXT_STYLE}
                     formatter={(value) => [formatNumber(Number(value)), "Accounts"]}
                   />
                   <Bar dataKey="count" radius={[4, 4, 0, 0]}>
@@ -1375,7 +1393,7 @@ function AIDecisionIntelligenceSection() {
                     key={item.period}
                     p="sm"
                     radius="md"
-                    style={{ background: "rgba(0,0,0,0.02)" }}
+                    style={CHART_SUBTLE_PANEL_STYLE}
                   >
                     <Group justify="space-between">
                       <div>

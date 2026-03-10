@@ -110,6 +110,45 @@
   --te-kpi-bg:
     radial-gradient(420px 160px at 0% 0%, rgba(18, 93, 255, 0.12), transparent 56%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.84));
+  --te-command-filter-bg:
+    radial-gradient(480px 180px at 0% 0%, rgba(18, 93, 255, 0.08), transparent 56%),
+    radial-gradient(380px 160px at 100% 0%, rgba(10, 176, 139, 0.06), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.92));
+  --te-command-filter-border: rgba(99, 118, 156, 0.18);
+  --te-command-filter-shadow: 0 12px 32px rgba(15, 24, 42, 0.06);
+  --te-command-section-bg:
+    radial-gradient(600px 240px at 0% 0%, rgba(18, 93, 255, 0.06), transparent 52%),
+    radial-gradient(500px 200px at 100% 100%, rgba(10, 176, 139, 0.04), transparent 54%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.94));
+  --te-command-section-border: rgba(99, 118, 156, 0.16);
+  --te-command-section-shadow: 0 16px 40px rgba(15, 24, 42, 0.08);
+  --te-command-kpi-bg:
+    radial-gradient(280px 120px at 0% 0%, rgba(18, 93, 255, 0.08), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.92));
+  --te-command-kpi-border: rgba(99, 118, 156, 0.16);
+  --te-command-kpi-shadow: 0 8px 24px rgba(15, 24, 42, 0.06);
+  --te-command-kpi-hover-shadow: 0 14px 32px rgba(15, 24, 42, 0.1);
+  --te-command-chart-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(252, 253, 255, 0.92));
+  --te-command-chart-border: rgba(99, 118, 156, 0.14);
+  --te-command-chart-shadow: 0 6px 20px rgba(15, 24, 42, 0.05);
+  --te-command-metric-bg:
+    radial-gradient(240px 100px at 100% 0%, rgba(18, 93, 255, 0.06), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(252, 253, 255, 0.94));
+  --te-command-table-head-bg: rgba(244, 248, 255, 0.9);
+  --te-command-table-head-text: #556074;
+  --te-command-table-cell-text: #1b2330;
+  --te-command-chart-grid: rgba(15, 24, 42, 0.08);
+  --te-command-chart-axis: #556074;
+  --te-command-chart-axis-line: rgba(89, 104, 134, 0.22);
+  --te-command-tooltip-bg: rgba(255, 255, 255, 0.98);
+  --te-command-tooltip-border: rgba(99, 118, 156, 0.18);
+  --te-command-tooltip-shadow: 0 12px 28px rgba(15, 24, 42, 0.12);
+  --te-command-tooltip-text: #162033;
+  --te-command-legend-text: #4f5d73;
+  --te-command-track-bg: rgba(15, 24, 42, 0.06);
+  --te-command-subtle-surface:
+    linear-gradient(180deg, rgba(248, 250, 255, 0.94), rgba(244, 247, 253, 0.92));
+  --te-command-subtle-border: rgba(99, 118, 156, 0.14);
   --te-table-bg: rgba(255, 255, 255, 0.75);
   --te-table-border: rgba(88, 108, 147, 0.18);
   --te-empty-border: rgba(96, 117, 156, 0.38);
@@ -332,6 +371,47 @@
   --te-kpi-bg:
     radial-gradient(420px 160px at 0% 0%, rgba(18, 93, 255, 0.14), transparent 56%),
     linear-gradient(180deg, rgba(12, 17, 26, 0.92), rgba(9, 14, 22, 0.88));
+  --te-command-filter-bg:
+    radial-gradient(540px 220px at 0% 0%, rgba(24, 98, 255, 0.2), transparent 56%),
+    radial-gradient(420px 180px at 100% 0%, rgba(10, 176, 139, 0.12), transparent 58%),
+    linear-gradient(180deg, rgba(12, 17, 26, 0.96), rgba(9, 14, 22, 0.94));
+  --te-command-filter-border: rgba(118, 135, 168, 0.16);
+  --te-command-filter-shadow: 0 18px 36px rgba(0, 0, 0, 0.22);
+  --te-command-section-bg:
+    radial-gradient(620px 260px at 0% 0%, rgba(24, 98, 255, 0.14), transparent 54%),
+    radial-gradient(520px 220px at 100% 100%, rgba(10, 176, 139, 0.08), transparent 56%),
+    linear-gradient(180deg, rgba(12, 17, 26, 0.94), rgba(9, 14, 22, 0.96));
+  --te-command-section-border: rgba(118, 135, 168, 0.16);
+  --te-command-section-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
+  --te-command-kpi-bg:
+    radial-gradient(280px 120px at 0% 0%, rgba(24, 98, 255, 0.14), transparent 58%),
+    linear-gradient(180deg, rgba(13, 19, 30, 0.94), rgba(9, 14, 22, 0.92));
+  --te-command-kpi-border: rgba(118, 135, 168, 0.16);
+  --te-command-kpi-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+  --te-command-kpi-hover-shadow: 0 18px 38px rgba(0, 0, 0, 0.28);
+  --te-command-chart-bg:
+    radial-gradient(320px 140px at 100% 0%, rgba(24, 98, 255, 0.08), transparent 60%),
+    linear-gradient(180deg, rgba(13, 19, 30, 0.94), rgba(9, 14, 22, 0.92));
+  --te-command-chart-border: rgba(118, 135, 168, 0.14);
+  --te-command-chart-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+  --te-command-metric-bg:
+    radial-gradient(240px 100px at 100% 0%, rgba(10, 176, 139, 0.08), transparent 58%),
+    linear-gradient(180deg, rgba(13, 19, 30, 0.94), rgba(9, 14, 22, 0.92));
+  --te-command-table-head-bg: rgba(15, 21, 32, 0.92);
+  --te-command-table-head-text: #aeb8c8;
+  --te-command-table-cell-text: #edf3ff;
+  --te-command-chart-grid: rgba(118, 135, 168, 0.16);
+  --te-command-chart-axis: #b7c4d7;
+  --te-command-chart-axis-line: rgba(118, 135, 168, 0.28);
+  --te-command-tooltip-bg: rgba(10, 15, 24, 0.98);
+  --te-command-tooltip-border: rgba(118, 135, 168, 0.18);
+  --te-command-tooltip-shadow: 0 18px 34px rgba(0, 0, 0, 0.34);
+  --te-command-tooltip-text: #eef4ff;
+  --te-command-legend-text: #c6d1e1;
+  --te-command-track-bg: rgba(255, 255, 255, 0.08);
+  --te-command-subtle-surface:
+    linear-gradient(180deg, rgba(16, 22, 34, 0.94), rgba(11, 16, 25, 0.92));
+  --te-command-subtle-border: rgba(118, 135, 168, 0.16);
   --te-table-bg: rgba(11, 16, 25, 0.88);
   --te-table-border: rgba(118, 135, 168, 0.14);
   --te-empty-border: rgba(118, 135, 168, 0.28);
@@ -1257,25 +1337,20 @@ a:hover {
 }
 
 .te-command-filter-bar {
-  background:
-    radial-gradient(480px 180px at 0% 0%, rgba(18, 93, 255, 0.08), transparent 56%),
-    radial-gradient(380px 160px at 100% 0%, rgba(10, 176, 139, 0.06), transparent 58%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.92));
-  border: 1px solid rgba(99, 118, 156, 0.18);
-  box-shadow: 0 12px 32px rgba(15, 24, 42, 0.06);
+  background: var(--te-command-filter-bg);
+  border: 1px solid var(--te-command-filter-border);
+  box-shadow: var(--te-command-filter-shadow);
 }
 
 .te-command-section {
   border-radius: 20px;
-  border: 1px solid rgba(99, 118, 156, 0.16);
-  background:
-    radial-gradient(600px 240px at 0% 0%, rgba(18, 93, 255, 0.06), transparent 52%),
-    radial-gradient(500px 200px at 100% 100%, rgba(10, 176, 139, 0.04), transparent 54%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.94));
-  box-shadow: 0 16px 40px rgba(15, 24, 42, 0.08);
+  border: 1px solid var(--te-command-section-border);
+  background: var(--te-command-section-bg);
+  box-shadow: var(--te-command-section-shadow);
   padding: 24px;
   position: relative;
   overflow: hidden;
+  color: var(--te-component-text);
 }
 
 .te-command-section::before {
@@ -1291,36 +1366,35 @@ a:hover {
 
 .te-command-kpi {
   border-radius: 16px;
-  border: 1px solid rgba(99, 118, 156, 0.16);
-  background:
-    radial-gradient(280px 120px at 0% 0%, rgba(18, 93, 255, 0.08), transparent 58%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.92));
-  box-shadow: 0 8px 24px rgba(15, 24, 42, 0.06);
+  border: 1px solid var(--te-command-kpi-border);
+  background: var(--te-command-kpi-bg);
+  box-shadow: var(--te-command-kpi-shadow);
   padding: 16px;
   transition: transform 180ms ease, box-shadow 200ms ease;
+  color: var(--te-component-text);
 }
 
 .te-command-kpi:hover {
   transform: translateY(-2px);
-  box-shadow: 0 14px 32px rgba(15, 24, 42, 0.1);
+  box-shadow: var(--te-command-kpi-hover-shadow);
 }
 
 .te-command-chart-card {
   border-radius: 14px;
-  border: 1px solid rgba(99, 118, 156, 0.14);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(252, 253, 255, 0.92));
-  box-shadow: 0 6px 20px rgba(15, 24, 42, 0.05);
+  border: 1px solid var(--te-command-chart-border);
+  background: var(--te-command-chart-bg);
+  box-shadow: var(--te-command-chart-shadow);
   padding: 18px;
+  color: var(--te-component-text);
 }
 
 .te-command-metric-card {
   border-radius: 14px;
-  border: 1px solid rgba(99, 118, 156, 0.14);
-  background:
-    radial-gradient(240px 100px at 100% 0%, rgba(18, 93, 255, 0.06), transparent 58%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(252, 253, 255, 0.94));
-  box-shadow: 0 6px 20px rgba(15, 24, 42, 0.05);
+  border: 1px solid var(--te-command-chart-border);
+  background: var(--te-command-metric-bg);
+  box-shadow: var(--te-command-chart-shadow);
   padding: 18px;
+  color: var(--te-component-text);
 }
 
 .te-command-matrix-table {
@@ -1334,17 +1408,18 @@ a:hover {
 }
 
 .te-command-matrix-table th {
-  background: rgba(244, 248, 255, 0.9);
+  background: var(--te-command-table-head-bg);
   font-weight: 700;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #556074;
+  color: var(--te-command-table-head-text);
 }
 
 .te-command-matrix-table td {
   font-weight: 600;
   transition: background 200ms ease;
+  color: var(--te-command-table-cell-text);
 }
 
 .te-command-matrix-table tr:hover td {
@@ -1354,17 +1429,30 @@ a:hover {
 /* Command Center Recharts Customizations */
 .te-command-center .recharts-cartesian-grid-horizontal line,
 .te-command-center .recharts-cartesian-grid-vertical line {
-  stroke: rgba(0, 0, 0, 0.06);
+  stroke: var(--te-command-chart-grid);
 }
 
 .te-command-center .recharts-tooltip-wrapper {
-  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.12));
+  filter: drop-shadow(var(--te-command-tooltip-shadow));
 }
 
 .te-command-center .recharts-legend-item-text {
-  color: #4f5d73 !important;
+  color: var(--te-command-legend-text) !important;
   font-size: 0.78rem;
   font-weight: 500;
+}
+
+.te-command-center .recharts-cartesian-axis-line,
+.te-command-center .recharts-cartesian-axis-tick-line,
+.te-command-center .recharts-polar-grid-angle line,
+.te-command-center .recharts-polar-grid-concentric circle {
+  stroke: var(--te-command-chart-axis-line);
+}
+
+.te-command-center .recharts-cartesian-axis-tick-value,
+.te-command-center .recharts-polar-angle-axis text,
+.te-command-center .recharts-polar-radius-axis text {
+  fill: var(--te-command-chart-axis);
 }
 
 .te-command-center .recharts-bar-rectangle {
