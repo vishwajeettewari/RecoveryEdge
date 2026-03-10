@@ -1,5 +1,27 @@
 # Current Task
 
+## Restore Dark Mode And Voice Agent Merge
+
+- [x] Merge the committed changes from `codex/evaluate-wiring-portfolio-metrics-to` back into this worktree so the missing dark mode and voice-agent work is restored.
+- [x] Resolve any merge conflicts with minimal impact and confirm the affected frontend and voice-agent files are present in this branch.
+- [x] Run focused verification for the restored changes and document the outcome in the review section below.
+
+## Restore Dark Mode And Voice Agent Review
+
+- Merged `codex/evaluate-wiring-portfolio-metrics-to` into this worktree branch and created merge commit `af523fe` on `codex/merge-commandcenter-portfolio-metrics`.
+- The restored merge includes the expected dark-mode and voice-agent files, including:
+  - `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/styles.css`
+  - `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/theme/theme.ts`
+  - `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/features/calling/CallingConsolePage.tsx`
+  - `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/voice_pipeline.py`
+  - `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/barge_in_handler.py`
+  - `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/ops_copilot_llm_service.py`
+- Verification completed:
+  - `python3 -m py_compile web_session.py workflow_engine.py voice_pipeline.py dialogue_state_manager.py intent_classifier.py sentiment_detector.py language_detection_gating.py repetition_guard.py barge_in_handler.py entity_extractor.py ops_copilot_llm_service.py testing/voice_agent_simulation.py tests/test_voice_pipeline.py tests/test_voice_agent_simulation.py`
+  - `npm run build` in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react`
+- Additional test-suite note:
+  - `python3 -m unittest tests.test_voice_pipeline tests.test_voice_agent_simulation tests.test_web_session_guards tests.test_workflow_engine tests.test_web_session_outcomes` is currently blocked in this local environment by two unrelated runtime issues: `tests/test_web_session_guards.py` creates `asyncio.Event()` without a current event loop on Python 3.9, and `pydantic_core` is installed as an incompatible `x86_64` binary for the current arm64 Python runtime.
+
 ## Production Voice Agent Audit And Refactor
 
 - [x] Audit the live voice-agent path end to end and document the root causes behind repeated-question loops, missing identity confirmation, language-switch errors, weak multilingual intent detection, missing hostility handling, repetition leakage, barge-in failures, and weak closure logic.
