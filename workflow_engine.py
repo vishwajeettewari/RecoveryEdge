@@ -175,6 +175,29 @@ def _is_yes_no_challenge_text(t_norm: str) -> bool:
     return any(phrase in t_norm for phrase in phrases)
 
 
+def _is_ptp_confirmation_affirmation_text(text: str, *, tz: str, now: Optional[Any]) -> bool:
+    t_norm = _norm(text)
+    if not t_norm or _is_no(text):
+        return False
+    if parse_date_from_text(text, tz=tz, now=now) or parse_time_from_text(text, allow_implicit=True):
+        return False
+    phrases = (
+        "कर दो",
+        "कर दीजिए",
+        "कर दीजिये",
+        "कर दिजिए",
+        "कर लो",
+        "कर लीजिए",
+        "कर लीजिये",
+        "नोट कर दो",
+        "mark it",
+        "do it",
+        "go ahead",
+        "यार वो कर दो",
+    )
+    return any(phrase in t_norm for phrase in phrases)
+
+
 def _is_correction_text(t_norm: str) -> bool:
     if not t_norm:
         return False
@@ -230,6 +253,7 @@ def _is_yes(text: str) -> bool:
         "હા",
         "જી",
         "હાજી",
+        "જોડી",
         "ਹਾਂ",
         "ਜੀ",
         "ਹਾਂਜੀ",
@@ -343,6 +367,11 @@ def _is_no(text: str) -> bool:
         "ਨਹੀ",
         "ନା",
     }
+    polite_tokens = {"ji", "जी", "ਜੀ", "જી"}
+    if any(tok in no_tokens for tok in tokens):
+        strong_yes = any(tok in yes_tokens and tok not in polite_tokens for tok in tokens)
+        if not strong_yes:
+            return True
     if any(tok in yes_tokens for tok in tokens):
         return False
     return any(tok in no_tokens for tok in tokens)
@@ -359,7 +388,7 @@ _RELATIVE_DAY_PHRASE_RE = re.compile(
     r"|\b\d+\s+din(?:o)?(?:\s+(?:mein|me|later))?\b"
     r"|\b(?:\d+|एक|दो|तीन|चार|पांच|पाँच|छह|सात|आठ|नौ|दस|ग्यारह|बारह|तेरह|चौदह|पंद्रह|पन्द्रह|सोलह|सत्रह|अठारह|उन्नीस|बीस|तीस)\s+दिन(?:ों)?(?:\s+(?:में|मे|बाद))?\b"
     r"|\b(?:\d+|ਇਕ|ਇੱਕ|ਦੋ|ਤਿੰਨ|ਚਾਰ|ਪੰਜ|ਛੇ|ਸੱਤ|ਅੱਠ|ਨੌ|ਦਸ)\s+ਦਿਨ(?:ਾਂ)?(?:\s+(?:ਵਿੱਚ|ਚ|ਬਾਅਦ))?\b"
-    r"|\b(?:today|tomorrow|day after tomorrow|next week|next month|kal|parso|आज|कल|परसों|ਅੱਜ|ਕੱਲ|ਪਰਸੋਂ)\b"
+    r"|\b(?:today|tomorrow|day after tomorrow|next week|next month|kal|parso|आज|कल|परसों|ਅੱਜ|ਕੱਲ|ਕੱਲ੍ਹ|ਪਰਸੋਂ)\b"
 )
 
 
@@ -381,6 +410,7 @@ class WorkflowState:
     callback_requested: bool = False
     ptp_confirmed: bool = False
     ptp_confirmation_required: bool = False
+    ptp_rejection_count: int = 0
 
     # hardship / difficulty
     hardship_detected: bool = False
@@ -497,6 +527,9 @@ class WorkflowEngine:
             "मुझे नहीं मालूम",
             "मेरे को नहीं पता",
             "मेरे को नहीं मालूम",
+            "ਪਤਾ ਨਹੀਂ",
+            "ਮੈਨੂੰ ਨਹੀਂ ਪਤਾ",
+            "ਮेनੂੰ ਨਹੀਂ ਪਤਾ",
         )
         if any(marker in t for marker in uncertain_markers):
             return None
@@ -526,10 +559,20 @@ class WorkflowEngine:
             "नहीं करूंगी",
             "नहीं करूँगी",
             "नहीं करेंगे",
+            "नहीं नहीं",
+            "जी नहीं",
+            "मत करिए",
+            "मत करिये",
+            "मत करना",
+            "मत कीजिए",
             "क्या कर लोगे",
             "क्या कर लोगी",
             "क्या कर लेगा",
             "जो करना है कर लो",
+            "मैं कभी नहीं कर पाऊंगा",
+            "मैं कभी नहीं कर पाऊँगा",
+            "मैं कभी नहीं कर पाऊंगी",
+            "मैं कभी नहीं कर पाऊँगी",
             "ਨਹੀਂ ਕਰਾਂਗਾ",
             "ਨਹੀਂ ਕਰਾਂਗੀ",
             "ਕੀ ਕਰ ਲਓਗੇ",
@@ -564,6 +607,14 @@ class WorkflowEngine:
             "भुगतान नहीं कर सकती",
             "नहीं कर सकता",
             "नहीं कर सकती",
+            "नहीं कर पाऊंगा",
+            "नहीं कर पाऊँगा",
+            "नहीं कर पाऊंगी",
+            "नहीं कर पाऊँगी",
+            "मैं नहीं कर पाऊंगा",
+            "मैं नहीं कर पाऊँगा",
+            "मैं नहीं कर पाऊंगी",
+            "मैं नहीं कर पाऊँगी",
             "कर नहीं सकता",
             "कर नहीं सकती",
             "पैसे नहीं हैं",
@@ -780,28 +831,9 @@ class WorkflowEngine:
         return False
 
     def _ptp_commitment_requires_confirmation(self, t_norm: str) -> bool:
-        if not t_norm:
-            return False
-        relative_markers = (
-            "tomorrow",
-            "today",
-            "day after tomorrow",
-            "next week",
-            "next month",
-            "kal",
-            "parso",
-            "आज",
-            "कल",
-            "परसों",
-            "ਅੱਜ",
-            "ਕੱਲ",
-            "ਪਰਸੋਂ",
-        )
-        if any(marker in t_norm for marker in relative_markers):
-            return True
-        if _has_relative_day_without_callback_context(t_norm):
-            return True
-        return False
+        # Collections promises should only be treated as captured after the
+        # borrower explicitly confirms them, even for absolute dates.
+        return True
 
     def _set_ptp_commitment(self, state: WorkflowState, ptp_date: str, *, user_text_norm: str) -> None:
         normalized_date = str(ptp_date or "").strip()
@@ -813,12 +845,41 @@ class WorkflowEngine:
         state.callback_requested = False
         state.ptp_confirmation_required = needs_confirmation
         state.ptp_confirmed = not needs_confirmation
+        state.ptp_rejection_count = 0
         state.disposition = "ptp_captured" if state.ptp_confirmed else "ptp_pending_confirmation"
 
     def _clear_ptp_commitment(self, state: WorkflowState) -> None:
         state.ptp_date = None
         state.ptp_confirmed = False
         state.ptp_confirmation_required = False
+
+    def _is_terminal_refusal_text(self, t_norm: str) -> bool:
+        if not t_norm:
+            return False
+        markers = (
+            "never",
+            "not possible",
+            "will not be able to",
+            "wont be able to",
+            "won t be able to",
+            "cannot pay ever",
+            "can t pay ever",
+            "cant pay ever",
+            "कभी नहीं",
+            "कभी भी नहीं",
+            "कभी नहीं कर पाऊंगा",
+            "कभी नहीं कर पाऊँगा",
+            "कभी नहीं कर पाऊंगी",
+            "कभी नहीं कर पाऊँगी",
+            "कभी नहीं करूंगा",
+            "कभी नहीं करूँगा",
+            "कभी नहीं करूंगी",
+            "कभी नहीं करूँगी",
+            "ਨਹੀਂ ਕਰ ਸਕਾਂਗਾ",
+            "ਨਹੀਂ ਕਰ ਸਕਾਂਗੀ",
+            "ਕਦੇ ਨਹੀਂ",
+        )
+        return any(marker in t_norm for marker in markers)
 
     def compute_next_step(self, state: WorkflowState) -> str:
         if self._enable_advanced:
@@ -994,6 +1055,8 @@ class WorkflowEngine:
         correction_slot_payload = is_correction and bool(
             extracted.get("ptp_date") or extracted.get("callback_time") or extracted.get("reference_number")
         )
+        fresh_ptp_slot = bool(extracted.get("ptp_date"))
+        fresh_callback_slot = bool(extracted.get("callback_time"))
         payment_step = step in {"ask_payment_made", "ask_reference_number", "ask_ptp_or_callback"}
         negative_cls = None if correction_slot_payload else self._classify_payment_negative(t) if payment_step else None
         if payment_step and negative_cls:
@@ -1346,6 +1409,7 @@ class WorkflowEngine:
                 state.last_transition_reason = "awareness_denied_context"
 
         if step == "confirm_ptp":
+            confirm_negative = self._classify_payment_negative(t)
             if correction_slot_payload:
                 state.ptp_confirmed = False
                 state.disposition = None
@@ -1355,20 +1419,33 @@ class WorkflowEngine:
                 else:
                     state.current_step = self.compute_next_step(state)
                 return
-            if _is_yes(t):
+            if _is_yes(t) or _is_ptp_confirmation_affirmation_text(t, tz=self._tz, now=self._now()):
                 state.ptp_confirmed = True
                 state.ptp_confirmation_required = False
+                state.ptp_rejection_count = 0
                 state.disposition = "ptp_captured"
                 state.last_transition_reason = "ptp_confirmed"
                 state.current_step = self.compute_next_step(state)
                 return
-            if _is_no(t):
+            if _is_no(t) or confirm_negative:
+                strength, reason = confirm_negative or ("soft", "unknown")
+                state.refusal_detected = True
+                state.refusal_strength = strength
+                state.refusal_reason = reason
+                state.no_count += 1
+                state.ptp_rejection_count += 1
                 self._clear_ptp_commitment(state)
+                state.disposition = None
+                if self._is_terminal_refusal_text(t_norm):
+                    state.disposition = "refusal_unresolved"
+                    state.last_transition_reason = "hard_refusal_close"
+                    state.current_step = "closing"
+                    return
                 state.last_transition_reason = "ptp_rejected"
                 state.current_step = "ask_ptp_or_callback"
                 return
 
-        if step in {"ask_payment_made", "ask_reference_number", "ask_ptp_or_callback"} and state.ptp_date and not explicit_paid:
+        if step in {"ask_payment_made", "ask_reference_number", "ask_ptp_or_callback"} and state.ptp_date and fresh_ptp_slot and not explicit_paid:
             self._set_ptp_commitment(state, str(state.ptp_date), user_text_norm=t_norm)
 
         should_capture_commitment = step == "ask_ptp_or_callback"
@@ -1378,8 +1455,8 @@ class WorkflowEngine:
             and not explicit_paid
             and not state.reference_number
             and (
-                bool(state.ptp_date)
-                or bool(state.callback_time)
+                fresh_ptp_slot
+                or fresh_callback_slot
                 or _has_callback_intent_text(t_norm)
                 or _has_relative_day_without_callback_context(t_norm)
                 or self._has_future_payment_commitment_text(t_norm)
@@ -1420,6 +1497,9 @@ class WorkflowEngine:
                         "मेरे को नहीं मालूम",
                         "आप देख लीजिए",
                         "अपने आप देखिए",
+                        "ਪਤਾ ਨਹੀਂ",
+                        "ਮੈਨੂੰ ਨਹੀਂ ਪਤਾ",
+                        "ਮेनੂੰ ਨਹੀਂ ਪਤਾ",
                     )
                     unable_phrases = (
                         "cant pay",
@@ -1509,6 +1589,19 @@ class WorkflowEngine:
 
         if step in {"ask_payment_made", "ask_reference_number"} and (state.ptp_date or state.callback_time):
             state.payment_made = False
+
+        if (
+            self._enable_advanced
+            and step == "ask_ptp_or_callback"
+            and negative_cls
+            and not state.ptp_date
+            and not state.callback_time
+            and (state.ptp_rejection_count > 0 or self._is_terminal_refusal_text(t_norm))
+        ):
+            state.disposition = "refusal_unresolved"
+            state.last_transition_reason = "hard_refusal_close" if self._is_terminal_refusal_text(t_norm) else "refusal_closed"
+            state.current_step = "closing"
+            return
 
         # Recompute step
         state.current_step = self.compute_next_step(state)

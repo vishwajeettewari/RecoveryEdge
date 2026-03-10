@@ -46,6 +46,10 @@ _INTENT_SAMPLES: dict[str, list[tuple[str, str]]] = {
     "ptp_refusal": [
         ("nahi karunga", "ask_ptp_or_callback"),
         ("नहीं करूंगा", "ask_ptp_or_callback"),
+        ("नहीं नहीं", "confirm_ptp"),
+        ("जी नहीं", "confirm_ptp"),
+        ("मत करिए", "confirm_ptp"),
+        ("मैं कभी नहीं कर पाऊंगा", "ask_ptp_or_callback"),
         ("will not pay", "ask_ptp_or_callback"),
         ("paise nahi hain, nahi kar paunga", "ask_ptp_or_callback"),
         ("not possible", "ask_ptp_or_callback"),

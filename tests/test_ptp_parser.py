@@ -32,10 +32,27 @@ class PTPParserTests(unittest.TestCase):
         result = parse_ptp_date("2 din mein", tz="Asia/Kolkata", now=NOW)
         self.assertEqual(result.ptp_date, "2026-03-12")
 
+    def test_punjabi_tomorrow_variant(self):
+        result = parse_ptp_date("ਕੱਲ੍ਹ", tz="Asia/Kolkata", now=NOW)
+        self.assertEqual(result.ptp_date, "2026-03-11")
+
+    def test_relative_minutes_maps_to_same_day(self):
+        result = parse_ptp_date("अभी 5 मिनट बाद भुगतान कर दूँगा", tz="Asia/Kolkata", now=NOW)
+        self.assertEqual(result.ptp_date, "2026-03-10")
+        self.assertGreaterEqual(result.confidence, 0.7)
+
     def test_correction_marks_override(self):
         result = parse_ptp_date("नहीं 11", tz="Asia/Kolkata", now=NOW)
         self.assertEqual(result.ptp_date, "2026-03-11")
         self.assertTrue(result.corrected)
+
+    def test_day_only_hindi_correction_phrase(self):
+        result = parse_ptp_date("11 को कर दो", tz="Asia/Kolkata", now=NOW)
+        self.assertEqual(result.ptp_date, "2026-03-11")
+
+    def test_longer_hindi_commitment_with_day_only_date(self):
+        result = parse_ptp_date("मैं कह रहा हूँ मैं 11 को कर लूँगा", tz="Asia/Kolkata", now=NOW)
+        self.assertEqual(result.ptp_date, "2026-03-11")
 
 
 if __name__ == "__main__":

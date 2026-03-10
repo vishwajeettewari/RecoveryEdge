@@ -190,7 +190,7 @@ class IntentClassifier:
                 sentence_count=sentence_count,
                 script_language=script_language,
             )
-        if self._looks_like_ptp_refusal(norm):
+        if self._looks_like_ptp_refusal(norm, current_step=current_step):
             return IntentResult(
                 label=VoiceIntent.PAYMENT_NOT_DONE,
                 is_entity_response=False,
@@ -327,6 +327,8 @@ class IntentClassifier:
         }
 
     def _is_acknowledgement(self, raw: str, norm: str, *, current_step: Optional[str]) -> bool:
+        if current_step == "confirm_ptp" and self._looks_like_ptp_confirmation_ack(raw, norm):
+            return True
         if contains_short_acknowledgement(raw):
             if norm == "हो जाएगा" and current_step in {"ask_payment_made", "ask_ptp_or_callback", "confirm_ptp"}:
                 return False
@@ -481,11 +483,29 @@ class IntentClassifier:
             return False
         return None
 
-    def _looks_like_ptp_refusal(self, norm: str) -> bool:
+    def _looks_like_ptp_refusal(self, norm: str, *, current_step: Optional[str]) -> bool:
+        bare_negative_markers = {
+            "नहीं",
+            "नहीं नहीं",
+            "जी नहीं",
+            "मत करिए",
+            "मत करिये",
+            "मत करना",
+            "मत कीजिए",
+            "no",
+            "no no",
+            "not now",
+            "not possible",
+            "ਨਹੀਂ",
+        }
         markers = (
             "nahi karunga",
             "nahi karungi",
             "nahi karenge",
+            "nahi kar paunga",
+            "nahi kar paungi",
+            "nahi kar paaunga",
+            "nahi kar paaungi",
             "नहीं karunga",
             "नहीं karungi",
             "नहीं karenge",
@@ -494,6 +514,14 @@ class IntentClassifier:
             "नहीं करूंगी",
             "नहीं करेंगी",
             "नहीं करेंगे",
+            "नहीं कर पाऊंगा",
+            "नहीं कर पाऊँगा",
+            "नहीं कर पाऊंगी",
+            "नहीं कर पाऊँगी",
+            "मैं नहीं कर पाऊंगा",
+            "मैं नहीं कर पाऊँगा",
+            "मैं नहीं कर पाऊंगी",
+            "मैं नहीं कर पाऊँगी",
             "will not pay",
             "won t pay",
             "wont pay",
@@ -505,12 +533,53 @@ class IntentClassifier:
             "नहीं hoga",
             "नहीं kar paunga",
             "नहीं kar paungi",
+            "मैं नहीं करूँगा",
+            "मैं नहीं करूंगा",
+            "मैं नहीं करूँगी",
+            "मैं नहीं करूंगी",
+            "मैं कभी नहीं कर पाऊंगा",
+            "मैं कभी नहीं कर पाऊँगा",
+            "मैं कभी नहीं कर पाऊंगी",
+            "मैं कभी नहीं कर पाऊँगी",
+            "जी नहीं",
+            "नहीं नहीं",
+            "मत करिए",
+            "मत करिये",
             "paise nahi hain",
             "paise नहीं hain",
             "पैसे नहीं हैं",
             "ਪੈਸੇ ਨਹੀਂ",
         )
-        return any(marker in norm for marker in markers)
+        if any(marker in norm for marker in markers):
+            return True
+        if current_step in {"ask_payment_made", "ask_reference_number", "ask_ptp_or_callback", "confirm_ptp"}:
+            return norm in bare_negative_markers
+        return False
+
+    def _looks_like_ptp_confirmation_ack(self, raw: str, norm: str) -> bool:
+        if not norm:
+            return False
+        if parse_date_from_text(raw or "", tz=self._tz) or parse_time_from_text(raw or "", allow_implicit=True):
+            return False
+        negative_markers = ("नहीं", "मत", "no", "nah", "not")
+        if any(marker in norm for marker in negative_markers):
+            return False
+        phrases = (
+            "कर दो",
+            "कर दीजिए",
+            "कर दीजिये",
+            "कर दिजिए",
+            "कर लो",
+            "कर लीजिए",
+            "कर लीजिये",
+            "नोट कर दो",
+            "note kar do",
+            "mark it",
+            "do it",
+            "go ahead",
+            "यार वो कर दो",
+        )
+        return any(phrase in norm for phrase in phrases)
 
     def _looks_like_callback_request(self, raw: str, norm: str) -> bool:
         if not any(marker in norm for marker in ("callback", "कॉल", "कॉलबैक", "call", "phone", "later", "बाद में")):

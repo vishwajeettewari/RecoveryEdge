@@ -906,7 +906,7 @@ class WebCallSession:
         # Update facts and generate an assistant response.
         self._last_user_text = t
         self._log_message(role="user", content=t)
-        reply_step = self._pending_step_id or self._wf_state.last_agent_intent or self._wf_state.current_step
+        reply_step = self._pending_step_id or self._wf_state.current_step or self._wf_state.last_agent_intent
         analysis = self._analyze_user_turn(
             t,
             current_step=reply_step,
@@ -925,6 +925,11 @@ class WebCallSession:
             self._pending_customer_meta_question = meta_q
             self._force_dynamic_reply_once = True
         effective_reply_step = self._effective_reply_step_for_user_text(t, reply_step)
+        if reply_step == "closing" and effective_reply_step != "closing":
+            self._reopen_payment_resolution_from_closing(
+                user_text=t,
+                reopened_step=effective_reply_step,
+            )
         if analysis.language_decision.should_offer_confirmation and analysis.language_decision.candidate_language:
             await self._offer_language_switch_confirmation(
                 candidate_language=analysis.language_decision.candidate_language,
@@ -943,6 +948,7 @@ class WebCallSession:
             ),
             reply_to_step_id=effective_reply_step,
         )
+        self._clear_rejected_commitment_facts()
         self._apply_abusive_language_guard(text=t, reply_step=effective_reply_step)
         self._debug_trace(
             "typed_user_turn_processed",
@@ -982,7 +988,11 @@ class WebCallSession:
             else:
                 self._set_response_step_override("ask_reference_number", reason="payment_done")
         elif analysis.intent_result.label == UserIntent.PAYMENT_NOT_DONE:
-            self._set_response_step_override("ask_ptp_or_callback", reason="payment_not_done")
+            if not (
+                self._wf_state.current_step == "closing"
+                and self._wf_state.last_transition_reason in {"hard_refusal_close", "refusal_closed"}
+            ):
+                self._set_response_step_override("ask_ptp_or_callback", reason="payment_not_done")
         elif analysis.interruption_intent == InterruptionIntent.LANGUAGE_PREFERENCE:
             self._force_dynamic_reply_once = True
         self._preview_active = False
@@ -1587,6 +1597,15 @@ class WebCallSession:
             except Exception as exc:
                 log_event(logger, "crm_enqueue_commitment_error", session_id=self._session_id, error=str(exc))
 
+    def _clear_rejected_commitment_facts(self) -> None:
+        if not getattr(self._wf_state, "ptp_date", None) and not getattr(self._wf_state, "ptp_confirmed", False):
+            self._facts["ptp_date"] = None
+        if (
+            not getattr(self._wf_state, "callback_time", None)
+            and self._wf_state.last_transition_reason in {"ptp_rejected", "refusal_closed", "hard_refusal_close"}
+        ):
+            self._facts["callback_time"] = None
+
     def _sync_workflow_from_facts(self) -> None:
         if self._facts.get("ptp_date"):
             normalized_ptp = self._normalize_ptp_text(str(self._facts.get("ptp_date")))
@@ -1789,7 +1808,7 @@ class WebCallSession:
         language: Optional[str],
     ) -> str:
         out = (text or "").strip()
-        name = str(self._facts.get("customer_name") or "").strip()
+        name = self._clean_customer_name_for_addressing(str(self._facts.get("customer_name") or ""))
         lang = self._canonical_language_code(language)
         if (
             not out
@@ -1870,6 +1889,28 @@ class WebCallSession:
         self._interrupted_step = (step or "").strip() or None
         self._interrupted_reason = (reason or "").strip() or None
 
+    def _is_ptp_confirmation_affirmation(self, text: str) -> bool:
+        t = self._normalize_intent_text(text)
+        if not t or self._is_no(text):
+            return False
+        if self._normalize_ptp_text(text) or self._normalize_callback_text(text):
+            return False
+        phrases = (
+            "कर दो",
+            "कर दीजिए",
+            "कर दीजिये",
+            "कर दिजिए",
+            "कर लो",
+            "कर लीजिए",
+            "कर लीजिये",
+            "नोट कर दो",
+            "mark it",
+            "do it",
+            "go ahead",
+            "यार वो कर दो",
+        )
+        return any(phrase in t for phrase in phrases)
+
     def _clear_interruption_context(self) -> None:
         self._interrupted_response = ""
         self._interrupted_at = 0.0
@@ -1899,6 +1940,11 @@ class WebCallSession:
             "कर पाएँगे",
             "कर पाऊंगा",
             "कर पाऊँगा",
+            "कर लूँगा",
+            "कर लूंगा",
+            "कर लूँगी",
+            "कर लूंगी",
+            "कर लेंगे",
             "भुगतान",
             "पेमेंट",
             "ਭੁਗਤਾਨ",
@@ -2066,11 +2112,35 @@ class WebCallSession:
         self._dialogue_state = analysis.dialogue_state
         return analysis
 
+    def _reopen_payment_resolution_from_closing(self, *, user_text: str, reopened_step: Optional[str]) -> None:
+        step = (reopened_step or "").strip() or "ask_ptp_or_callback"
+        delayed_close = getattr(self, "_delayed_close_task", None)
+        if delayed_close and not delayed_close.done():
+            delayed_close.cancel()
+        self._wf_state.disposition = None
+        self._wf_state.current_step = step
+        cleared = False
+        if self._is_payment_negative_utterance(user_text) or self._normalize_ptp_text(user_text):
+            self._wf_state.ptp_date = None
+            self._wf_state.ptp_confirmed = False
+            self._wf_state.ptp_confirmation_required = False
+            self._facts["ptp_date"] = None
+            cleared = True
+        if self._normalize_callback_text(user_text):
+            self._wf_state.callback_time = None
+            self._facts["callback_time"] = None
+            cleared = True
+        if cleared:
+            self._wf_state.last_transition_reason = "closing_reopened_payment"
+
     def _apply_analysis_entities(self, analysis: UtteranceAnalysis) -> None:
         entities = analysis.entities
         current_name = self._facts.get("customer_name")
-        if self._is_better_name_candidate(entities.customer_name, current_name):
-            self._facts["customer_name"] = entities.customer_name
+        candidate_name = self._clean_customer_name_for_addressing(str(entities.customer_name or ""))
+        if not candidate_name and entities.customer_name:
+            candidate_name = self._format_name_candidate(str(entities.customer_name))
+        if self._is_better_name_candidate(candidate_name, current_name):
+            self._facts["customer_name"] = candidate_name
         if entities.amount and not self._facts.get("overdue_amount"):
             self._facts["overdue_amount"] = entities.amount
         if entities.ptp_date:
@@ -2099,9 +2169,9 @@ class WebCallSession:
             "customer_name": self._facts.get("customer_name"),
             "identity_name_preexisting": bool(previous_customer_name),
             "identity_prompt_mode": getattr(self._wf_state, "identity_prompt_mode", None),
-            "ptp_date": self._facts.get("ptp_date"),
-            "reference_number": self._facts.get("reference_number"),
-            "callback_time": self._facts.get("callback_time"),
+            "ptp_date": analysis.entities.ptp_date,
+            "reference_number": analysis.entities.reference_number,
+            "callback_time": analysis.entities.callback_time,
             "payment_status": payment_status,
             "corrected": bool(getattr(analysis.entities, "corrected", False)),
         }
@@ -3244,8 +3314,8 @@ class WebCallSession:
                         reply_step = (
                             self._reply_to_step_id
                             or self._pending_step_id
-                            or self._wf_state.last_agent_intent
                             or self._wf_state.current_step
+                            or self._wf_state.last_agent_intent
                         )
                         # Determine how to preempt any stale in-flight assistant reply.
                         is_barge_in = False
@@ -3290,8 +3360,13 @@ class WebCallSession:
                             "confirm_awareness",
                             "confirm_ptp",
                         }
+                        fast_binary_reply = (
+                            self._is_yes(text)
+                            or self._is_no(text)
+                            or (reply_step == "confirm_ptp" and self._is_ptp_confirmation_affirmation(text))
+                        )
                         if transcript.confidence is not None and transcript.confidence < 0.4:
-                            if not (binary_step and (self._is_yes(text) or self._is_no(text))):
+                            if not (binary_step and fast_binary_reply):
                                 if (time.time() - self._last_clarify_ts) >= self._clarify_cooldown_s:
                                     self._last_clarify_ts = time.time()
                                     clarify_lang = self._resolve_output_language(transcript.language)
@@ -3414,6 +3489,10 @@ class WebCallSession:
                                 text=text[:50],
                                 reopened_step=effective_reply_step,
                             )
+                            self._reopen_payment_resolution_from_closing(
+                                user_text=text,
+                                reopened_step=effective_reply_step,
+                            )
                         meta_q = self._detect_customer_meta_question(text)
                         if meta_q:
                             self._pending_customer_meta_question = meta_q
@@ -3436,6 +3515,7 @@ class WebCallSession:
                             ),
                             reply_to_step_id=effective_reply_step,
                         )
+                        self._clear_rejected_commitment_facts()
                         self._apply_abusive_language_guard(text=text, reply_step=effective_reply_step)
                         self._debug_trace(
                             "stt_final_processed",
@@ -3482,7 +3562,11 @@ class WebCallSession:
                             else:
                                 self._set_response_step_override("ask_reference_number", reason="payment_done")
                         elif analysis.intent_result.label == UserIntent.PAYMENT_NOT_DONE:
-                            self._set_response_step_override("ask_ptp_or_callback", reason="payment_not_done")
+                            if not (
+                                self._wf_state.current_step == "closing"
+                                and self._wf_state.last_transition_reason in {"hard_refusal_close", "refusal_closed"}
+                            ):
+                                self._set_response_step_override("ask_ptp_or_callback", reason="payment_not_done")
                         elif analysis.interruption_intent == InterruptionIntent.LANGUAGE_PREFERENCE:
                             self._force_dynamic_reply_once = True
                         await self._maybe_handle_retry_exceeded_refusal_close()
@@ -3493,7 +3577,11 @@ class WebCallSession:
                             neg_reason = self._wf_state.refusal_reason or prev_refusal_reason or "unknown"
                             negative_class = f"{neg_strength}:{neg_reason}"
                         # For binary steps, respond immediately on yes/no (skip debounce).
-                        if binary_step and (self._is_yes(text) or self._is_no(text)):
+                        if binary_step and (
+                            self._is_yes(text)
+                            or self._is_no(text)
+                            or (effective_reply_step == "confirm_ptp" and self._is_ptp_confirmation_affirmation(text))
+                        ):
                             self._generation_epoch += 1
                             await self._start_generation(text, transcript, preview=False)
                             continue
@@ -3712,7 +3800,7 @@ class WebCallSession:
         if not self._pending_final:
             return
 
-        confirm_window_s = max(0.2, min(0.8, self._post_speech_pause_s))
+        confirm_window_s = max(0.1, min(0.25, self._post_speech_pause_s / 2 if self._post_speech_pause_s else 0.1))
         confirm_deadline = time.time() + confirm_window_s
         speech_active_checks = 0
         silence_confirmed = False
@@ -3743,7 +3831,7 @@ class WebCallSession:
                 return
 
             time_since_last_speech = time.time() - self._last_speech_ts
-            if self._in_silence and time_since_last_speech >= 0.25:
+            if self._in_silence and time_since_last_speech >= 0.15:
                 silence_confirmed = True
                 break
             await asyncio.sleep(0.05)
@@ -4109,9 +4197,9 @@ class WebCallSession:
                 with contextlib.suppress(asyncio.CancelledError):
                     await audio_task
                 self._remember_interruption_context(
-                    step=step,
+                    step=self._wf_state.last_agent_intent or self._wf_state.current_step,
                     spoken_text="",
-                    full_text=assistant_text,
+                    full_text=text,
                     reason="fixed_turn_cancelled",
                 )
                 await self._emit_timeline_event(
@@ -4493,6 +4581,18 @@ class WebCallSession:
             return "Please share the transaction reference number or UTR and the date of payment."
 
         if step == "ask_ptp_or_callback":
+            if self._wf_state.last_transition_reason == "ptp_rejected":
+                if amt:
+                    if is_hi:
+                        return finalize(with_identity_reconfirm(f"ठीक है। क्या आप बता सकते हैं कि आप ₹{amt} का भुगतान कब कर पाएंगे?"))
+                    if is_pa:
+                        return finalize(with_identity_reconfirm(f"ਠੀਕ ਹੈ। ਕੀ ਤੁਸੀਂ ਦੱਸ ਸਕਦੇ ਹੋ ਕਿ ਤੁਸੀਂ ₹{amt} ਦਾ ਭੁਗਤਾਨ ਕਦੋਂ ਕਰ ਸਕੋਗੇ?"))
+                    return f"Understood. Can you tell me when you would be able to make the payment of ₹{amt}?"
+                if is_hi:
+                    return finalize(with_identity_reconfirm("ठीक है। क्या आप बता सकते हैं कि आप भुगतान कब कर पाएंगे?"))
+                if is_pa:
+                    return finalize(with_identity_reconfirm("ਠੀਕ ਹੈ। ਕੀ ਤੁਸੀਂ ਦੱਸ ਸਕਦੇ ਹੋ ਕਿ ਤੁਸੀਂ ਭੁਗਤਾਨ ਕਦੋਂ ਕਰ ਸਕੋਗੇ?"))
+                return "Understood. Can you tell me when you would be able to make the payment?"
             if self._wf_state.last_transition_reason == "invalid_ptp_date":
                 max_days = int(getattr(self, "_ptp_max_days", 30) or 30)
                 if is_hi:
@@ -4655,6 +4755,8 @@ class WebCallSession:
                 self._wf_state.ptp_date or self._facts.get("ptp_date"),
                 lang,
             )
+            if not getattr(self._wf_state, "ptp_confirmed", False):
+                ptp_spoken = None
             callback_spoken = self._normalize_callback_text(
                 str(self._wf_state.callback_time or self._facts.get("callback_time") or "")
             ) or self._wf_state.callback_time or self._facts.get("callback_time")
@@ -4688,6 +4790,12 @@ class WebCallSession:
                 if is_pa:
                     return "ਠੀਕ ਹੈ। ਤੁਹਾਡੀ ਸਹਿਮਤੀ ਤੋਂ ਬਿਨਾਂ ਮੈਂ ਗੱਲਬਾਤ ਅੱਗੇ ਨਹੀਂ ਵਧਾਵਾਂਗਾ। ਧੰਨਵਾਦ।"
                 return "Understood. I will not continue without your consent. Thank you."
+            if self._wf_state.last_transition_reason == "hard_refusal_close":
+                if is_hi:
+                    return "समझ गया। अगर भविष्य में आप भुगतान करना चाहें तो कृपया हमसे संपर्क करें।"
+                if is_pa:
+                    return "ਸਮਝ ਗਿਆ। ਜੇ ਤੁਸੀਂ ਭਵਿੱਖ ਵਿੱਚ ਭੁਗਤਾਨ ਕਰਨਾ ਚਾਹੋ ਤਾਂ ਕਿਰਪਾ ਕਰਕੇ ਸਾਡੇ ਨਾਲ ਸੰਪਰਕ ਕਰੋ।"
+                return "Understood. If you want to make the payment in the future, please contact us."
             if self._wf_state.disposition in {"refusal_unresolved"} and not (
                 self._wf_state.ptp_date or self._wf_state.callback_time
             ):
@@ -5705,11 +5813,105 @@ class WebCallSession:
             return False
         if not current_value:
             return True
+        if new_value.casefold() == current_value.casefold() and new_value != current_value:
+            formatted_value = self._format_name_candidate(new_value)
+            formatted_current = self._format_name_candidate(current_value)
+            if formatted_value == formatted_current:
+                return new_value == formatted_value and current_value != formatted_current
+        new_noise = self._name_candidate_has_identity_noise(new_value)
+        current_noise = self._name_candidate_has_identity_noise(current_value)
+        if new_noise != current_noise:
+            return not new_noise
         new_tokens = len([token for token in new_value.split() if token])
         current_tokens = len([token for token in current_value.split() if token])
         if new_tokens != current_tokens:
             return new_tokens > current_tokens
         return len(new_value) > len(current_value)
+
+    def _name_candidate_has_identity_noise(self, candidate: str) -> bool:
+        noise_tokens = {
+            "haan",
+            "han",
+            "ha",
+            "haanji",
+            "ji",
+            "yes",
+            "yeah",
+            "yep",
+            "main",
+            "mai",
+            "mein",
+            "mera",
+            "naam",
+            "hai",
+            "i",
+            "am",
+            "this",
+            "is",
+            "हाँ",
+            "हां",
+            "जी",
+            "मैं",
+            "मेरा",
+            "नाम",
+            "है",
+            "ਹਾਂ",
+            "ਹਾਂਜੀ",
+            "ਜੀ",
+            "ਮੈਂ",
+            "ਮੇਰਾ",
+            "ਨਾਮ",
+            "ਹੈ",
+            "હા",
+            "જી",
+            "હાજી",
+            "જોડી",
+        }
+        normalized_noise = {
+            self._normalize_name_token(token)
+            for token in noise_tokens
+            if self._normalize_name_token(token)
+        }
+        tokens = [
+            self._normalize_name_token(token)
+            for token in str(candidate or "").split()
+            if self._normalize_name_token(token)
+        ]
+        return any(token in normalized_noise for token in tokens)
+
+    def _clean_customer_name_for_addressing(self, candidate: str) -> str:
+        value = " ".join((candidate or "").split()).strip()
+        if not value:
+            return ""
+        value = re.sub(
+            r"^(?:haan|han|ha|haanji|ji|yes|yeah|yep|हाँ|हां|हाँ जी|हां जी|जी|ਹਾਂ|ਹਾਂਜੀ|ਜੀ|હા|જી|હાજી|જોડી)\s+",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        )
+        value = re.sub(
+            r"^(?:i am|i[' ]?m|im|my name is|this is|"
+            r"main|mai|mein|mera\s+naam(?:\s+hai)?|"
+            r"मैं|मेरा\s+नाम(?:\s+है)?|"
+            r"ਮੈਂ|ਮੇਰਾ\s+ਨਾਮ(?:\s+ਹੈ)?)\s+",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        )
+        value = re.sub(
+            r"\s+(?:speaking|here|"
+            r"bol\s+raha\s+h(?:u|oo)n|bol\s+rahi\s+h(?:u|oo)n|"
+            r"बोल\s+रहा\s+हूँ|बोल\s+रही\s+हूँ|"
+            r"ਬੋਲ\s+ਰਿਹਾ\s+ਹਾਂ|ਬੋਲ\s+ਰਹੀ\s+ਹਾਂ|"
+            r"hai|h(?:u|oo)n|है|हूँ|हूं|ਹੈ|ਹਾਂ)\.?$",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        )
+        value = self._format_name_candidate(value)
+        if self._name_candidate_has_identity_noise(value):
+            return ""
+        return value
 
     def _is_name_token(self, token: str) -> bool:
         token = self._strip_edge_noise((token or "").strip())
@@ -5823,7 +6025,8 @@ class WebCallSession:
 
         candidate = self._strip_edge_noise(candidate)
         candidate = re.sub(
-            r"^(?:uh+|um+|hmm+|hello|hi|ji|haan|han|ha|haanji|yes|yeah|yep|ਜੀ|ਹਾਂ|ਹਾਂਜੀ)\s+",
+            r"^(?:uh+|um+|hmm+|hello|hi|ji|haan|han|ha|haanji|yes|yeah|yep|"
+            r"हाँ|हां|हाँजी|हांजी|जी|ਜੀ|ਹਾਂ|ਹਾਂਜੀ|હા|જી|હાજી|જોડી)\s+",
             "",
             candidate,
             flags=re.IGNORECASE,
@@ -5850,7 +6053,9 @@ class WebCallSession:
             candidate,
             flags=re.IGNORECASE,
         )
-        candidate = self._strip_edge_noise(" ".join(candidate.split()))
+        candidate = self._clean_customer_name_for_addressing(
+            self._strip_edge_noise(" ".join(candidate.split()))
+        )
         if not candidate:
             return None
 
@@ -6735,6 +6940,9 @@ class WebCallSession:
             "मुझे नहीं मालूम",
             "मेरे को नहीं पता",
             "मेरे को नहीं मालूम",
+            "ਪਤਾ ਨਹੀਂ",
+            "ਮੈਨੂੰ ਨਹੀਂ ਪਤਾ",
+            "ਮेनੂੰ ਨਹੀਂ ਪਤਾ",
         )
         if any(phrase in t for phrase in uncertain_phrases):
             return False
@@ -6816,6 +7024,14 @@ class WebCallSession:
             "पैसे नही",
             "नहीं कर सकता",
             "नहीं कर सकती",
+            "नहीं कर पाऊंगा",
+            "नहीं कर पाऊँगा",
+            "नहीं कर पाऊंगी",
+            "नहीं कर पाऊँगी",
+            "मैं नहीं कर पाऊंगा",
+            "मैं नहीं कर पाऊँगा",
+            "मैं नहीं कर पाऊंगी",
+            "मैं नहीं कर पाऊँगी",
             "ਨਹੀਂ ਕਰ ਸਕਦਾ",
             "ਨਹੀਂ ਕਰ ਸਕਦੀ",
             "ਨਹੀਂ ਕਰਾਂਗਾ",
@@ -7050,6 +7266,7 @@ class WebCallSession:
             "હા",
             "જી",
             "હાજી",
+            "જોડી",
             "ਹਾਂ",
             "ਜੀ",
             "ਹਾਂਜੀ",
@@ -7165,6 +7382,11 @@ class WebCallSession:
             "ਨਹੀ",
             "ନା",
         }
+        polite_tokens = {"ji", "जी", "ਜੀ", "જી"}
+        if any(tok in no_tokens for tok in tokens):
+            strong_yes = any(tok in yes_tokens and tok not in polite_tokens for tok in tokens)
+            if not strong_yes:
+                return True
         if any(tok in yes_tokens for tok in tokens):
             return False
         return any(tok in no_tokens for tok in tokens)
@@ -7791,6 +8013,8 @@ class WebCallSession:
 
         if bound_step in {"ask_payment_made", "ask_reference_number", "ask_ptp_or_callback", "confirm_awareness", "confirm_ptp"} and self._is_payment_negative_utterance(user_text):
             return None
+        if bound_step == "confirm_ptp" and self._is_ptp_confirmation_affirmation(user_text):
+            return None
         if self._is_identity_reconfirmation_request(user_text):
             return None
         if (
@@ -7833,6 +8057,11 @@ class WebCallSession:
                 "cant say",
                 "not decided",
                 "maybe",
+                "पता नहीं",
+                "मुझे नहीं पता",
+                "मेरे को नहीं पता",
+                "ਪਤਾ ਨਹੀਂ",
+                "ਮੈਨੂੰ ਨਹੀਂ ਪਤਾ",
             )
             if any(p in t for p in uncertain_phrases):
                 return None
@@ -7846,8 +8075,10 @@ class WebCallSession:
                 'tomorrow', 'today', 'next', 'week', 'month', 'monday', 'tuesday',
                 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
                 'callback', 'call', 'later', 'am', 'pm', 'aware', 'awareness',
-                'भुगतान', 'पेमेंट', 'पैसे', 'कब', 'तारीख', 'कल', 'अगले',
-                'कॉलबैक', 'कॉल', 'बाद में',
+                'minute', 'minutes', 'min', 'mins', 'hour', 'hours',
+                'भुगतान', 'पेमेंट', 'पैसे', 'कब', 'तारीख', 'कल', 'आज', 'अभी', 'अगले',
+                'मिनट', 'घंटा', 'घंटे', 'कॉलबैक', 'कॉल', 'बाद में',
+                'ਕੱਲ', 'ਕੱਲ੍ਹ', 'ਅੱਜ', 'ਮਿੰਟ', 'ਘੰਟਾ', 'ਘੰਟੇ', 'ਬਾਅਦ',
             ]
             has_date_or_time = bool(
                 re.search(r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b", t)

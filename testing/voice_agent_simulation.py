@@ -99,7 +99,7 @@ def _next_step_after_repeat(step: str, state: WorkflowState) -> str:
 
 def _render_prompt(step: str, state: WorkflowState, facts: dict[str, object], language: str) -> str:
     name = str(facts.get("customer_name") or "").strip()
-    ptp_date = str(state.ptp_date or facts.get("ptp_date") or "").strip()
+    ptp_date = str((state.ptp_date if state.ptp_confirmed or state.ptp_confirmation_required else None) or facts.get("ptp_date") or "").strip()
     if language.startswith("pa"):
         if state.last_transition_reason == "abusive_language_warning":
             return "ਮੈਂ ਤੁਹਾਡੀ ਗੱਲ ਸੁਣ ਰਿਹਾ ਹਾਂ, ਪਰ ਕਿਰਪਾ ਕਰਕੇ ਸ਼ਾਂਤ ਰਹੋ। ਹੁਣ ਦੱਸੋ, ਭੁਗਤਾਨ ਹੋ ਗਿਆ ਹੈ ਜਾਂ ਕਿਹੜੀ ਤਾਰੀਖ ਤੱਕ ਕਰੋਗੇ?"
@@ -118,12 +118,16 @@ def _render_prompt(step: str, state: WorkflowState, facts: dict[str, object], la
         if step == "ask_reference_number":
             return "ਕਿਰਪਾ ਕਰਕੇ UTR ਜਾਂ ਟ੍ਰਾਂਜ਼ੈਕਸ਼ਨ ਰੈਫ਼ਰੈਂਸ ਦੱਸੋ।"
         if step == "ask_ptp_or_callback":
+            if state.last_transition_reason == "ptp_rejected":
+                return "ਠੀਕ ਹੈ। ਕੀ ਤੁਸੀਂ ਦੱਸ ਸਕਦੇ ਹੋ ਕਿ ਤੁਸੀਂ ਭੁਗਤਾਨ ਕਦੋਂ ਕਰ ਸਕੋਗੇ?"
             return "ਤੁਸੀਂ ਭੁਗਤਾਨ ਕਦੋਂ ਤੱਕ ਕਰੋਗੇ, ਜਾਂ ਮੈਂ ਕਦੋਂ ਕਾਲਬੈਕ ਕਰਾਂ?"
         if step == "confirm_ptp":
             return f"ਤੁਸੀਂ {ptp_date} ਤੱਕ ਭੁਗਤਾਨ ਕਰਨ ਦਾ ਵਾਅਦਾ ਕੀਤਾ ਹੈ। ਕੀ ਮੈਂ ਇਸਨੂੰ ਨੋਟ ਕਰ ਦਿਆਂ?"
         if step == "closing" and state.last_transition_reason == "abusive_language":
             return "ਸਮਝ ਗਿਆ ਸਰ, ਮੈਂ ਬਾਅਦ ਵਿੱਚ ਕਾਲ ਕਰ ਲੈਂਦਾ ਹਾਂ।"
-        if step == "closing" and state.ptp_date:
+        if step == "closing" and state.last_transition_reason == "hard_refusal_close":
+            return "ਸਮਝ ਗਿਆ। ਜੇ ਤੁਸੀਂ ਭਵਿੱਖ ਵਿੱਚ ਭੁਗਤਾਨ ਕਰਨਾ ਚਾਹੋ ਤਾਂ ਕਿਰਪਾ ਕਰਕੇ ਸਾਡੇ ਨਾਲ ਸੰਪਰਕ ਕਰੋ।"
+        if step == "closing" and state.ptp_confirmed and state.ptp_date:
             return f"ਧੰਨਵਾਦ। ਤੁਸੀਂ {ptp_date} ਤੱਕ ਭੁਗਤਾਨ ਕਰਨ ਦਾ ਵਾਅਦਾ ਕੀਤਾ ਹੈ। ਜੇ ਤੁਸੀਂ ਚਾਹੋ ਤਾਂ ਮੈਂ ਭੁਗਤਾਨ ਲਿੰਕ ਵਟਸਐਪ 'ਤੇ ਭੇਜ ਸਕਦਾ ਹਾਂ।"
         return "ਧੰਨਵਾਦ, ਤੁਹਾਡੇ ਸਮੇਂ ਲਈ।"
     if state.last_transition_reason == "abusive_language_warning":
@@ -143,12 +147,16 @@ def _render_prompt(step: str, state: WorkflowState, facts: dict[str, object], la
     if step == "ask_reference_number":
         return "कृपया UTR या ट्रांज़ैक्शन रेफरेंस बताइए।"
     if step == "ask_ptp_or_callback":
+        if state.last_transition_reason == "ptp_rejected":
+            return "ठीक है। क्या आप बता सकते हैं कि आप भुगतान कब कर पाएंगे?"
         return "आप भुगतान कब तक कर पाएँगे, या मैं कब कॉलबैक करूँ?"
     if step == "confirm_ptp":
         return f"आपने {ptp_date} तक भुगतान करने का वादा किया है। क्या मैं इसे नोट कर दूँ?"
     if step == "closing" and state.last_transition_reason == "abusive_language":
         return "समझ गया सर, मैं बाद में कॉल कर लेता हूँ।"
-    if step == "closing" and state.ptp_date:
+    if step == "closing" and state.last_transition_reason == "hard_refusal_close":
+        return "समझ गया। अगर भविष्य में आप भुगतान करना चाहें तो कृपया हमसे संपर्क करें।"
+    if step == "closing" and state.ptp_confirmed and state.ptp_date:
         return f"धन्यवाद। आपने {ptp_date} तक भुगतान करने का वादा किया है। अगर आप चाहें तो मैं भुगतान लिंक व्हाट्सऐप पर भेज सकता हूँ।"
     if step == "closing" and state.reference_number:
         return "धन्यवाद। हम ट्रांज़ैक्शन रेफरेंस सत्यापित कर लेंगे।"
@@ -224,7 +232,7 @@ def scenario_specs() -> list[ScenarioSpec]:
     return [
         ScenarioSpec(
             key="borrower_unaware_of_loan",
-            description="Borrower was unaware, confirms unpaid status, and gives a dated promise to pay.",
+            description="Borrower was unaware, confirms unpaid status, gives a dated promise to pay, and explicitly confirms it.",
             known_customer_name="Vishwajeet Tiwari",
             turns=[
                 SimulatedUserTurn("हाँ"),
@@ -232,11 +240,12 @@ def scenario_specs() -> list[ScenarioSpec]:
                 SimulatedUserTurn("मुझे पता नहीं था।"),
                 SimulatedUserTurn("नहीं"),
                 SimulatedUserTurn("मैं 13/03/2026 को भुगतान कर दूंगा।"),
+                SimulatedUserTurn("हाँ"),
             ],
             expected_final_step="closing",
             expected_payment_made=False,
             expect_ptp=True,
-            expected_required_steps=("confirm_awareness", "ask_ptp_or_callback", "closing"),
+            expected_required_steps=("confirm_awareness", "ask_ptp_or_callback", "confirm_ptp", "closing"),
         ),
         ScenarioSpec(
             key="borrower_already_paid",
@@ -263,11 +272,12 @@ def scenario_specs() -> list[ScenarioSpec]:
                 SimulatedUserTurn("हाँ"),
                 SimulatedUserTurn("हाँ, पता है।"),
                 SimulatedUserTurn("मैं 14/03/2026 तक भुगतान कर दूंगा।"),
+                SimulatedUserTurn("हाँ"),
             ],
             expected_final_step="closing",
             expected_payment_made=False,
             expect_ptp=True,
-            expected_required_steps=("ask_payment_made", "closing"),
+            expected_required_steps=("ask_payment_made", "confirm_ptp", "closing"),
         ),
         ScenarioSpec(
             key="borrower_speaks_punjabi",
@@ -282,13 +292,14 @@ def scenario_specs() -> list[ScenarioSpec]:
                     confidence=0.97,
                 ),
                 SimulatedUserTurn("ਮੈਂ 13/03/2026 ਤੱਕ ਭੁਗਤਾਨ ਕਰ ਦਿਆਂਗਾ।", detected_language="pa-IN", confidence=0.97),
+                SimulatedUserTurn("ਹਾਂ", detected_language="pa-IN", confidence=0.97),
             ],
             expected_final_step="closing",
             expected_payment_made=False,
             expect_ptp=True,
             expect_language_offer=True,
             expect_language_switch=False,
-            expected_required_steps=("confirm_awareness", "ask_payment_made", "closing"),
+            expected_required_steps=("confirm_awareness", "ask_payment_made", "confirm_ptp", "closing"),
         ),
         ScenarioSpec(
             key="borrower_mixes_hindi_and_punjabi",
@@ -301,28 +312,30 @@ def scenario_specs() -> list[ScenarioSpec]:
                 SimulatedUserTurn("मुझे पता है।", detected_language="hi-IN"),
                 SimulatedUserTurn("ਬਾਕੀ ਹੈ", detected_language="pa-IN", confidence=0.94),
                 SimulatedUserTurn("13/03/2026 को कर दूंगा", detected_language="hi-IN"),
+                SimulatedUserTurn("हाँ", detected_language="hi-IN"),
             ],
             expected_final_step="closing",
             expected_payment_made=False,
             expect_ptp=True,
             expect_language_offer=False,
-            expected_required_steps=("confirm_identity", "confirm_awareness", "closing"),
+            expected_required_steps=("confirm_identity", "confirm_awareness", "confirm_ptp", "closing"),
         ),
         ScenarioSpec(
             key="borrower_interrupts_agent",
-            description="An interruption with payment commitment must override the current question.",
+            description="An interruption with payment commitment must override the current question and still require explicit confirmation.",
             known_customer_name="Neha Verma",
             turns=[
                 SimulatedUserTurn("हाँ"),
                 SimulatedUserTurn("हाँ"),
                 SimulatedUserTurn("हाँ"),
                 SimulatedUserTurn("नहीं, मैं 13/03/2026 को भुगतान कर दूंगा।", interrupted=True),
+                SimulatedUserTurn("हाँ"),
             ],
             expected_final_step="closing",
             expected_payment_made=False,
             expect_ptp=True,
             expect_interruption_override=True,
-            expected_required_steps=("ask_payment_made", "closing"),
+            expected_required_steps=("ask_payment_made", "confirm_ptp", "closing"),
         ),
         ScenarioSpec(
             key="borrower_abuses_agent",
@@ -342,7 +355,7 @@ def scenario_specs() -> list[ScenarioSpec]:
         ),
         ScenarioSpec(
             key="borrower_changes_answer_mid_conversation",
-            description="A later correction from paid to unpaid must override the earlier branch.",
+            description="A later correction from paid to unpaid must override the earlier branch and confirm the new promise.",
             known_customer_name="Suman Das",
             turns=[
                 SimulatedUserTurn("हाँ"),
@@ -351,27 +364,29 @@ def scenario_specs() -> list[ScenarioSpec]:
                 SimulatedUserTurn("हाँ, पेमेंट कर दिया है।"),
                 SimulatedUserTurn("नहीं, अभी बाकी है", interrupted=True),
                 SimulatedUserTurn("14/03/2026 को दे दूंगा"),
+                SimulatedUserTurn("हाँ"),
             ],
             expected_final_step="closing",
             expected_payment_made=False,
             expect_ptp=True,
             expect_interruption_override=True,
-            expected_required_steps=("ask_reference_number", "ask_ptp_or_callback", "closing"),
+            expected_required_steps=("ask_reference_number", "ask_ptp_or_callback", "confirm_ptp", "closing"),
         ),
         ScenarioSpec(
             key="borrower_partial_payment_promise",
-            description="Partial payment promises should still capture amount and date without loops.",
+            description="Partial payment promises should still capture amount and date without loops, and require explicit confirmation.",
             known_customer_name="Arun Yadav",
             turns=[
                 SimulatedUserTurn("हाँ"),
                 SimulatedUserTurn("हाँ"),
                 SimulatedUserTurn("हाँ"),
                 SimulatedUserTurn("मैं आधा 2000 रुपये 13/03/2026 को दे दूंगा।"),
+                SimulatedUserTurn("हाँ"),
             ],
             expected_final_step="closing",
             expected_payment_made=False,
             expect_ptp=True,
-            expected_required_steps=("ask_payment_made", "closing"),
+            expected_required_steps=("ask_payment_made", "confirm_ptp", "closing"),
         ),
         ScenarioSpec(
             key="borrower_refuses_to_pay",
@@ -391,6 +406,24 @@ def scenario_specs() -> list[ScenarioSpec]:
             expected_payment_made=False,
             expect_refusal=True,
             expected_required_steps=("ask_ptp_or_callback", "closing"),
+        ),
+        ScenarioSpec(
+            key="borrower_rejects_ptp_confirmation",
+            description="Negative confirmation must clear the captured PTP and a later hard refusal must close without a false promise.",
+            known_customer_name="Nisha Kapoor",
+            turns=[
+                SimulatedUserTurn("हाँ"),
+                SimulatedUserTurn("हाँ"),
+                SimulatedUserTurn("हाँ"),
+                SimulatedUserTurn("तीन दिन में कर देंगे"),
+                SimulatedUserTurn("नहीं"),
+                SimulatedUserTurn("मैं कभी नहीं कर पाऊंगा"),
+            ],
+            expected_final_step="closing",
+            expected_payment_made=False,
+            expect_ptp=False,
+            expect_refusal=True,
+            expected_required_steps=("confirm_ptp", "ask_ptp_or_callback", "closing"),
         ),
     ]
 
@@ -517,13 +550,18 @@ def simulate_voice_agent_scenario(spec: ScenarioSpec) -> dict:
                 "customer_name": facts.get("customer_name"),
                 "identity_name_preexisting": bool(previous_customer_name),
                 "identity_prompt_mode": state.identity_prompt_mode,
-                "ptp_date": facts.get("ptp_date"),
-                "reference_number": facts.get("reference_number"),
-                "callback_time": facts.get("callback_time"),
+                "ptp_date": analysis.entities.ptp_date,
+                "reference_number": analysis.entities.reference_number,
+                "callback_time": analysis.entities.callback_time,
                 "payment_status": facts.get("payment_status"),
+                "corrected": analysis.entities.corrected,
             },
             reply_to_step_id=reply_step,
         )
+        if not state.ptp_date and not state.ptp_confirmed:
+            facts["ptp_date"] = None
+        if not state.callback_time and state.last_transition_reason in {"ptp_rejected", "refusal_closed", "hard_refusal_close"}:
+            facts["callback_time"] = None
 
         if user_turn.interrupted and analysis.interruption_intent != InterruptionIntent.OTHER:
             interruption_override = True

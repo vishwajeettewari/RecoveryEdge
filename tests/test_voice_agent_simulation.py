@@ -9,8 +9,8 @@ class VoiceAgentSimulationTests(unittest.TestCase):
         cls.results = {row["scenario"]: row for row in run_all_voice_agent_scenarios()}
 
     def test_all_required_scenarios_are_present(self):
-        self.assertEqual(len(self.results), 10)
-        self.assertEqual(sum(1 for row in self.results.values() if row["passed"]), 10)
+        self.assertEqual(len(self.results), 11)
+        self.assertEqual(sum(1 for row in self.results.values() if row["passed"]), 11)
 
     def test_borrower_unaware_of_loan(self):
         result = self.results["borrower_unaware_of_loan"]
@@ -73,6 +73,14 @@ class VoiceAgentSimulationTests(unittest.TestCase):
         self.assertTrue(result["refusal_detected"])
         self.assertEqual(result["final_step"], "closing")
         self.assertTrue(result["no_repeated_prompts"])
+
+    def test_borrower_rejects_ptp_confirmation(self):
+        result = self.results["borrower_rejects_ptp_confirmation"]
+        self.assertFalse(result["ptp_date"])
+        self.assertTrue(result["refusal_detected"])
+        self.assertEqual(result["final_step"], "closing")
+        self.assertTrue(result["no_repeated_prompts"])
+        self.assertIn("confirm_ptp", result["steps_visited"])
 
 
 if __name__ == "__main__":

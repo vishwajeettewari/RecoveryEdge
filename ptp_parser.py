@@ -46,6 +46,24 @@ _RELATIVE_IN_DAYS_PATTERNS = (
         r"पन्द्रह|सोलह|सत्रह|अठारह|उन्नीस|बीस|तीस)\s+दिन(?:ों)?\s*(?:में|मे|बाद)?\b"
     ),
 )
+_RELATIVE_SUBDAY_PATTERNS = (
+    re.compile(
+        r"\b(?:in|after|within)\s+"
+        r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
+        r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty)\s+"
+        r"(?:minute(?:s)?|mins?|hour(?:s)?|hrs?|मिनट(?:ों)?|घंट(?:ा|े))\b"
+    ),
+    re.compile(
+        r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
+        r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|"
+        r"ek|do|teen|char|chaar|panch|paanch|cheh|chhe|saat|aath|nau|das|dus|gyarah|"
+        r"barah|terah|chaudah|pandrah|solah|satrah|atharah|unnis|bees|tees|"
+        r"एक|दो|तीन|चार|पांच|पाँच|छह|सात|आठ|नौ|दस|ग्यारह|बारह|तेरह|चौदह|पंद्रह|"
+        r"पन्द्रह|सोलह|सत्रह|अठारह|उन्नीस|बीस|तीस)\s+"
+        r"(?:minute(?:s)?|mins?|hour(?:s)?|hrs?|मिनट(?:ों)?|घंट(?:ा|े))\s*"
+        r"(?:later|from now|में|मे|mein|me|बाद)\b"
+    ),
+)
 
 _MONTHS = {
     "january": 1,
@@ -220,9 +238,29 @@ def _next_valid_day(*, day: int, month: Optional[int], today: date) -> Optional[
 
 def _extract_bare_day(value: str) -> Optional[int]:
     tokens = [token for token in value.split() if token]
-    if not tokens or len(tokens) > 5:
+    if not tokens or len(tokens) > 10:
         return None
     filler_tokens = {
+        "main",
+        "mai",
+        "mein",
+        "i",
+        "ill",
+        "will",
+        "am",
+        "मे",
+        "मैं",
+        "मैंने",
+        "मेरे",
+        "मेरी",
+        "कह",
+        "रहा",
+        "रही",
+        "हूँ",
+        "हूं",
+        "है",
+        "ही",
+        "बस",
         "तारीख",
         "तारिख",
         "date",
@@ -237,29 +275,49 @@ def _extract_bare_day(value: str) -> Optional[int]:
         "भुगतान",
         "पेमेंट",
         "कर",
+        "kar",
+        "karo",
         "करूंगा",
         "करूँगा",
         "करूंगी",
         "करूँगी",
         "करेंगे",
+        "कर लूँगा",
+        "कर लूंगा",
+        "कर लूँगी",
+        "कर लूंगी",
+        "कर लेंगे",
+        "लूँगा",
+        "लूंगा",
+        "लूँगी",
+        "लूंगी",
+        "लेंगे",
         "दूंगा",
         "दूँगा",
         "दूंगी",
         "दूँगी",
         "देंगे",
+        "दो",
+        "दीजिए",
+        "दीजिये",
+        "दिजिए",
+        "do",
+        "dijiye",
+        "dijie",
         "dega",
         "denge",
     }
     day: Optional[int] = None
     for token in tokens:
+        if token in filler_tokens:
+            continue
         parsed = _word_to_int(token)
         if parsed is not None:
             if day is not None:
                 return None
             day = parsed
             continue
-        if token not in filler_tokens:
-            return None
+        return None
     return day
 
 
@@ -287,6 +345,13 @@ def parse_ptp_date(
         return PTPParseResult((today + timedelta(days=2)).isoformat(), 0.82, normalized, corrected, "relative_day_after")
     if "अगले हफ्ते" in value:
         return PTPParseResult((today + timedelta(days=7)).isoformat(), 0.72, normalized, corrected, "relative_next_week")
+
+    for pattern in _RELATIVE_SUBDAY_PATTERNS:
+        match = pattern.search(value)
+        if not match:
+            continue
+        if _word_to_int(match.group(1)) is not None:
+            return PTPParseResult(today.isoformat(), 0.76, normalized, corrected, "relative_same_day_window")
 
     for pattern in _RELATIVE_IN_DAYS_PATTERNS:
         match = pattern.search(value)

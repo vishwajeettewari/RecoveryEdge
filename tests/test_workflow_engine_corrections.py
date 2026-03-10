@@ -33,6 +33,24 @@ class WorkflowEngineCorrectionTests(unittest.TestCase):
         )
         self.assertEqual(state.ptp_date, "2026-03-11")
 
+    def test_longer_hindi_commitment_sets_ptp_date_after_reopen(self):
+        state = WorkflowState(
+            consent=True,
+            identity_confirmed=True,
+            awareness_confirmed=True,
+            payment_made=False,
+            ptp_date=None,
+            current_step="ask_ptp_or_callback",
+        )
+        self.engine.update_from_user(
+            "मैं कह रहा हूँ मैं 11 को कर लूँगा",
+            state,
+            extracted={"ptp_date": "2026-03-11", "corrected": False},
+            reply_to_step_id="ask_ptp_or_callback",
+        )
+        self.assertEqual(state.ptp_date, "2026-03-11")
+        self.assertEqual(state.current_step, "confirm_ptp")
+
     def test_callback_correction_overwrites_existing_time(self):
         state = WorkflowState(
             consent=True,

@@ -60,11 +60,86 @@ class EntityExtractor:
             if match:
                 return " ".join(match.group(1).strip(" .,").split())
         if current_step == "confirm_identity":
-            bare = text.strip(" .,!?\t")
+            bare = self._clean_identity_name_candidate(text)
             tokens = [tok for tok in bare.split() if tok]
             if 1 <= len(tokens) <= 4 and not any(any(ch.isdigit() for ch in tok) for tok in tokens):
                 return " ".join(tokens)
         return None
+
+    def _clean_identity_name_candidate(self, text: str) -> str:
+        candidate = (text or "").strip(" .,!?\t")
+        if not candidate:
+            return ""
+        candidate = re.sub(
+            r"^(?:haan|han|ha|haanji|ji|yes|yeah|yep|हाँ|हां|हाँ जी|हां जी|जी|ਹਾਂ|ਹਾਂਜੀ|ਜੀ)\s+",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = re.sub(
+            r"^(?:i am|i[' ]?m|im|my name is|this is|"
+            r"main|mai|mein|mera\s+naam(?:\s+hai)?|"
+            r"मैं|मेरा\s+नाम(?:\s+है)?|"
+            r"ਮੈਂ|ਮੇਰਾ\s+ਨਾਮ(?:\s+ਹੈ)?)\s+",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = re.sub(
+            r"\s+(?:speaking|here|"
+            r"bol\s+raha\s+h(?:u|oo)n|bol\s+rahi\s+h(?:u|oo)n|"
+            r"बोल\s+रहा\s+हूँ|बोल\s+रही\s+हूँ|"
+            r"ਬੋਲ\s+ਰਿਹਾ\s+ਹਾਂ|ਬੋਲ\s+ਰਹੀ\s+ਹਾਂ|"
+            r"hai|h(?:u|oo)n|है|हूँ|हूं|ਹੈ|ਹਾਂ)\.?$",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = " ".join(candidate.split()).strip(" .,!?\t")
+        if not candidate:
+            return ""
+        stop_tokens = {
+            "haan",
+            "han",
+            "ha",
+            "haanji",
+            "ji",
+            "yes",
+            "yeah",
+            "yep",
+            "main",
+            "mai",
+            "mein",
+            "mera",
+            "naam",
+            "hai",
+            "i",
+            "am",
+            "this",
+            "is",
+            "हाँ",
+            "हां",
+            "जी",
+            "मैं",
+            "मेरा",
+            "नाम",
+            "है",
+            "ਹਾਂ",
+            "ਹਾਂਜੀ",
+            "ਜੀ",
+            "ਮੈਂ",
+            "ਮੇਰਾ",
+            "ਨਾਮ",
+            "ਹੈ",
+            "હા",
+            "જી",
+            "હાજી",
+            "જોડી",
+        }
+        tokens = [tok for tok in candidate.split() if tok]
+        if any(tok.strip(" .,!?\t").casefold() in stop_tokens for tok in tokens):
+            return ""
+        return candidate
 
     def _extract_amount(self, text: str) -> Optional[str]:
         match = re.search(r"(?:₹|\brs\.?|\brupees\b)\s*([0-9][0-9,]*(?:\.[0-9]+)?)", text, re.IGNORECASE)

@@ -4664,8 +4664,8 @@ async def voice_socket(websocket: WebSocket) -> None:
     stt_language_key = get_env("SARVAM_STT_LANGUAGE_PARAM", "language_code")
 
     vad_threshold = float(get_env("VAD_RMS_THRESHOLD", "500"))
-    vad_silence_ms = int(get_env("VAD_SILENCE_MS", "600"))
-    stt_flush_interval_ms = int(get_env("STT_FLUSH_INTERVAL_MS", "250"))
+    vad_silence_ms = int(get_env("VAD_SILENCE_MS", "300"))
+    stt_flush_interval_ms = int(get_env("STT_FLUSH_INTERVAL_MS", "200"))
     stt_vad_signals = get_env_bool("STT_VAD_SIGNALS", True)
     stt_high_vad = get_env_bool("STT_HIGH_VAD_SENSITIVITY", True)
     use_sdk = get_env_bool("USE_SARVAMAI_SDK", True)
@@ -4692,7 +4692,7 @@ async def voice_socket(websocket: WebSocket) -> None:
     session_store_path = get_env("SESSION_STORE_PATH")
     dynamic_stt_language = get_env_bool("STT_DYNAMIC_LANGUAGE", True)
     preview_partials = get_env_bool("PREVIEW_PARTIALS", True)
-    preview_after_ms = int(get_env("PREVIEW_AFTER_MS", "300"))
+    preview_after_ms = int(get_env("PREVIEW_AFTER_MS", "200"))
     llm_timeout_s = float(get_env("LLM_STREAM_TIMEOUT_S", "20"))
     tts_timeout_s = float(get_env("TTS_STREAM_TIMEOUT_S", "20"))
     stt_connect_timeout_s = float(get_env("STT_CONNECT_TIMEOUT_S", "10"))
@@ -4702,7 +4702,7 @@ async def voice_socket(websocket: WebSocket) -> None:
     tts_max_chunk_length = int(get_env("TTS_MAX_CHUNK_LENGTH", "120"))
     tts_output_audio_codec = get_env("TTS_OUTPUT_AUDIO_CODEC", "linear16")
     tts_output_audio_bitrate = get_env("TTS_OUTPUT_AUDIO_BITRATE")
-    post_speech_pause_ms = int(get_env("POST_SPEECH_PAUSE_MS", "800"))  # 800ms suits Indian speech cadence
+    post_speech_pause_ms = int(get_env("POST_SPEECH_PAUSE_MS", "300"))
 
     stt = SaarikaSTTService(
         ws_url=stt_ws_url,

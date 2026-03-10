@@ -149,6 +149,14 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertTrue(st.consent)
         self.assertEqual(st.current_step, "confirm_identity")
 
+    def test_gujarati_jodi_counts_as_consent(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState()
+        st.current_step = "consent"
+        eng.update_from_user("જોડી.", st, reply_to_step_id="consent")
+        self.assertTrue(st.consent)
+        self.assertEqual(st.current_step, "confirm_identity")
+
     def test_punjabi_polite_affirmative_counts_as_consent(self):
         eng = WorkflowEngine(enable_advanced=True)
         st = WorkflowState()
@@ -295,6 +303,15 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(st.last_transition_reason, "uncertain_commitment")
         self.assertEqual(st.current_step, "ask_ptp_or_callback")
 
+    def test_punjabi_uncertain_phrase_sets_uncertain_commitment(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("ਪਤਾ ਨਹੀਂ।", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertTrue(st.callback_requested)
+        self.assertEqual(st.last_transition_reason, "uncertain_commitment")
+        self.assertEqual(st.current_step, "ask_ptp_or_callback")
+
     def test_hindi_relative_payment_commitment_requires_ptp_confirmation(self):
         now = datetime(2026, 3, 7, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
         eng = WorkflowEngine(enable_advanced=True, now_fn=lambda: now)
@@ -318,6 +335,17 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(st.current_step, "ask_ptp_or_callback")
         self.assertEqual(st.last_transition_reason, "ptp_callback_ambiguous")
 
+    def test_immediate_payment_window_requires_confirmation(self):
+        now = datetime(2026, 3, 10, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        eng = WorkflowEngine(enable_advanced=True, now_fn=lambda: now)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("अभी 5 मिनट बाद भुगतान कर दूँगा।", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertEqual(st.ptp_date, "2026-03-10")
+        self.assertEqual(st.current_step, "confirm_ptp")
+        self.assertTrue(st.ptp_confirmation_required)
+        self.assertFalse(st.ptp_confirmed)
+
     def test_hindi_do_not_call_request_closes_as_dnd(self):
         eng = WorkflowEngine(enable_advanced=True)
         st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
@@ -336,7 +364,9 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertTrue(st.refusal_detected)
         eng.update_from_user("I will pay on 06/02/2026", st, reply_to_step_id="ask_ptp_or_callback")
         self.assertEqual(st.ptp_date, "2026-02-06")
-        self.assertEqual(st.current_step, "closing")
+        self.assertEqual(st.current_step, "confirm_ptp")
+        self.assertTrue(st.ptp_confirmation_required)
+        self.assertFalse(st.ptp_confirmed)
         self.assertTrue(st.refusal_detected)
 
     def test_retry_exceeded_closes_when_no_commitment(self):
@@ -460,7 +490,9 @@ class WorkflowEngineTests(unittest.TestCase):
         st.current_step = "ask_ptp_or_callback"
         eng.update_from_user("I will make the payment on 12th", st, reply_to_step_id="ask_ptp_or_callback")
         self.assertEqual(st.ptp_date, "2026-03-12")
-        self.assertEqual(st.current_step, "closing")
+        self.assertEqual(st.current_step, "confirm_ptp")
+        self.assertTrue(st.ptp_confirmation_required)
+        self.assertFalse(st.ptp_confirmed)
 
     def test_ordinal_day_phrase_rolls_to_next_month_when_past(self):
         now = datetime(2026, 3, 20, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
@@ -469,7 +501,9 @@ class WorkflowEngineTests(unittest.TestCase):
         st.current_step = "ask_ptp_or_callback"
         eng.update_from_user("Payment on 12th", st, reply_to_step_id="ask_ptp_or_callback")
         self.assertEqual(st.ptp_date, "2026-04-12")
-        self.assertEqual(st.current_step, "closing")
+        self.assertEqual(st.current_step, "confirm_ptp")
+        self.assertTrue(st.ptp_confirmation_required)
+        self.assertFalse(st.ptp_confirmed)
 
     def test_in_days_phrase_sets_ptp_not_callback_time(self):
         now = datetime(2026, 2, 5, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
@@ -499,6 +533,22 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(st.disposition, "ptp_captured")
         self.assertEqual(st.current_step, "closing")
 
+    def test_confirm_ptp_colloquial_yes_advances_to_closing(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(
+            consent=True,
+            identity_confirmed=True,
+            awareness_confirmed=True,
+            payment_made=False,
+            ptp_date="2026-02-06",
+            ptp_confirmation_required=True,
+            current_step="confirm_ptp",
+        )
+        eng.update_from_user("यार वो कर दो", st, reply_to_step_id="confirm_ptp")
+        self.assertTrue(st.ptp_confirmed)
+        self.assertFalse(st.ptp_confirmation_required)
+        self.assertEqual(st.current_step, "closing")
+
     def test_confirm_ptp_no_returns_to_commitment_capture(self):
         eng = WorkflowEngine(enable_advanced=True)
         st = WorkflowState(
@@ -515,6 +565,44 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertFalse(st.ptp_confirmed)
         self.assertFalse(st.ptp_confirmation_required)
         self.assertEqual(st.current_step, "ask_ptp_or_callback")
+
+    def test_confirm_ptp_no_then_hard_refusal_closes_without_ptp(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(
+            consent=True,
+            identity_confirmed=True,
+            awareness_confirmed=True,
+            payment_made=False,
+            ptp_date="2026-02-06",
+            ptp_confirmation_required=True,
+            current_step="confirm_ptp",
+        )
+        eng.update_from_user("जी नहीं", st, reply_to_step_id="confirm_ptp")
+        self.assertIsNone(st.ptp_date)
+        self.assertFalse(st.ptp_confirmed)
+        self.assertEqual(st.last_transition_reason, "ptp_rejected")
+        self.assertEqual(st.current_step, "ask_ptp_or_callback")
+
+        eng.update_from_user("मैं कभी नहीं कर पाऊंगा", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertIsNone(st.ptp_date)
+        self.assertFalse(st.ptp_confirmed)
+        self.assertEqual(st.disposition, "refusal_unresolved")
+        self.assertEqual(st.last_transition_reason, "hard_refusal_close")
+        self.assertEqual(st.current_step, "closing")
+
+    def test_terminal_refusal_from_ptp_capture_closes(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(
+            consent=True,
+            identity_confirmed=True,
+            awareness_confirmed=True,
+            payment_made=False,
+            current_step="ask_ptp_or_callback",
+        )
+        eng.update_from_user("मैं कभी नहीं कर पाऊंगा", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertEqual(st.current_step, "closing")
+        self.assertEqual(st.disposition, "refusal_unresolved")
+        self.assertEqual(st.last_transition_reason, "hard_refusal_close")
 
     def test_right_is_treated_as_yes_for_consent(self):
         eng = WorkflowEngine(enable_advanced=True)

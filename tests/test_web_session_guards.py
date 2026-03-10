@@ -308,6 +308,26 @@ class WebSessionGuardTests(unittest.TestCase):
         s._wf_state.current_step = "ask_ptp_or_callback"
         self.assertIsNone(s._detect_misunderstanding("Let's say by tomorrow.", "When can you pay?"))
 
+    def test_immediate_payment_window_not_misclassified_as_topic_drift(self):
+        s = self._session_stub()
+        s._wf_state.current_step = "ask_ptp_or_callback"
+        self.assertIsNone(
+            s._detect_misunderstanding(
+                "अभी 5 मिनट बाद भुगतान कर दूँगा।",
+                "आप भुगतान कब तक कर पाएँगे?",
+            )
+        )
+
+    def test_confirm_ptp_colloquial_yes_not_misclassified_as_topic_drift(self):
+        s = self._session_stub()
+        s._wf_state.current_step = "confirm_ptp"
+        self.assertIsNone(
+            s._detect_misunderstanding(
+                "यार वो कर दो",
+                "समझ गया। आपने कहा कि आप 2026-03-13 तक भुगतान कर देंगे। क्या मैं इसे भुगतान वादा के रूप में नोट कर दूं?",
+            )
+        )
+
     def test_sync_workflow_normalizes_relative_ptp_fact(self):
         s = self._session_stub()
         s._facts["ptp_date"] = "Let's say by tomorrow."
@@ -406,6 +426,7 @@ class WebSessionGuardTests(unittest.TestCase):
         s._facts["language_preference"] = "en-IN"
         tomorrow = (datetime.now(ZoneInfo("Asia/Kolkata")).date() + timedelta(days=1)).isoformat()
         s._wf_state.ptp_date = tomorrow
+        s._wf_state.ptp_confirmed = True
         closing = s._fixed_prompt_for_step("closing")
         self.assertIn("tomorrow", closing.lower())
 
@@ -588,6 +609,77 @@ class WebSessionGuardTests(unittest.TestCase):
         self.assertFalse(s._force_dynamic_reply_once)
         self.assertIn({"type": "interrupt_acknowledged", "text": "Yes, go ahead."}, events)
 
+    def test_run_tts_only_cancel_uses_current_step_context_without_name_error(self):
+        s = self._session_stub()
+        s._wf_state.current_step = "confirm_awareness"
+        s._chat_history = [{"role": "system", "content": "test"}]
+        s._max_history_turns = 10
+        s._current_turn_id = None
+        s._reply_to_turn_id = None
+        s._reply_to_utterance_id = None
+        s._current_utterance_id = None
+        s._current_utterance_status = "completed"
+        s._tts_audio_received = asyncio.Event()
+        s.tts_ws_url = "wss://example.test"
+        s.tts_api_key = "key"
+        s.tts_voice = None
+        s._tts_output_audio_codec = "linear16"
+        s._tts_output_audio_bitrate = None
+        s._tts_min_buffer_size = 18
+        s._tts_max_chunk_length = 96
+        s._use_sdk = False
+        s._barge_in_armed = False
+        s._greeting_active = True
+        s._trim_history = lambda: None
+        s._append_history = lambda *_args, **_kwargs: None
+        s._log_message = lambda *_args, **_kwargs: None
+        s._is_duplicate_assistant_text = lambda *_args, **_kwargs: False
+        s._next_utterance_id = lambda: "utt-1"
+        s._set_pending_step = lambda *_args, **_kwargs: None
+        s._set_turn_state = lambda *_args, **_kwargs: None
+        s._set_workflow_step = lambda **_kwargs: None
+        s._schedule_no_response_watch = lambda: None
+        s.send_event = self._noop_send_event
+
+        async def fake_noop(*_args, **_kwargs):
+            return None
+
+        async def fake_tts_audio_loop(_tts):
+            await asyncio.sleep(3600)
+
+        s._emit_timeline_event = fake_noop  # type: ignore[method-assign]
+        s._emit_chat_message = fake_noop  # type: ignore[method-assign]
+        s._tts_audio_loop = fake_tts_audio_loop  # type: ignore[method-assign]
+
+        class FakeTTS:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def send_text(self, _text):
+                return None
+
+            async def end_input(self):
+                return None
+
+        async def runner():
+            with patch("web_session.BulbulTTSService", FakeTTS):
+                task = asyncio.create_task(s._run_tts_only("क्या आपको पता है?"))
+                await asyncio.sleep(0)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(runner())
+
+        self.assertEqual(s._interrupted_step, "confirm_awareness")
+        self.assertEqual(s._interrupted_response, "क्या आपको पता है?")
+
     def test_handle_post_interrupt_resume_sets_override_to_interrupted_step(self):
         s = self._session_stub()
         s._interrupted_step = "ask_payment_made"
@@ -701,11 +793,25 @@ class WebSessionGuardTests(unittest.TestCase):
         s._extract_facts_from_text("Ji haan")
         self.assertIsNone(s._facts.get("customer_name"))
 
+    def test_extract_name_from_bare_identity_reply_ignores_punctuated_hindi_affirmation(self):
+        s = self._session_stub()
+        s._pending_step_id = "confirm_identity"
+        s._extract_facts_from_text("जी हां।")
+        self.assertIsNone(s._facts.get("customer_name"))
+
     def test_extract_name_from_bare_identity_reply_ignores_gurmukhi_affirmation(self):
         s = self._session_stub()
         s._pending_step_id = "confirm_identity"
         s._extract_facts_from_text("ਜੀ ਹਾਂ")
         self.assertIsNone(s._facts.get("customer_name"))
+
+    def test_extract_name_from_identity_reply_strips_ack_prefix(self):
+        s = self._session_stub()
+        s._pending_step_id = "confirm_identity"
+        s._wf_state.current_step = "confirm_identity"
+        s._wf_state.last_agent_intent = "confirm_identity"
+        s._extract_facts_from_text("हाँ मैं निशा कपूर बोल रही हूँ")
+        self.assertEqual(s._facts.get("customer_name"), "निशा कपूर")
 
     def test_handle_text_clears_pending_identity_step_after_name(self):
         s = self._session_stub()
@@ -768,6 +874,10 @@ class WebSessionGuardTests(unittest.TestCase):
         s = self._session_stub()
         self.assertTrue(s._is_yes("જી આવડીએ."))
 
+    def test_gujarati_jodi_counts_as_yes(self):
+        s = self._session_stub()
+        self.assertTrue(s._is_yes("જોડી."))
+
     def test_punjabi_polite_affirmatives_count_as_yes(self):
         s = self._session_stub()
         self.assertTrue(s._is_yes("ਜੀ ਬਿਲਕੁਲ।"))
@@ -782,6 +892,16 @@ class WebSessionGuardTests(unittest.TestCase):
         out = s._fixed_prompt_for_step("confirm_awareness", language="hi-IN")
         self.assertIn("धन्यवाद विश्वजीत जी", out)
         self.assertIn("₹900", out)
+
+    def test_first_prompt_after_identity_uses_clean_customer_name(self):
+        s = self._session_stub()
+        s._facts["language_preference"] = "hi-IN"
+        s._facts["customer_name"] = "हाँ मैं निशा कपूर"
+        s._facts["overdue_amount"] = "900"
+        s._wf_state.last_asked_step = "confirm_identity"
+        out = s._fixed_prompt_for_step("confirm_awareness", language="hi-IN")
+        self.assertIn("धन्यवाद निशा कपूर जी", out)
+        self.assertNotIn("धन्यवाद हाँ मैं निशा कपूर जी", out)
 
     def test_name_reconfirmation_prompt_speaks_name_back_before_awareness(self):
         s = self._session_stub()
@@ -820,6 +940,17 @@ class WebSessionGuardTests(unittest.TestCase):
         out = s._fixed_prompt_for_step("confirm_ptp", language="hi-IN")
         self.assertIn("भुगतान वादा", out)
         self.assertIn("₹900", out)
+
+    def test_closing_prompt_does_not_claim_unconfirmed_ptp(self):
+        s = self._session_stub()
+        s._facts["language_preference"] = "hi-IN"
+        s._facts["ptp_date"] = "2026-03-11"
+        s._wf_state.ptp_date = "2026-03-11"
+        s._wf_state.ptp_confirmed = False
+        s._wf_state.ptp_confirmation_required = False
+        out = s._fixed_prompt_for_step("closing", language="hi-IN")
+        self.assertNotIn("वादा किया", out)
+        self.assertIn("धन्यवाद", out)
 
     def test_dynamic_response_acknowledges_name_and_matches_male_voice(self):
         s = self._session_stub()
@@ -919,6 +1050,7 @@ class WebSessionGuardTests(unittest.TestCase):
         s = self._session_stub()
         s._facts["language_preference"] = "hi-IN"
         s._wf_state.ptp_date = "2026-03-11"
+        s._wf_state.ptp_confirmed = True
         out = s._fixed_prompt_for_step("closing", language="hi-IN")
         self.assertIn("व्हाट्सऐप", out)
         self.assertIn("भुगतान लिंक", out)
@@ -1255,6 +1387,13 @@ class WebSessionGuardTests(unittest.TestCase):
         s = self._session_stub()
         self.assertEqual(
             s._effective_reply_step_for_user_text("नहीं करूंगा तो क्या कर लोगे?", "closing"),
+            "ask_ptp_or_callback",
+        )
+
+    def test_effective_reply_step_reopens_closing_for_date_correction(self):
+        s = self._session_stub()
+        self.assertEqual(
+            s._effective_reply_step_for_user_text("11 को कर दो", "closing"),
             "ask_ptp_or_callback",
         )
 

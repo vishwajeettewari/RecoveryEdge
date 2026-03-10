@@ -323,7 +323,7 @@ class WebSessionOutcomeTests(unittest.TestCase):
         metrics = self.audit.metrics()
         self.assertEqual(metrics["profanity_incidents"], 2)
 
-    def test_handle_text_auto_captures_ordinal_ptp_and_persists_metrics(self):
+    def test_handle_text_auto_captures_ordinal_ptp_and_waits_for_confirmation(self):
         session = self._auto_ptp_session()
         fixed_now = datetime(2026, 3, 10, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
 
@@ -335,6 +335,31 @@ class WebSessionOutcomeTests(unittest.TestCase):
 
         self.assertEqual(session._wf_state.ptp_date, "2026-03-12")
         self.assertEqual(session._facts["ptp_date"], "2026-03-12")
+        self.assertEqual(session._wf_state.current_step, "confirm_ptp")
+        self.assertTrue(session._wf_state.ptp_confirmation_required)
+        self.assertFalse(session._wf_state.ptp_confirmed)
+
+        metrics = self.audit.metrics(campaign_id="cmp-auto-ptp")
+        self.assertEqual(metrics["ptp_count"], 0)
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            outcome = conn.execute(
+                "SELECT ptp_date, campaign_id FROM outcomes WHERE session_id = ?",
+                ("sess-auto-ptp-1",),
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertIsNone(outcome)
+
+        with patch(
+            "web_session.parse_date_from_text",
+            side_effect=lambda text, *, tz, now=None: real_parse_date_from_text(text, tz=tz, now=fixed_now),
+        ):
+            asyncio.run(session.handle_text("यार वो कर दो"))
+
+        self.assertTrue(session._wf_state.ptp_confirmed)
+        self.assertFalse(session._wf_state.ptp_confirmation_required)
         self.assertEqual(session._wf_state.current_step, "closing")
 
         metrics = self.audit.metrics(campaign_id="cmp-auto-ptp")
@@ -379,6 +404,59 @@ class WebSessionOutcomeTests(unittest.TestCase):
         self.assertEqual(session._wf_state.current_step, "closing")
         metrics = self.audit.metrics(campaign_id="cmp-auto-ptp")
         self.assertEqual(metrics["ptp_count"], 1)
+
+    def test_relative_ptp_rejection_clears_commitment_without_persisting(self):
+        session = self._auto_ptp_session()
+        fixed_now = datetime(2026, 3, 10, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+
+        with patch(
+            "web_session.parse_date_from_text",
+            side_effect=lambda text, *, tz, now=None: real_parse_date_from_text(text, tz=tz, now=fixed_now),
+        ):
+            asyncio.run(session.handle_text("I will pay tomorrow"))
+
+        self.assertEqual(session._wf_state.current_step, "confirm_ptp")
+        self.assertEqual(session._wf_state.ptp_date, "2026-03-11")
+
+        with patch(
+            "web_session.parse_date_from_text",
+            side_effect=lambda text, *, tz, now=None: real_parse_date_from_text(text, tz=tz, now=fixed_now),
+        ):
+            asyncio.run(session.handle_text("जी नहीं"))
+
+        self.assertIsNone(session._wf_state.ptp_date)
+        self.assertFalse(session._wf_state.ptp_confirmed)
+        self.assertIsNone(session._facts.get("ptp_date"))
+        self.assertEqual(session._wf_state.current_step, "ask_ptp_or_callback")
+        metrics = self.audit.metrics(campaign_id="cmp-auto-ptp")
+        self.assertEqual(metrics["ptp_count"], 0)
+
+    def test_closing_ptp_correction_reopens_and_replaces_stale_date(self):
+        session = self._auto_ptp_session()
+        fixed_now = datetime(2026, 3, 10, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+
+        with patch(
+            "web_session.parse_date_from_text",
+            side_effect=lambda text, *, tz, now=None: real_parse_date_from_text(text, tz=tz, now=fixed_now),
+        ):
+            asyncio.run(session.handle_text("I will make the payment on 13th"))
+            asyncio.run(session.handle_text("yes"))
+
+        self.assertEqual(session._wf_state.current_step, "closing")
+        self.assertEqual(session._wf_state.ptp_date, "2026-03-13")
+        self.assertTrue(session._wf_state.ptp_confirmed)
+
+        with patch(
+            "web_session.parse_date_from_text",
+            side_effect=lambda text, *, tz, now=None: real_parse_date_from_text(text, tz=tz, now=fixed_now),
+        ):
+            asyncio.run(session.handle_text("11 को कर दो"))
+
+        self.assertEqual(session._wf_state.ptp_date, "2026-03-11")
+        self.assertEqual(session._facts.get("ptp_date"), "2026-03-11")
+        self.assertEqual(session._wf_state.current_step, "confirm_ptp")
+        self.assertTrue(session._wf_state.ptp_confirmation_required)
+        self.assertFalse(session._wf_state.ptp_confirmed)
 
 
 class VoiceSocketOutcomeTests(unittest.TestCase):
