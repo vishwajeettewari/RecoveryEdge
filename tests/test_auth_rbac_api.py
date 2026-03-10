@@ -34,6 +34,7 @@ class AuthRBACTests(unittest.TestCase):
         os.environ["APP_ENV"] = "demo"
         os.environ["DEMO_MODE"] = "1"
         os.environ["PILOT_MODE"] = "1" if pilot_mode else "0"
+        os.environ["OPS_COPILOT_LLM_ENABLED"] = "0"
         os.environ["JWT_SECRET"] = "test-secret"
         os.environ["COOKIE_SECURE"] = "0"
         self._reset_app_state()

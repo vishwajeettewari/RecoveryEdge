@@ -187,12 +187,32 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertTrue(st.identity_confirmed)
         self.assertEqual(st.current_step, "confirm_awareness")
 
-    def test_confirm_identity_name_reply_confirms_when_name_was_not_known(self):
+    def test_confirm_identity_name_reply_requires_explicit_confirmation_when_name_was_not_known(self):
         eng = WorkflowEngine(enable_advanced=True)
         st = WorkflowState(consent=True)
         st.current_step = "confirm_identity"
         eng.update_from_user(
             "मेरा नाम विश्वजीत तिवारी है",
+            st,
+            extracted={"customer_name": "विश्वजीत तिवारी", "identity_name_preexisting": False},
+            reply_to_step_id="confirm_identity",
+        )
+        self.assertFalse(st.identity_confirmed)
+        self.assertEqual(st.identity_prompt_mode, "confirm_known_name")
+        self.assertEqual(st.last_transition_reason, "identity_name_captured")
+        self.assertEqual(st.current_step, "confirm_identity")
+
+    def test_confirm_identity_followup_yes_confirms_name_captured_in_previous_turn(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(
+            consent=True,
+            identity_confirmed=False,
+            identity_prompt_mode="confirm_known_name",
+            current_step="confirm_identity",
+            last_transition_reason="identity_name_captured",
+        )
+        eng.update_from_user(
+            "हाँ",
             st,
             extracted={"customer_name": "विश्वजीत तिवारी", "identity_name_preexisting": False},
             reply_to_step_id="confirm_identity",
@@ -275,7 +295,7 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(st.last_transition_reason, "uncertain_commitment")
         self.assertEqual(st.current_step, "ask_ptp_or_callback")
 
-    def test_hindi_relative_payment_commitment_closes_after_uncertain_prompt(self):
+    def test_hindi_relative_payment_commitment_requires_ptp_confirmation(self):
         now = datetime(2026, 3, 7, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
         eng = WorkflowEngine(enable_advanced=True, now_fn=lambda: now)
         st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
@@ -283,7 +303,9 @@ class WorkflowEngineTests(unittest.TestCase):
         st.last_transition_reason = "uncertain_commitment"
         eng.update_from_user("दो दिन में कर देंगे।", st, reply_to_step_id="ask_ptp_or_callback")
         self.assertEqual(st.ptp_date, "2026-03-09")
-        self.assertEqual(st.current_step, "closing")
+        self.assertEqual(st.current_step, "confirm_ptp")
+        self.assertTrue(st.ptp_confirmation_required)
+        self.assertFalse(st.ptp_confirmed)
 
     def test_ambiguous_relative_timeline_requests_clarification(self):
         now = datetime(2026, 3, 7, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
@@ -381,6 +403,27 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertFalse(st.payment_made)
         self.assertEqual(st.current_step, "ask_ptp_or_callback")
 
+    def test_reference_step_future_commitment_exits_utr_loop_and_confirms_ptp(self):
+        now = datetime(2026, 2, 5, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        eng = WorkflowEngine(enable_advanced=True, now_fn=lambda: now)
+        st = WorkflowState(
+            consent=True,
+            identity_confirmed=True,
+            awareness_confirmed=True,
+            payment_made=True,
+        )
+        st.current_step = "ask_reference_number"
+        eng.update_from_user(
+            "मैं कल कर दूंगा।",
+            st,
+            extracted={"ptp_date": "2026-02-06"},
+            reply_to_step_id="ask_reference_number",
+        )
+        self.assertFalse(st.payment_made)
+        self.assertEqual(st.ptp_date, "2026-02-06")
+        self.assertEqual(st.current_step, "confirm_ptp")
+        self.assertTrue(st.ptp_confirmation_required)
+
     def test_uncertain_commitment_sets_uncertainty_reason(self):
         eng = WorkflowEngine(enable_advanced=True)
         st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
@@ -397,6 +440,8 @@ class WorkflowEngineTests(unittest.TestCase):
         st.current_step = "ask_ptp_or_callback"
         eng.update_from_user("Let's say by tomorrow.", st, reply_to_step_id="ask_ptp_or_callback")
         self.assertEqual(st.ptp_date, "2026-02-06")
+        self.assertEqual(st.current_step, "confirm_ptp")
+        self.assertTrue(st.ptp_confirmation_required)
 
     def test_relative_day_after_tomorrow_phrase_normalizes_to_iso(self):
         now = datetime(2026, 2, 5, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
@@ -405,6 +450,8 @@ class WorkflowEngineTests(unittest.TestCase):
         st.current_step = "ask_ptp_or_callback"
         eng.update_from_user("day after tomorrow", st, reply_to_step_id="ask_ptp_or_callback")
         self.assertEqual(st.ptp_date, "2026-02-07")
+        self.assertEqual(st.current_step, "confirm_ptp")
+        self.assertTrue(st.ptp_confirmation_required)
 
     def test_ordinal_day_phrase_sets_ptp_in_current_month(self):
         now = datetime(2026, 3, 10, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
@@ -432,7 +479,42 @@ class WorkflowEngineTests(unittest.TestCase):
         eng.update_from_user("I can pay in 10 days.", st, reply_to_step_id="ask_ptp_or_callback")
         self.assertEqual(st.ptp_date, "2026-02-15")
         self.assertIsNone(st.callback_time)
+        self.assertEqual(st.current_step, "confirm_ptp")
+        self.assertTrue(st.ptp_confirmation_required)
+
+    def test_confirm_ptp_yes_advances_to_closing(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(
+            consent=True,
+            identity_confirmed=True,
+            awareness_confirmed=True,
+            payment_made=False,
+            ptp_date="2026-02-06",
+            ptp_confirmation_required=True,
+            current_step="confirm_ptp",
+        )
+        eng.update_from_user("हाँ", st, reply_to_step_id="confirm_ptp")
+        self.assertTrue(st.ptp_confirmed)
+        self.assertFalse(st.ptp_confirmation_required)
+        self.assertEqual(st.disposition, "ptp_captured")
         self.assertEqual(st.current_step, "closing")
+
+    def test_confirm_ptp_no_returns_to_commitment_capture(self):
+        eng = WorkflowEngine(enable_advanced=True)
+        st = WorkflowState(
+            consent=True,
+            identity_confirmed=True,
+            awareness_confirmed=True,
+            payment_made=False,
+            ptp_date="2026-02-06",
+            ptp_confirmation_required=True,
+            current_step="confirm_ptp",
+        )
+        eng.update_from_user("नहीं", st, reply_to_step_id="confirm_ptp")
+        self.assertIsNone(st.ptp_date)
+        self.assertFalse(st.ptp_confirmed)
+        self.assertFalse(st.ptp_confirmation_required)
+        self.assertEqual(st.current_step, "ask_ptp_or_callback")
 
     def test_right_is_treated_as_yes_for_consent(self):
         eng = WorkflowEngine(enable_advanced=True)
@@ -449,12 +531,13 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertIsNone(st.payment_made)
         self.assertEqual(st.last_transition_reason, "awareness_denied_context")
 
-    def test_callback_time_implicit_hour_parses(self):
+    def test_bare_number_does_not_become_callback_time(self):
         eng = WorkflowEngine(enable_advanced=True)
         st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
         st.current_step = "ask_ptp_or_callback"
         eng.update_from_user("I think it's 9.", st, reply_to_step_id="ask_ptp_or_callback")
-        self.assertEqual(st.callback_time, "09:00")
+        self.assertIsNone(st.callback_time)
+        self.assertEqual(st.current_step, "ask_ptp_or_callback")
 
     def test_callback_intent_with_kal_prefers_callback_time(self):
         eng = WorkflowEngine(enable_advanced=True)

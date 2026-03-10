@@ -16,7 +16,7 @@ export function FlowGuide({
   return (
     <Card className="te-flow-guide" withBorder>
       <Stack gap="sm">
-        <Text fw={700} size="sm" c="#5f6671" tt="uppercase" style={{ letterSpacing: "0.08em" }}>
+        <Text fw={700} size="sm" c="var(--te-flow-title)" tt="uppercase" style={{ letterSpacing: "0.08em" }}>
           {title}
         </Text>
         <SimpleGrid cols={{ base: 1, md: Math.min(steps.length, 4) }}>
@@ -27,12 +27,12 @@ export function FlowGuide({
               </ThemeIcon>
               <Stack gap={2}>
                 <Group gap={6}>
-                  <Text fw={700} size="sm" c="#17181b">
+                  <Text fw={700} size="sm" c="var(--te-flow-step-title)">
                     {step.title}
                   </Text>
-                  {idx < steps.length - 1 ? <ArrowRight size={13} color="#8fb8ff" /> : null}
+                  {idx < steps.length - 1 ? <ArrowRight size={13} color="var(--te-flow-arrow)" /> : null}
                 </Group>
-                <Text size="xs" c="#6f7784">
+                <Text size="xs" c="var(--te-flow-step-copy)">
                   {step.detail}
                 </Text>
               </Stack>

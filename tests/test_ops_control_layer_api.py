@@ -10,6 +10,16 @@ from fastapi.testclient import TestClient
 import web_app
 
 
+class FakeOpsCopilotLLM:
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+
+    def generate_readout(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.payload
+
+
 class OpsControlLayerApiTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -32,6 +42,7 @@ class OpsControlLayerApiTests(unittest.TestCase):
         os.environ["APP_ENV"] = "demo"
         os.environ["DEMO_MODE"] = "1"
         os.environ["PILOT_MODE"] = "1"
+        os.environ["OPS_COPILOT_LLM_ENABLED"] = "0"
         os.environ["JWT_SECRET"] = "test-secret"
         os.environ["COOKIE_SECURE"] = "0"
         self._reset_app_state()
@@ -164,6 +175,51 @@ class OpsControlLayerApiTests(unittest.TestCase):
         alerts.evaluate()
         return campaign_id
 
+    def _seed_single_bucket_data(self):
+        demo = web_app._get_demo_singletons()
+        campaign = demo["campaign_service"]
+        workbench = demo["workbench"]
+        audit = demo["audit"]
+
+        created = campaign.create_campaign(
+            name="Single Bucket Demo",
+            customer_ids=["SB-1"],
+            max_attempts=2,
+            retry_delay_minutes=15,
+            batch_size=25,
+        )
+        campaign_id = created["campaign_id"]
+        workbench.seed_tasks(
+            campaign_id=campaign_id,
+            portfolio_id="pfl-single-bucket",
+            rows=[
+                {"customer_id": "SB-1", "customer_name": "Single Bucket", "phone": "+919999999914", "amount_due": 3800, "dpd": 47},
+            ],
+            actor="seed",
+        )
+        conn = sqlite3.connect(self.db_path)
+        try:
+            now = datetime.now().timestamp()
+            conn.execute(
+                "INSERT INTO campaign_runs (campaign_id, customer_id, ts, attempt_no, outcome) VALUES (?, ?, ?, 1, 'completed')",
+                (campaign_id, "SB-1", now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        audit.upsert_outcome(
+            session_id="sess-sb-1",
+            customer_id="SB-1",
+            campaign_id=campaign_id,
+            dpd_bucket="31-60",
+            strategy_mode="firm_commitment",
+            tone_profile="firm_respectful",
+            disposition="no_answer",
+        )
+        audit.update_outcome_agent(session_id="sess-sb-1", agent_id="mgr", connect_duration_s=42)
+        return campaign_id
+
     def test_control_layer_chat_and_actions(self):
         with self._client() as client:
             token = self._login(client, "mgr", "mgr123")
@@ -205,6 +261,58 @@ class OpsControlLayerApiTests(unittest.TestCase):
             self.assertEqual(strategy_response.json()["result_type"], "approval_queued")
             self.assertTrue(strategy_response.json()["approval"]["id"])
 
+    def test_control_layer_applies_llm_overrides_when_available(self):
+        with self._client() as client:
+            token = self._login(client, "mgr", "mgr123")
+            campaign_id = self._seed_operating_data()
+            demo = web_app._get_demo_singletons()
+            fake = FakeOpsCopilotLLM(
+                {
+                    "answer": "LLM grounded answer for the operator.",
+                    "quick_replies": [
+                        "What changed in 31-60 this week?",
+                        "Which agent is leaking follow-up discipline?",
+                    ],
+                    "summary_detail_overrides": [
+                        {
+                            "label": "Biggest Containment Gap",
+                            "detail": "LLM detail grounded in the supplied containment and missed-PTP metrics.",
+                        }
+                    ],
+                    "recommendation_overrides": [
+                        {
+                            "id": "rec-bucket-31-60",
+                            "summary": "LLM summary for the bucket recommendation.",
+                            "rationale": "LLM rationale tied to the grounded metrics bundle.",
+                        }
+                    ],
+                }
+            )
+            demo["ops_control"].copilot_llm = fake
+
+            response = client.post(
+                "/api/control-layer/chat",
+                json={
+                    "campaign_id": campaign_id,
+                    "message": "Which bucket is underperforming, why, and what should I change?",
+                },
+                headers=self._headers(token),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+
+            self.assertEqual(payload["answer"], "LLM grounded answer for the operator.")
+            self.assertEqual(payload["quick_replies"][0], "What changed in 31-60 this week?")
+            summary_by_label = {row["label"]: row["detail"] for row in payload["summary"]}
+            self.assertEqual(
+                summary_by_label["Biggest Containment Gap"],
+                "LLM detail grounded in the supplied containment and missed-PTP metrics.",
+            )
+            recommendation = next(row for row in payload["recommendations"] if row["id"] == "rec-bucket-31-60")
+            self.assertEqual(recommendation["summary"], "LLM summary for the bucket recommendation.")
+            self.assertEqual(recommendation["rationale"], "LLM rationale tied to the grounded metrics bundle.")
+            self.assertEqual(fake.calls[0]["question"], "Which bucket is underperforming, why, and what should I change?")
+
     def test_control_layer_launch_experiment_falls_back_to_approval_for_viewer(self):
         with self._client() as client:
             token = self._login(client, "viewer", "viewer123")
@@ -227,3 +335,22 @@ class OpsControlLayerApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json()["result_type"], "approval_queued")
             self.assertTrue(response.json()["approval"]["id"])
+
+    def test_control_layer_does_not_contradict_itself_with_single_live_bucket(self):
+        with self._client() as client:
+            token = self._login(client, "mgr", "mgr123")
+            self._seed_single_bucket_data()
+
+            response = client.post(
+                "/api/control-layer/chat",
+                json={"message": "What should I change this week?"},
+                headers=self._headers(token),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+
+            evidence_titles = [row["title"] for row in payload["evidence"]]
+            self.assertIn("31-60 is the strongest bucket", evidence_titles)
+            self.assertNotIn("31-60 needs intervention", evidence_titles)
+            self.assertEqual(payload["recommendations"], [])
+            self.assertIn("Only 31-60 has enough live sample", payload["answer"])

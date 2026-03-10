@@ -4,6 +4,7 @@ import sqlite3
 import time
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from ops_copilot_llm_service import OpsCopilotLLMService
 from approval_service import ApprovalService
 from audit_store import SQLiteAuditStore
 from campaign_service import CampaignService
@@ -25,6 +26,7 @@ class OpsControlService:
         approvals: ApprovalService,
         experiments: ExperimentService,
         strategy_engine: StrategyEngine,
+        copilot_llm: Optional[OpsCopilotLLMService] = None,
     ) -> None:
         self.db_path = db_path
         self.audit = audit
@@ -32,6 +34,7 @@ class OpsControlService:
         self.approvals = approvals
         self.experiments = experiments
         self.strategy_engine = strategy_engine
+        self.copilot_llm = copilot_llm
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -75,6 +78,31 @@ class OpsControlService:
             customers=customers,
             recommendations=recommendations,
         )
+        llm_readout = None
+        if self.copilot_llm is not None:
+            llm_readout = self.copilot_llm.generate_readout(
+                tenant_id=tenant_id,
+                actor=actor,
+                role=role,
+                request_id=request_id,
+                question=normalized_message,
+                scope=scope,
+                summary=summary,
+                evidence=evidence,
+                recommendations=recommendations,
+                quick_replies=quick_replies,
+                campaigns=campaigns,
+                buckets=buckets,
+                agents=agents,
+                customers=customers,
+            )
+        if isinstance(llm_readout, dict):
+            llm_answer = str(llm_readout.get("answer") or "").strip()
+            if llm_answer:
+                answer = llm_answer
+            summary = self._merge_summary_detail_overrides(summary, llm_readout.get("summary_detail_overrides"))
+            recommendations = self._merge_recommendation_overrides(recommendations, llm_readout.get("recommendation_overrides"))
+            quick_replies = self._merge_quick_replies(quick_replies, llm_readout.get("quick_replies"))
         payload = {
             "scope": scope,
             "message": normalized_message,
@@ -623,7 +651,12 @@ class OpsControlService:
         recs: List[Dict[str, Any]] = []
         best_bucket = self._best_bucket(buckets)
         risk_bucket = self._risk_bucket(buckets)
-        if risk_bucket and int(risk_bucket.get("sample_size") or 0) > 0:
+        distinct_bucket_benchmark = bool(
+            best_bucket
+            and risk_bucket
+            and str(best_bucket.get("bucket") or "") != str(risk_bucket.get("bucket") or "")
+        )
+        if risk_bucket and distinct_bucket_benchmark and int(risk_bucket.get("sample_size") or 0) > 0:
             current_strategy = str(risk_bucket.get("current_strategy") or "current_strategy")
             proposed_strategy = self._proposed_bucket_strategy(str(risk_bucket.get("bucket") or ""))
             impact = self._bucket_impact(risk_bucket=risk_bucket, best_bucket=best_bucket)
@@ -785,18 +818,26 @@ class OpsControlService:
                 }
             )
         best_bucket = self._best_bucket(buckets)
+        risk_bucket = self._risk_bucket(buckets)
+        distinct_bucket_benchmark = bool(
+            best_bucket
+            and risk_bucket
+            and str(best_bucket.get("bucket") or "") != str(risk_bucket.get("bucket") or "")
+        )
         if best_bucket:
+            best_bucket_detail = (
+                f"{self._percent(best_bucket.get('ptp_rate_pct'))} PTP conversion across {best_bucket.get('sample_size')} observed accounts"
+            )
+            if not distinct_bucket_benchmark:
+                best_bucket_detail += "; this is the only populated bucket in the current live window"
             cards.append(
                 {
                     "label": "Best Bucket",
                     "value": str(best_bucket.get("bucket")),
-                    "detail": (
-                        f"{self._percent(best_bucket.get('ptp_rate_pct'))} PTP conversion across {best_bucket.get('sample_size')} observed accounts"
-                    ),
+                    "detail": best_bucket_detail,
                 }
             )
-        risk_bucket = self._risk_bucket(buckets)
-        if risk_bucket:
+        if risk_bucket and distinct_bucket_benchmark:
             cards.append(
                 {
                     "label": "Biggest Containment Gap",
@@ -874,13 +915,22 @@ class OpsControlService:
             )
 
         best_bucket = self._best_bucket(buckets)
+        risk_bucket = self._risk_bucket(buckets)
+        distinct_bucket_benchmark = bool(
+            best_bucket
+            and risk_bucket
+            and str(best_bucket.get("bucket") or "") != str(risk_bucket.get("bucket") or "")
+        )
         if best_bucket:
+            best_bucket_summary = f"Current strategy: {best_bucket.get('current_strategy')} with tone {best_bucket.get('current_tone')}."
+            if not distinct_bucket_benchmark:
+                best_bucket_summary += " This is the only bucket with enough live data in the current window."
             cards.append(
                 {
                     "title": f"{best_bucket.get('bucket')} is the strongest bucket",
                     "entity_type": "bucket",
                     "entity_id": best_bucket.get("bucket"),
-                    "summary": f"Current strategy: {best_bucket.get('current_strategy')} with tone {best_bucket.get('current_tone')}.",
+                    "summary": best_bucket_summary,
                     "sample_size": int(best_bucket.get("sample_size") or 0),
                     "confidence": best_bucket.get("confidence"),
                     "metrics": [
@@ -892,8 +942,7 @@ class OpsControlService:
                 }
             )
 
-        risk_bucket = self._risk_bucket(buckets)
-        if risk_bucket:
+        if risk_bucket and distinct_bucket_benchmark:
             cards.append(
                 {
                     "title": f"{risk_bucket.get('bucket')} needs intervention",
@@ -972,12 +1021,17 @@ class OpsControlService:
         risk_bucket = self._risk_bucket(buckets)
         best_bucket = self._best_bucket(buckets)
         if risk_bucket and best_bucket:
-            parts.append(
-                f"The strongest bucket is {best_bucket.get('bucket')} at {self._percent(best_bucket.get('ptp_rate_pct'))} PTP conversion, while {risk_bucket.get('bucket')} is the main leak with {self._percent(risk_bucket.get('roll_forward_pct'))} roll-forward risk."
-            )
-            parts.append(
-                f"{risk_bucket.get('bucket')} is currently running {risk_bucket.get('current_strategy')}, and it should be the first place to test a strategy adjustment."
-            )
+            if str(risk_bucket.get("bucket") or "") == str(best_bucket.get("bucket") or ""):
+                parts.append(
+                    f"Only {best_bucket.get('bucket')} has enough live sample in the current window, so cross-bucket benchmarking is limited right now."
+                )
+            else:
+                parts.append(
+                    f"The strongest bucket is {best_bucket.get('bucket')} at {self._percent(best_bucket.get('ptp_rate_pct'))} PTP conversion, while {risk_bucket.get('bucket')} is the main leak with {self._percent(risk_bucket.get('roll_forward_pct'))} roll-forward risk."
+                )
+                parts.append(
+                    f"{risk_bucket.get('bucket')} is currently running {risk_bucket.get('current_strategy')}, and it should be the first place to test a strategy adjustment."
+                )
 
         if agents and ("agent" in focus or "briefing" in focus or "recommend" in focus or not focus):
             parts.append(
@@ -997,6 +1051,71 @@ class OpsControlService:
                     f"The highest-value move is {top_rec.get('title').lower()}, with an estimated uplift of {impact.get('summary')}."
                 )
         return " ".join(part for part in parts if part)
+
+    @staticmethod
+    def _merge_quick_replies(existing: Sequence[str], overrides: Any) -> List[str]:
+        out: List[str] = []
+        if isinstance(overrides, list):
+            for item in overrides:
+                text = str(item or "").strip()
+                if text and text not in out:
+                    out.append(text)
+                if len(out) >= 4:
+                    break
+        for item in existing:
+            text = str(item or "").strip()
+            if text and text not in out:
+                out.append(text)
+            if len(out) >= 4:
+                break
+        return out
+
+    @staticmethod
+    def _merge_summary_detail_overrides(summary: Sequence[Dict[str, Any]], overrides: Any) -> List[Dict[str, Any]]:
+        detail_by_label: Dict[str, str] = {}
+        if isinstance(overrides, list):
+            for item in overrides:
+                if not isinstance(item, dict):
+                    continue
+                label = str(item.get("label") or "").strip()
+                detail = str(item.get("detail") or "").strip()
+                if label and detail:
+                    detail_by_label[label] = detail
+        out: List[Dict[str, Any]] = []
+        for item in summary:
+            row = dict(item)
+            label = str(row.get("label") or "").strip()
+            if label in detail_by_label:
+                row["detail"] = detail_by_label[label]
+            out.append(row)
+        return out
+
+    @staticmethod
+    def _merge_recommendation_overrides(recommendations: Sequence[Dict[str, Any]], overrides: Any) -> List[Dict[str, Any]]:
+        by_id: Dict[str, Dict[str, str]] = {}
+        if isinstance(overrides, list):
+            for item in overrides:
+                if not isinstance(item, dict):
+                    continue
+                rec_id = str(item.get("id") or "").strip()
+                if not rec_id:
+                    continue
+                by_id[rec_id] = {
+                    "summary": str(item.get("summary") or "").strip(),
+                    "rationale": str(item.get("rationale") or "").strip(),
+                }
+        out: List[Dict[str, Any]] = []
+        for item in recommendations:
+            row = dict(item)
+            rec_id = str(row.get("id") or "").strip()
+            override = by_id.get(rec_id)
+            if override:
+                if override.get("summary"):
+                    row["summary"] = override["summary"]
+                if override.get("rationale"):
+                    row["rationale"] = override["rationale"]
+            out.append(row)
+        return out
 
     @staticmethod
     def _detect_focus(message: str) -> Set[str]:

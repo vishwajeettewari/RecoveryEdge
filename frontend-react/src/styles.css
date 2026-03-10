@@ -5,10 +5,446 @@
   --te-brand-blue: #125dff;
   --te-brand-cyan: #0ab08b;
   --te-text: #101217;
+  --te-heading: #111827;
+  --te-copy: #4f5d73;
   --te-muted: #667085;
+  --te-link: #125dff;
   --te-panel-border: rgba(99, 118, 156, 0.24);
   --te-panel-shadow: 0 18px 38px rgba(15, 24, 42, 0.1);
   --te-focus-ring: 0 0 0 4px rgba(18, 93, 255, 0.16);
+  --te-body-bg:
+    radial-gradient(1080px 660px at -14% -22%, rgba(76, 132, 255, 0.2), transparent 50%),
+    radial-gradient(920px 560px at 114% -24%, rgba(0, 175, 150, 0.11), transparent 52%),
+    radial-gradient(840px 480px at 50% 122%, rgba(18, 93, 255, 0.09), transparent 50%),
+    linear-gradient(180deg, #f8fafd 0%, #f2f6fb 52%, #edf2f9 100%);
+  --te-body-grid-dark: rgba(0, 0, 0, 0.18);
+  --te-body-grid-light: rgba(255, 255, 255, 0.32);
+  --te-body-grid-opacity: 0.1;
+  --te-body-grid-blend: soft-light;
+  --te-shell-main-bg:
+    radial-gradient(1100px 620px at -6% -12%, rgba(71, 130, 255, 0.18), transparent 48%),
+    radial-gradient(940px 520px at 108% -12%, rgba(0, 181, 153, 0.14), transparent 48%),
+    linear-gradient(180deg, #f7f9fd 0%, #f2f5fb 52%, #edf2f9 100%);
+  --te-shell-header-bg:
+    radial-gradient(560px 220px at -20% 0%, rgba(64, 124, 255, 0.22), transparent 56%),
+    radial-gradient(520px 260px at 120% 0%, rgba(0, 188, 160, 0.16), transparent 56%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.72));
+  --te-shell-header-border: rgba(15, 24, 42, 0.09);
+  --te-shell-navbar-bg:
+    radial-gradient(540px 240px at 0% 0%, rgba(34, 104, 255, 0.14), transparent 58%),
+    radial-gradient(500px 240px at 100% 8%, rgba(0, 188, 160, 0.08), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78) 0%, rgba(255, 255, 255, 0.62) 52%, rgba(255, 255, 255, 0.72) 100%);
+  --te-shell-navbar-border: rgba(15, 24, 42, 0.08);
+  --te-shell-navbar-shadow: inset -1px 0 0 rgba(90, 106, 140, 0.1);
+  --te-shell-shadow: 0 12px 30px rgba(12, 25, 48, 0.08);
+  --te-shell-surface: rgba(255, 255, 255, 0.62);
+  --te-shell-title: #101217;
+  --te-shell-copy: #5f6672;
+  --te-shell-muted: #8b94a4;
+  --te-shell-crumb: #125dff;
+  --te-shell-burger: #454b57;
+  --te-shell-chip-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.74));
+  --te-shell-chip-border: rgba(17, 27, 45, 0.14);
+  --te-shell-chip-shadow: 0 8px 22px rgba(12, 25, 48, 0.08);
+  --te-shell-badge-copy: #2f415f;
+  --te-shell-badge-border: rgba(0, 113, 227, 0.35);
+  --te-shell-nav: #263242;
+  --te-shell-nav-icon: #4f6078;
+  --te-shell-nav-border: rgba(107, 127, 168, 0.18);
+  --te-shell-nav-bg: rgba(255, 255, 255, 0.02);
+  --te-shell-nav-hover-border: rgba(93, 150, 255, 0.28);
+  --te-shell-nav-hover-bg: rgba(18, 93, 255, 0.05);
+  --te-shell-nav-active-bg: linear-gradient(90deg, rgba(0, 113, 227, 0.18), rgba(0, 113, 227, 0.08));
+  --te-shell-nav-active-border: rgba(0, 113, 227, 0.4);
+  --te-shell-nav-active-shadow: 0 10px 20px rgba(17, 32, 57, 0.09);
+  --te-shell-mark-shadow: 0 8px 24px rgba(5, 18, 35, 0.4);
+  --te-shell-wordmark-filter: contrast(1.08);
+  --te-module-header-bg:
+    linear-gradient(120deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.78) 100%),
+    radial-gradient(420px 180px at 0% 0%, rgba(90, 126, 255, 0.22), transparent 62%);
+  --te-module-header-border: rgba(109, 125, 168, 0.22);
+  --te-module-header-shadow: 0 22px 42px rgba(15, 24, 42, 0.1);
+  --te-component-surface: rgba(255, 255, 255, 0.78);
+  --te-component-border: rgba(19, 28, 45, 0.09);
+  --te-component-shadow: 0 8px 22px rgba(15, 24, 42, 0.06);
+  --te-component-text: #101217;
+  --te-input-bg: #f8fbff;
+  --te-input-border: rgba(19, 28, 45, 0.09);
+  --te-input-text: #101217;
+  --te-drawer-bg: radial-gradient(600px 220px at 100% 0%, rgba(30, 100, 255, 0.12), transparent 50%), #f7faff;
+  --te-table-head-text: #556074;
+  --te-table-head-bg: rgba(244, 248, 255, 0.94);
+  --te-table-head-border: rgba(19, 28, 45, 0.1);
+  --te-table-cell-text: #1b2330;
+  --te-table-cell-border: rgba(19, 28, 45, 0.07);
+  --te-tabs-list-border: rgba(19, 28, 45, 0.1);
+  --te-tabs-text: #536079;
+  --te-tabs-active-text: #0e2145;
+  --te-tabs-active-bg: linear-gradient(180deg, rgba(18, 93, 255, 0.13), rgba(18, 93, 255, 0.04));
+  --te-tabs-active-border: rgba(18, 93, 255, 0.34);
+  --te-modal-bg: radial-gradient(480px 180px at 100% 0%, rgba(18, 93, 255, 0.12), transparent 55%), #f8fbff;
+  --te-modal-header-border: rgba(19, 28, 45, 0.08);
+  --te-glow-surface-bg:
+    radial-gradient(480px 250px at 0% 0%, rgba(24, 98, 255, 0.18), transparent 58%),
+    radial-gradient(480px 260px at 100% 0%, rgba(10, 176, 139, 0.12), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.99));
+  --te-glow-surface-border: rgba(101, 142, 226, 0.32);
+  --te-glow-surface-shadow: 0 20px 42px rgba(9, 29, 64, 0.12);
+  --te-flow-guide-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(253, 254, 255, 0.82)),
+    radial-gradient(620px 260px at 100% 0%, rgba(0, 199, 190, 0.14), transparent 62%);
+  --te-flow-guide-border: rgba(122, 140, 184, 0.2);
+  --te-flow-guide-shadow: 0 14px 34px rgba(15, 24, 42, 0.08);
+  --te-flow-step-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(249, 251, 255, 0.84));
+  --te-flow-step-border: rgba(116, 136, 179, 0.2);
+  --te-flow-title: #5f6671;
+  --te-flow-step-title: #17181b;
+  --te-flow-step-copy: #6f7784;
+  --te-flow-arrow: #8fb8ff;
+  --te-section-card-bg:
+    radial-gradient(480px 210px at 100% -30%, rgba(48, 122, 255, 0.12), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.95));
+  --te-section-card-border: rgba(113, 130, 167, 0.22);
+  --te-section-card-shadow: 0 16px 30px rgba(15, 24, 42, 0.08);
+  --te-section-card-hover-shadow: 0 22px 34px rgba(15, 24, 42, 0.11);
+  --te-kpi-bg:
+    radial-gradient(420px 160px at 0% 0%, rgba(18, 93, 255, 0.12), transparent 56%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.84));
+  --te-table-bg: rgba(255, 255, 255, 0.75);
+  --te-table-border: rgba(88, 108, 147, 0.18);
+  --te-empty-border: rgba(96, 117, 156, 0.38);
+  --te-empty-bg: linear-gradient(180deg, rgba(252, 253, 255, 0.92), rgba(248, 251, 255, 0.8));
+  --te-empty-icon: #5f6b80;
+  --te-scroll-thumb: rgba(106, 126, 164, 0.52);
+  --te-scroll-track-border: rgba(255, 255, 255, 0.8);
+  --te-calling-heading: #172134;
+  --te-calling-body: #41516a;
+  --te-calling-soft: #5f728e;
+  --te-calling-muted: #7b8faa;
+  --te-calling-label: #4a6aa0;
+  --te-calling-icon: #7191c2;
+  --te-calling-success: #1ea97f;
+  --te-calling-danger: #d95770;
+  --te-calling-warning: #c9872b;
+  --te-calling-warning-text: #8f620e;
+  --te-calling-toolbar-border: rgba(92, 121, 174, 0.24);
+  --te-calling-toolbar-bg:
+    radial-gradient(680px 320px at 0% 0%, rgba(18, 93, 255, 0.2), transparent 58%),
+    radial-gradient(560px 260px at 100% 0%, rgba(10, 176, 139, 0.16), transparent 56%),
+    linear-gradient(140deg, rgba(255, 255, 255, 0.97), rgba(244, 249, 255, 0.94));
+  --te-calling-toolbar-shadow: 0 24px 50px rgba(15, 24, 42, 0.12);
+  --te-calling-hero-badge-bg: rgba(255, 255, 255, 0.66);
+  --te-calling-hero-badge-border: rgba(109, 135, 186, 0.28);
+  --te-calling-strip-badge-bg: rgba(255, 255, 255, 0.58);
+  --te-calling-strip-badge-border: rgba(110, 136, 188, 0.24);
+  --te-calling-toggle-bg: rgba(255, 255, 255, 0.72);
+  --te-calling-toggle-border: rgba(116, 136, 179, 0.2);
+  --te-calling-toggle-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  --te-calling-stat-bg:
+    radial-gradient(300px 140px at 100% 0%, rgba(18, 93, 255, 0.08), transparent 60%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 251, 255, 0.86));
+  --te-calling-stat-border: rgba(104, 125, 167, 0.18);
+  --te-calling-panel-bg:
+    radial-gradient(520px 220px at 100% 0%, rgba(63, 120, 255, 0.08), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 252, 255, 0.96));
+  --te-calling-panel-primary-bg:
+    radial-gradient(420px 200px at 100% 0%, rgba(18, 93, 255, 0.1), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 251, 255, 0.98));
+  --te-calling-panel-accent-bg:
+    radial-gradient(420px 190px at 100% 0%, rgba(10, 176, 139, 0.08), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(249, 252, 255, 0.96));
+  --te-calling-panel-queue-bg:
+    radial-gradient(360px 180px at 0% 0%, rgba(18, 93, 255, 0.08), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 251, 255, 0.96));
+  --te-calling-panel-transcript-bg:
+    radial-gradient(320px 160px at 100% 0%, rgba(10, 176, 139, 0.08), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(249, 252, 255, 0.96));
+  --te-calling-panel-border: rgba(107, 127, 168, 0.2);
+  --te-calling-panel-shadow: 0 20px 40px rgba(15, 24, 42, 0.09);
+  --te-calling-input-border: rgba(116, 136, 179, 0.24);
+  --te-calling-input-bg: rgba(255, 255, 255, 0.92);
+  --te-calling-input-copy: #0f1728;
+  --te-calling-input-placeholder: rgba(93, 113, 150, 0.78);
+  --te-calling-queue-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 251, 255, 0.88)),
+    radial-gradient(260px 120px at 100% 0%, rgba(44, 110, 255, 0.1), transparent 62%);
+  --te-calling-queue-border: rgba(104, 125, 167, 0.18);
+  --te-calling-queue-hover-border: rgba(95, 137, 223, 0.28);
+  --te-calling-queue-hover-shadow: 0 18px 28px rgba(15, 24, 42, 0.09);
+  --te-calling-queue-active-bg:
+    linear-gradient(180deg, rgba(239, 246, 255, 0.98), rgba(233, 242, 255, 0.94)),
+    radial-gradient(260px 120px at 100% 0%, rgba(61, 133, 255, 0.16), transparent 62%);
+  --te-calling-queue-active-border: rgba(83, 140, 255, 0.42);
+  --te-calling-queue-active-shadow: 0 0 0 1px rgba(86, 149, 255, 0.18), 0 20px 34px rgba(15, 24, 42, 0.1);
+  --te-calling-stage-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 251, 255, 0.9)),
+    radial-gradient(260px 120px at 0% 0%, rgba(10, 176, 139, 0.08), transparent 62%);
+  --te-calling-stage-border: rgba(104, 125, 167, 0.18);
+  --te-calling-stage-line: linear-gradient(90deg, rgba(80, 178, 255, 0.28), rgba(14, 194, 169, 0.18));
+  --te-calling-stage-node-bg: rgba(255, 255, 255, 0.94);
+  --te-calling-stage-node-border: rgba(95, 126, 186, 0.28);
+  --te-calling-stage-node-active-bg: linear-gradient(180deg, rgba(227, 246, 241, 0.96), rgba(241, 251, 248, 0.92));
+  --te-calling-stage-node-active-border: rgba(35, 176, 134, 0.32);
+  --te-calling-stage-node-current-shadow: 0 0 0 1px rgba(79, 177, 255, 0.18), 0 14px 24px rgba(15, 24, 42, 0.08);
+  --te-calling-brief-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 251, 255, 0.9)),
+    radial-gradient(220px 120px at 100% 0%, rgba(39, 116, 255, 0.08), transparent 62%);
+  --te-calling-brief-border: rgba(107, 127, 168, 0.16);
+  --te-calling-meter-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(247, 250, 255, 0.92)),
+    radial-gradient(280px 130px at 0% 0%, rgba(10, 176, 139, 0.1), transparent 62%);
+  --te-calling-meter-border: rgba(104, 125, 167, 0.18);
+  --te-calling-note-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 251, 255, 0.94));
+  --te-calling-note-border: rgba(108, 131, 181, 0.16);
+  --te-calling-alert-bg:
+    linear-gradient(180deg, rgba(255, 250, 238, 0.96), rgba(255, 247, 229, 0.94)),
+    radial-gradient(260px 120px at 0% 0%, rgba(255, 187, 68, 0.12), transparent 62%);
+  --te-calling-alert-border: rgba(224, 174, 84, 0.26);
+  --te-calling-transcript-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(249, 252, 255, 0.96)),
+    radial-gradient(300px 140px at 100% 0%, rgba(17, 199, 176, 0.08), transparent 62%);
+  --te-calling-transcript-border: rgba(104, 125, 167, 0.18);
+  --te-calling-bubble-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(249, 251, 255, 0.94));
+  --te-calling-bubble-border: rgba(108, 131, 181, 0.18);
+  --te-calling-bubble-agent-bg:
+    linear-gradient(180deg, rgba(239, 246, 255, 0.95), rgba(233, 243, 255, 0.92)),
+    radial-gradient(240px 120px at 100% 0%, rgba(72, 127, 255, 0.12), transparent 62%);
+  --te-calling-bubble-agent-border: rgba(85, 149, 255, 0.24);
+  --te-calling-bubble-user-bg:
+    linear-gradient(180deg, rgba(238, 252, 248, 0.96), rgba(232, 248, 243, 0.92)),
+    radial-gradient(220px 120px at 100% 0%, rgba(17, 199, 176, 0.12), transparent 62%);
+  --te-calling-bubble-user-border: rgba(46, 170, 142, 0.2);
+  --te-calling-bubble-system-bg: linear-gradient(180deg, rgba(248, 250, 255, 0.96), rgba(243, 246, 253, 0.92));
+  --te-calling-bubble-system-border: rgba(122, 143, 181, 0.16);
+  --te-calling-partial-bg: rgba(242, 247, 255, 0.88);
+  --te-calling-partial-border: rgba(105, 131, 187, 0.18);
+  --te-calling-timeline-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(249, 251, 255, 0.94)),
+    radial-gradient(220px 120px at 100% 0%, rgba(49, 112, 236, 0.08), transparent 62%);
+  --te-calling-timeline-border: rgba(108, 131, 181, 0.16);
+}
+
+:root[data-mantine-color-scheme="dark"] {
+  color-scheme: dark;
+  --te-text: #eef4ff;
+  --te-heading: #f7fbff;
+  --te-copy: #b5c1d3;
+  --te-muted: #8f9eb4;
+  --te-link: #84b8ff;
+  --te-panel-border: rgba(121, 139, 171, 0.18);
+  --te-panel-shadow: 0 18px 38px rgba(0, 0, 0, 0.28);
+  --te-focus-ring: 0 0 0 4px rgba(68, 132, 255, 0.2);
+  --te-body-bg:
+    radial-gradient(920px 620px at -18% -24%, rgba(45, 92, 198, 0.26), transparent 52%),
+    radial-gradient(760px 480px at 114% -18%, rgba(6, 116, 96, 0.2), transparent 52%),
+    radial-gradient(860px 460px at 50% 122%, rgba(34, 78, 180, 0.18), transparent 52%),
+    linear-gradient(180deg, #05070b 0%, #070b11 52%, #090d14 100%);
+  --te-body-grid-dark: rgba(255, 255, 255, 0.12);
+  --te-body-grid-light: rgba(255, 255, 255, 0.04);
+  --te-body-grid-opacity: 0.12;
+  --te-body-grid-blend: screen;
+  --te-shell-main-bg:
+    radial-gradient(1100px 620px at -6% -12%, rgba(52, 101, 210, 0.28), transparent 48%),
+    radial-gradient(940px 520px at 108% -12%, rgba(5, 118, 99, 0.18), transparent 48%),
+    linear-gradient(180deg, #05070b 0%, #070b11 52%, #090d14 100%);
+  --te-shell-header-bg:
+    radial-gradient(560px 220px at -20% 0%, rgba(52, 101, 210, 0.28), transparent 56%),
+    radial-gradient(520px 260px at 120% 0%, rgba(5, 118, 99, 0.18), transparent 56%),
+    linear-gradient(180deg, rgba(8, 12, 18, 0.92), rgba(8, 12, 18, 0.82));
+  --te-shell-header-border: rgba(118, 135, 168, 0.14);
+  --te-shell-navbar-bg:
+    radial-gradient(540px 240px at 0% 0%, rgba(34, 104, 255, 0.16), transparent 58%),
+    radial-gradient(500px 240px at 100% 8%, rgba(0, 188, 160, 0.1), transparent 58%),
+    linear-gradient(180deg, rgba(8, 12, 18, 0.9) 0%, rgba(8, 12, 18, 0.82) 52%, rgba(9, 14, 22, 0.9) 100%);
+  --te-shell-navbar-border: rgba(118, 135, 168, 0.12);
+  --te-shell-navbar-shadow: inset -1px 0 0 rgba(118, 135, 168, 0.12);
+  --te-shell-shadow: 0 16px 34px rgba(0, 0, 0, 0.38);
+  --te-shell-surface: rgba(13, 18, 28, 0.8);
+  --te-shell-title: #f7fbff;
+  --te-shell-copy: #aeb8c8;
+  --te-shell-muted: #7f8da4;
+  --te-shell-crumb: #84b8ff;
+  --te-shell-burger: #e3ebf9;
+  --te-shell-chip-bg: linear-gradient(180deg, rgba(14, 19, 30, 0.96), rgba(10, 14, 22, 0.92));
+  --te-shell-chip-border: rgba(118, 135, 168, 0.18);
+  --te-shell-chip-shadow: 0 12px 24px rgba(0, 0, 0, 0.24);
+  --te-shell-badge-copy: #d7e4f7;
+  --te-shell-badge-border: rgba(93, 150, 255, 0.34);
+  --te-shell-nav: #d8e3f4;
+  --te-shell-nav-icon: #9fb0c7;
+  --te-shell-nav-border: rgba(226, 236, 249, 0.76);
+  --te-shell-nav-bg: rgba(255, 255, 255, 0.01);
+  --te-shell-nav-hover-border: rgba(226, 236, 249, 0.92);
+  --te-shell-nav-hover-bg: rgba(255, 255, 255, 0.03);
+  --te-shell-nav-active-bg: linear-gradient(90deg, rgba(18, 93, 255, 0.3), rgba(18, 93, 255, 0.12));
+  --te-shell-nav-active-border: rgba(93, 150, 255, 0.38);
+  --te-shell-nav-active-shadow: 0 14px 28px rgba(0, 0, 0, 0.24);
+  --te-shell-mark-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+  --te-shell-wordmark-filter: brightness(0) invert(1);
+  --te-module-header-bg:
+    linear-gradient(120deg, rgba(12, 17, 26, 0.94) 0%, rgba(9, 14, 22, 0.88) 100%),
+    radial-gradient(420px 180px at 0% 0%, rgba(90, 126, 255, 0.2), transparent 62%);
+  --te-module-header-border: rgba(118, 135, 168, 0.16);
+  --te-module-header-shadow: 0 22px 42px rgba(0, 0, 0, 0.26);
+  --te-component-surface: rgba(11, 15, 23, 0.82);
+  --te-component-border: rgba(118, 135, 168, 0.16);
+  --te-component-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+  --te-component-text: #f3f6fb;
+  --te-input-bg: rgba(16, 21, 31, 0.92);
+  --te-input-border: rgba(118, 135, 168, 0.2);
+  --te-input-text: #eef4ff;
+  --te-drawer-bg: radial-gradient(600px 220px at 100% 0%, rgba(30, 100, 255, 0.14), transparent 50%), #090d14;
+  --te-table-head-text: #aeb8c8;
+  --te-table-head-bg: rgba(14, 20, 31, 0.94);
+  --te-table-head-border: rgba(118, 135, 168, 0.14);
+  --te-table-cell-text: #edf3ff;
+  --te-table-cell-border: rgba(118, 135, 168, 0.1);
+  --te-tabs-list-border: rgba(118, 135, 168, 0.12);
+  --te-tabs-text: #aab7cc;
+  --te-tabs-active-text: #f5f8ff;
+  --te-tabs-active-bg: linear-gradient(180deg, rgba(18, 93, 255, 0.24), rgba(18, 93, 255, 0.08));
+  --te-tabs-active-border: rgba(87, 151, 255, 0.42);
+  --te-modal-bg: radial-gradient(480px 180px at 100% 0%, rgba(18, 93, 255, 0.16), transparent 55%), #090d14;
+  --te-modal-header-border: rgba(118, 135, 168, 0.12);
+  --te-glow-surface-bg:
+    radial-gradient(480px 250px at 0% 0%, rgba(24, 98, 255, 0.2), transparent 58%),
+    radial-gradient(480px 260px at 100% 0%, rgba(10, 176, 139, 0.12), transparent 58%),
+    linear-gradient(180deg, rgba(12, 17, 26, 0.94), rgba(9, 14, 22, 0.96));
+  --te-glow-surface-border: rgba(93, 150, 255, 0.22);
+  --te-glow-surface-shadow: 0 20px 42px rgba(0, 0, 0, 0.24);
+  --te-flow-guide-bg:
+    linear-gradient(180deg, rgba(11, 16, 25, 0.94), rgba(9, 14, 22, 0.92)),
+    radial-gradient(620px 260px at 100% 0%, rgba(0, 199, 190, 0.12), transparent 62%);
+  --te-flow-guide-border: rgba(118, 135, 168, 0.16);
+  --te-flow-guide-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
+  --te-flow-step-bg: linear-gradient(180deg, rgba(12, 17, 26, 0.92), rgba(9, 14, 22, 0.9));
+  --te-flow-step-border: rgba(118, 135, 168, 0.16);
+  --te-flow-title: #aab6c9;
+  --te-flow-step-title: #f2f6ff;
+  --te-flow-step-copy: #97a5bb;
+  --te-flow-arrow: #84b8ff;
+  --te-section-card-bg:
+    radial-gradient(480px 210px at 100% -30%, rgba(48, 122, 255, 0.16), transparent 58%),
+    linear-gradient(180deg, rgba(12, 17, 26, 0.9), rgba(9, 14, 22, 0.95));
+  --te-section-card-border: rgba(118, 135, 168, 0.16);
+  --te-section-card-shadow: 0 16px 30px rgba(0, 0, 0, 0.22);
+  --te-section-card-hover-shadow: 0 22px 34px rgba(0, 0, 0, 0.28);
+  --te-kpi-bg:
+    radial-gradient(420px 160px at 0% 0%, rgba(18, 93, 255, 0.14), transparent 56%),
+    linear-gradient(180deg, rgba(12, 17, 26, 0.92), rgba(9, 14, 22, 0.88));
+  --te-table-bg: rgba(11, 16, 25, 0.88);
+  --te-table-border: rgba(118, 135, 168, 0.14);
+  --te-empty-border: rgba(118, 135, 168, 0.28);
+  --te-empty-bg: linear-gradient(180deg, rgba(12, 17, 26, 0.9), rgba(9, 14, 22, 0.92));
+  --te-empty-icon: #9fb0c7;
+  --te-scroll-thumb: rgba(122, 142, 176, 0.52);
+  --te-scroll-track-border: rgba(7, 10, 16, 0.8);
+  --te-calling-heading: #f7fbff;
+  --te-calling-body: #c6d1e1;
+  --te-calling-soft: #a6b4c8;
+  --te-calling-muted: #7f93b4;
+  --te-calling-label: #88a8dc;
+  --te-calling-icon: #9eb7db;
+  --te-calling-success: #2dd4bf;
+  --te-calling-danger: #f9738f;
+  --te-calling-warning: #ffcc66;
+  --te-calling-warning-text: #ffe7a8;
+  --te-calling-toolbar-border: rgba(97, 124, 178, 0.22);
+  --te-calling-toolbar-bg:
+    radial-gradient(720px 320px at -8% -18%, rgba(76, 132, 255, 0.24), transparent 56%),
+    radial-gradient(620px 280px at 112% -12%, rgba(17, 199, 176, 0.14), transparent 52%),
+    linear-gradient(135deg, rgba(6, 10, 16, 0.98) 0%, rgba(8, 12, 18, 0.98) 44%, rgba(10, 15, 22, 0.96) 100%);
+  --te-calling-toolbar-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  --te-calling-hero-badge-bg: rgba(16, 36, 69, 0.52);
+  --te-calling-hero-badge-border: rgba(130, 162, 223, 0.34);
+  --te-calling-strip-badge-bg: rgba(12, 26, 52, 0.3);
+  --te-calling-strip-badge-border: rgba(125, 154, 208, 0.3);
+  --te-calling-toggle-bg: rgba(6, 16, 33, 0.44);
+  --te-calling-toggle-border: rgba(128, 157, 214, 0.24);
+  --te-calling-toggle-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --te-calling-stat-bg:
+    linear-gradient(180deg, rgba(12, 27, 52, 0.78), rgba(9, 20, 39, 0.78)),
+    radial-gradient(340px 140px at 100% 0%, rgba(69, 121, 245, 0.18), transparent 62%);
+  --te-calling-stat-border: rgba(114, 144, 204, 0.24);
+  --te-calling-panel-bg:
+    radial-gradient(560px 220px at 100% -8%, rgba(53, 113, 236, 0.15), transparent 58%),
+    linear-gradient(180deg, rgba(8, 18, 35, 0.96), rgba(12, 24, 47, 0.95));
+  --te-calling-panel-primary-bg:
+    radial-gradient(420px 220px at 100% 0%, rgba(31, 122, 255, 0.2), transparent 56%),
+    radial-gradient(360px 180px at 0% 100%, rgba(10, 176, 139, 0.12), transparent 58%),
+    linear-gradient(180deg, rgba(7, 18, 35, 0.98), rgba(11, 23, 44, 0.96));
+  --te-calling-panel-accent-bg:
+    radial-gradient(420px 190px at 100% 0%, rgba(153, 102, 255, 0.16), transparent 56%),
+    linear-gradient(180deg, rgba(8, 17, 33, 0.96), rgba(16, 28, 56, 0.96));
+  --te-calling-panel-queue-bg:
+    radial-gradient(360px 180px at 0% 0%, rgba(31, 122, 255, 0.16), transparent 55%),
+    linear-gradient(180deg, rgba(7, 18, 35, 0.97), rgba(11, 22, 42, 0.96));
+  --te-calling-panel-transcript-bg:
+    radial-gradient(340px 180px at 100% 0%, rgba(10, 176, 139, 0.12), transparent 58%),
+    linear-gradient(180deg, rgba(8, 17, 33, 0.96), rgba(12, 24, 45, 0.96));
+  --te-calling-panel-border: rgba(97, 124, 178, 0.18);
+  --te-calling-panel-shadow: 0 22px 58px rgba(6, 16, 33, 0.22);
+  --te-calling-input-border: rgba(123, 151, 203, 0.42);
+  --te-calling-input-bg: rgba(18, 25, 39, 0.96);
+  --te-calling-input-copy: #eff5ff;
+  --te-calling-input-placeholder: rgba(131, 153, 191, 0.76);
+  --te-calling-queue-bg:
+    linear-gradient(180deg, rgba(13, 29, 56, 0.84), rgba(10, 22, 43, 0.84)),
+    radial-gradient(260px 120px at 100% 0%, rgba(44, 110, 255, 0.14), transparent 62%);
+  --te-calling-queue-border: rgba(84, 110, 161, 0.22);
+  --te-calling-queue-hover-border: rgba(113, 150, 223, 0.36);
+  --te-calling-queue-hover-shadow: 0 18px 28px rgba(6, 16, 33, 0.2);
+  --te-calling-queue-active-bg:
+    linear-gradient(180deg, rgba(14, 35, 69, 0.92), rgba(11, 26, 51, 0.9)),
+    radial-gradient(260px 120px at 100% 0%, rgba(61, 133, 255, 0.22), transparent 62%);
+  --te-calling-queue-active-border: rgba(120, 176, 255, 0.62);
+  --te-calling-queue-active-shadow: 0 0 0 1px rgba(86, 149, 255, 0.28), 0 22px 36px rgba(6, 16, 33, 0.26);
+  --te-calling-stage-bg:
+    linear-gradient(180deg, rgba(12, 27, 52, 0.86), rgba(8, 18, 36, 0.82)),
+    radial-gradient(260px 120px at 0% 0%, rgba(17, 199, 176, 0.12), transparent 62%);
+  --te-calling-stage-border: rgba(86, 113, 166, 0.22);
+  --te-calling-stage-line: linear-gradient(90deg, rgba(80, 178, 255, 0.3), rgba(14, 194, 169, 0.18));
+  --te-calling-stage-node-bg: rgba(7, 17, 31, 0.88);
+  --te-calling-stage-node-border: rgba(95, 126, 186, 0.42);
+  --te-calling-stage-node-active-bg: linear-gradient(180deg, rgba(12, 37, 43, 0.95), rgba(8, 22, 30, 0.9));
+  --te-calling-stage-node-active-border: rgba(82, 214, 183, 0.42);
+  --te-calling-stage-node-current-shadow: 0 0 0 1px rgba(79, 177, 255, 0.22), 0 18px 30px rgba(5, 15, 31, 0.24);
+  --te-calling-brief-bg:
+    linear-gradient(180deg, rgba(14, 30, 57, 0.8), rgba(10, 22, 42, 0.76)),
+    radial-gradient(220px 120px at 100% 0%, rgba(39, 116, 255, 0.14), transparent 62%);
+  --te-calling-brief-border: rgba(82, 110, 161, 0.2);
+  --te-calling-meter-bg:
+    linear-gradient(180deg, rgba(11, 27, 50, 0.84), rgba(8, 19, 37, 0.84)),
+    radial-gradient(280px 130px at 0% 0%, rgba(10, 176, 139, 0.14), transparent 62%);
+  --te-calling-meter-border: rgba(91, 120, 177, 0.22);
+  --te-calling-note-bg: linear-gradient(180deg, rgba(14, 28, 52, 0.74), rgba(10, 19, 38, 0.78));
+  --te-calling-note-border: rgba(87, 113, 162, 0.18);
+  --te-calling-alert-bg:
+    linear-gradient(180deg, rgba(64, 42, 10, 0.8), rgba(43, 28, 8, 0.86)),
+    radial-gradient(260px 120px at 0% 0%, rgba(255, 187, 68, 0.16), transparent 62%);
+  --te-calling-alert-border: rgba(255, 205, 106, 0.24);
+  --te-calling-transcript-bg:
+    linear-gradient(180deg, rgba(8, 18, 34, 0.88), rgba(10, 22, 42, 0.86)),
+    radial-gradient(300px 140px at 100% 0%, rgba(17, 199, 176, 0.08), transparent 62%);
+  --te-calling-transcript-border: rgba(86, 113, 166, 0.2);
+  --te-calling-bubble-bg: linear-gradient(180deg, rgba(14, 28, 52, 0.78), rgba(9, 20, 38, 0.76));
+  --te-calling-bubble-border: rgba(86, 111, 160, 0.22);
+  --te-calling-bubble-agent-bg:
+    linear-gradient(180deg, rgba(15, 40, 76, 0.84), rgba(10, 27, 53, 0.82)),
+    radial-gradient(240px 120px at 100% 0%, rgba(72, 127, 255, 0.16), transparent 62%);
+  --te-calling-bubble-agent-border: rgba(85, 149, 255, 0.28);
+  --te-calling-bubble-user-bg:
+    linear-gradient(180deg, rgba(11, 43, 46, 0.84), rgba(9, 31, 33, 0.82)),
+    radial-gradient(220px 120px at 100% 0%, rgba(17, 199, 176, 0.14), transparent 62%);
+  --te-calling-bubble-user-border: rgba(46, 170, 142, 0.26);
+  --te-calling-bubble-system-bg: linear-gradient(180deg, rgba(22, 31, 50, 0.82), rgba(13, 20, 35, 0.82));
+  --te-calling-bubble-system-border: rgba(122, 143, 181, 0.2);
+  --te-calling-partial-bg: rgba(8, 18, 35, 0.54);
+  --te-calling-partial-border: rgba(105, 131, 187, 0.24);
+  --te-calling-timeline-bg:
+    linear-gradient(180deg, rgba(13, 29, 54, 0.76), rgba(8, 18, 36, 0.76)),
+    radial-gradient(220px 120px at 100% 0%, rgba(49, 112, 236, 0.14), transparent 62%);
+  --te-calling-timeline-border: rgba(87, 112, 160, 0.18);
 }
 
 * {
@@ -26,11 +462,7 @@ body {
   margin: 0;
   color: var(--te-text);
   font-family: "SF Pro Display", "SF Pro Text", "Manrope", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-  background:
-    radial-gradient(1080px 660px at -14% -22%, rgba(76, 132, 255, 0.2), transparent 50%),
-    radial-gradient(920px 560px at 114% -24%, rgba(0, 175, 150, 0.11), transparent 52%),
-    radial-gradient(840px 480px at 50% 122%, rgba(18, 93, 255, 0.09), transparent 50%),
-    linear-gradient(180deg, #f8fafd 0%, #f2f6fb 52%, #edf2f9 100%);
+  background: var(--te-body-bg);
 }
 
 #root {
@@ -53,17 +485,17 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  opacity: 0.1;
+  opacity: var(--te-body-grid-opacity);
   background-image:
-    radial-gradient(rgba(0, 0, 0, 0.18) 0.45px, transparent 0.45px),
-    radial-gradient(rgba(255, 255, 255, 0.32) 0.45px, transparent 0.45px);
+    radial-gradient(var(--te-body-grid-dark) 0.45px, transparent 0.45px),
+    radial-gradient(var(--te-body-grid-light) 0.45px, transparent 0.45px);
   background-size: 3px 3px, 4px 4px;
   background-position: 0 0, 1px 1px;
-  mix-blend-mode: soft-light;
+  mix-blend-mode: var(--te-body-grid-blend);
 }
 
 a {
-  color: var(--te-brand-blue);
+  color: var(--te-link);
   text-decoration: none;
 }
 
@@ -76,12 +508,9 @@ a:hover {
 }
 
 .te-glow-surface {
-  background:
-    radial-gradient(480px 250px at 0% 0%, rgba(24, 98, 255, 0.18), transparent 58%),
-    radial-gradient(480px 260px at 100% 0%, rgba(10, 176, 139, 0.12), transparent 58%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.99));
-  border: 1px solid rgba(101, 142, 226, 0.32);
-  box-shadow: 0 20px 42px rgba(9, 29, 64, 0.12);
+  background: var(--te-glow-surface-bg);
+  border: 1px solid var(--te-glow-surface-border);
+  box-shadow: var(--te-glow-surface-shadow);
   border-radius: 20px;
 }
 
@@ -126,11 +555,9 @@ a:hover {
 }
 
 .te-module-header {
-  border-color: rgba(109, 125, 168, 0.22);
-  background:
-    linear-gradient(120deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.78) 100%),
-    radial-gradient(420px 180px at 0% 0%, rgba(90, 126, 255, 0.22), transparent 62%);
-  box-shadow: 0 22px 42px rgba(15, 24, 42, 0.1);
+  border-color: var(--te-module-header-border);
+  background: var(--te-module-header-bg);
+  box-shadow: var(--te-module-header-shadow);
   position: relative;
   overflow: hidden;
 }
@@ -146,18 +573,16 @@ a:hover {
 }
 
 .te-flow-guide {
-  border-color: rgba(122, 140, 184, 0.2);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(253, 254, 255, 0.82)),
-    radial-gradient(620px 260px at 100% 0%, rgba(0, 199, 190, 0.14), transparent 62%);
-  box-shadow: 0 14px 34px rgba(15, 24, 42, 0.08);
+  border-color: var(--te-flow-guide-border);
+  background: var(--te-flow-guide-bg);
+  box-shadow: var(--te-flow-guide-shadow);
 }
 
 .te-flow-step {
   padding: 10px 12px;
   border-radius: 14px;
-  border: 1px solid rgba(116, 136, 179, 0.2);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(249, 251, 255, 0.84));
+  border: 1px solid var(--te-flow-step-border);
+  background: var(--te-flow-step-bg);
 }
 
 .te-flow-number {
@@ -166,17 +591,15 @@ a:hover {
 
 .te-section-card {
   border-radius: 18px;
-  border: 1px solid rgba(113, 130, 167, 0.22);
-  background:
-    radial-gradient(480px 210px at 100% -30%, rgba(48, 122, 255, 0.12), transparent 58%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.95));
-  box-shadow: 0 16px 30px rgba(15, 24, 42, 0.08);
+  border: 1px solid var(--te-section-card-border);
+  background: var(--te-section-card-bg);
+  box-shadow: var(--te-section-card-shadow);
   transition: transform 180ms ease, box-shadow 200ms ease, filter 200ms ease;
 }
 
 .te-section-card:hover {
   transform: translateY(-1px);
-  box-shadow: 0 22px 34px rgba(15, 24, 42, 0.11);
+  box-shadow: var(--te-section-card-hover-shadow);
 }
 
 .mantine-Button-root {
@@ -228,10 +651,20 @@ a:hover {
 .te-kpi-card {
   border-radius: 16px;
   border: 1px solid var(--te-panel-border);
-  background:
-    radial-gradient(420px 160px at 0% 0%, rgba(18, 93, 255, 0.12), transparent 56%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.84));
+  background: var(--te-kpi-bg);
   box-shadow: var(--te-panel-shadow);
+}
+
+.te-kpi-card .mantine-Title-root,
+.te-data-card .mantine-Title-root,
+.te-empty-state .mantine-Title-root {
+  color: var(--te-heading);
+}
+
+.te-kpi-card .mantine-Text-root,
+.te-data-card .mantine-Text-root,
+.te-empty-state .mantine-Text-root {
+  color: var(--te-copy);
 }
 
 .te-data-card {
@@ -242,9 +675,9 @@ a:hover {
 
 .te-table-wrap {
   border-radius: 12px;
-  border: 1px solid rgba(88, 108, 147, 0.18);
+  border: 1px solid var(--te-table-border);
   overflow: auto;
-  background: rgba(255, 255, 255, 0.75);
+  background: var(--te-table-bg);
 }
 
 .te-table-wrap .mantine-Table-table {
@@ -255,18 +688,23 @@ a:hover {
   position: sticky;
   top: 0;
   z-index: 2;
+  color: var(--te-copy);
+}
+
+.te-table-wrap .mantine-Table-td {
+  color: var(--te-heading);
 }
 
 .te-empty-state {
-  border: 1px dashed rgba(96, 117, 156, 0.38);
+  border: 1px dashed var(--te-empty-border);
   border-radius: 14px;
   padding: 26px 18px;
-  background: linear-gradient(180deg, rgba(252, 253, 255, 0.92), rgba(248, 251, 255, 0.8));
+  background: var(--te-empty-bg);
 }
 
 .te-subtle-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgba(106, 126, 164, 0.55) transparent;
+  scrollbar-color: var(--te-scroll-thumb) transparent;
 }
 
 .te-subtle-scroll::-webkit-scrollbar {
@@ -276,8 +714,8 @@ a:hover {
 
 .te-subtle-scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(106, 126, 164, 0.52);
-  border: 2px solid rgba(255, 255, 255, 0.8);
+  background: var(--te-scroll-thumb);
+  border: 2px solid var(--te-scroll-track-border);
 }
 
 .te-calling-shell {
@@ -288,12 +726,9 @@ a:hover {
 .te-calling-toolbar {
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(106, 142, 212, 0.3);
-  background:
-    radial-gradient(720px 320px at -8% -18%, rgba(76, 132, 255, 0.3), transparent 56%),
-    radial-gradient(620px 280px at 112% -12%, rgba(17, 199, 176, 0.16), transparent 52%),
-    linear-gradient(135deg, rgba(6, 17, 34, 0.98) 0%, rgba(9, 21, 42, 0.96) 44%, rgba(12, 28, 53, 0.94) 100%);
-  box-shadow: 0 18px 40px rgba(4, 14, 30, 0.22);
+  border: 1px solid var(--te-calling-toolbar-border);
+  background: var(--te-calling-toolbar-bg);
+  box-shadow: var(--te-calling-toolbar-shadow);
 }
 
 .te-calling-toolbar::before,
@@ -321,26 +756,26 @@ a:hover {
 }
 
 .te-calling-toolbar-title {
-  color: #f8fbff;
+  color: var(--te-calling-heading);
   letter-spacing: -0.025em;
 }
 
 .te-calling-toolbar-copy {
-  color: rgba(220, 232, 255, 0.84);
+  color: var(--te-calling-body);
   font-size: 0.92rem;
   line-height: 1.5;
 }
 
 .te-calling-hero-badge {
-  color: #eff5ff;
-  background: rgba(16, 36, 69, 0.52);
-  border: 1px solid rgba(130, 162, 223, 0.34);
+  color: var(--te-calling-heading);
+  background: var(--te-calling-hero-badge-bg);
+  border: 1px solid var(--te-calling-hero-badge-border);
 }
 
 .te-calling-strip-badge {
-  color: #d8e5ff;
-  border-color: rgba(125, 154, 208, 0.3);
-  background: rgba(12, 26, 52, 0.3);
+  color: var(--te-calling-soft);
+  border-color: var(--te-calling-strip-badge-border);
+  background: var(--te-calling-strip-badge-bg);
 }
 
 .te-calling-toolbar-actions {
@@ -353,9 +788,9 @@ a:hover {
   gap: 14px;
   padding: 10px 14px;
   border-radius: 999px;
-  border: 1px solid rgba(128, 157, 214, 0.24);
-  background: rgba(6, 16, 33, 0.44);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--te-calling-toggle-border);
+  background: var(--te-calling-toggle-bg);
+  box-shadow: var(--te-calling-toggle-shadow);
 }
 
 .te-calling-layout {
@@ -389,15 +824,13 @@ a:hover {
 .te-calling-stat {
   position: relative;
   min-height: 102px;
-  border: 1px solid rgba(114, 144, 204, 0.24);
-  background:
-    linear-gradient(180deg, rgba(12, 27, 52, 0.78), rgba(9, 20, 39, 0.78)),
-    radial-gradient(340px 140px at 100% 0%, rgba(69, 121, 245, 0.18), transparent 62%);
+  border: 1px solid var(--te-calling-stat-border);
+  background: var(--te-calling-stat-bg);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .te-calling-stat-label {
-  color: #8fa6cc;
+  color: var(--te-calling-label);
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -406,7 +839,7 @@ a:hover {
 
 .te-calling-stat-value {
   margin-top: 10px;
-  color: #f8fbff;
+  color: var(--te-calling-heading);
   font-size: clamp(1.45rem, 2.1vw, 1.95rem);
   font-weight: 800;
   line-height: 1.05;
@@ -423,7 +856,7 @@ a:hover {
 
 .te-calling-stat-hint {
   margin-top: 10px;
-  color: #bdd1ef;
+  color: var(--te-calling-body);
   font-size: 0.78rem;
   line-height: 1.35;
 }
@@ -431,40 +864,29 @@ a:hover {
 .te-calling-panel {
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(97, 124, 178, 0.18);
-  background:
-    radial-gradient(560px 220px at 100% -8%, rgba(53, 113, 236, 0.15), transparent 58%),
-    linear-gradient(180deg, rgba(8, 18, 35, 0.96), rgba(12, 24, 47, 0.95));
-  box-shadow: 0 22px 58px rgba(6, 16, 33, 0.22);
+  border: 1px solid var(--te-calling-panel-border);
+  background: var(--te-calling-panel-bg);
+  box-shadow: var(--te-calling-panel-shadow);
 }
 
 .te-calling-panel--primary {
-  background:
-    radial-gradient(420px 220px at 100% 0%, rgba(31, 122, 255, 0.2), transparent 56%),
-    radial-gradient(360px 180px at 0% 100%, rgba(10, 176, 139, 0.12), transparent 58%),
-    linear-gradient(180deg, rgba(7, 18, 35, 0.98), rgba(11, 23, 44, 0.96));
+  background: var(--te-calling-panel-primary-bg);
 }
 
 .te-calling-panel--accent {
-  background:
-    radial-gradient(420px 190px at 100% 0%, rgba(153, 102, 255, 0.16), transparent 56%),
-    linear-gradient(180deg, rgba(8, 17, 33, 0.96), rgba(16, 28, 56, 0.96));
+  background: var(--te-calling-panel-accent-bg);
 }
 
 .te-calling-panel--queue {
-  background:
-    radial-gradient(360px 180px at 0% 0%, rgba(31, 122, 255, 0.16), transparent 55%),
-    linear-gradient(180deg, rgba(7, 18, 35, 0.97), rgba(11, 22, 42, 0.96));
+  background: var(--te-calling-panel-queue-bg);
 }
 
 .te-calling-panel--transcript {
-  background:
-    radial-gradient(340px 180px at 100% 0%, rgba(10, 176, 139, 0.12), transparent 58%),
-    linear-gradient(180deg, rgba(8, 17, 33, 0.96), rgba(12, 24, 45, 0.96));
+  background: var(--te-calling-panel-transcript-bg);
 }
 
 .te-calling-section-label {
-  color: #7f9bca;
+  color: var(--te-calling-label);
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -474,7 +896,7 @@ a:hover {
 .te-calling-panel .mantine-InputWrapper-label,
 .te-calling-panel label,
 .te-calling-panel .mantine-Select-label {
-  color: #9bb1d3;
+  color: var(--te-calling-label);
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -484,7 +906,7 @@ a:hover {
 .te-calling-panel .mantine-InputWrapper-description,
 .te-calling-panel .mantine-Select-description,
 .te-calling-panel .mantine-InputWrapper-error {
-  color: #b6cae8;
+  color: var(--te-calling-soft);
 }
 
 .te-calling-panel .mantine-Input-input,
@@ -492,9 +914,9 @@ a:hover {
 .te-calling-panel .mantine-Select-input,
 .te-calling-panel input,
 .te-calling-panel button[data-combobox-control] {
-  border-color: rgba(123, 151, 203, 0.42) !important;
-  background: rgba(245, 248, 255, 0.96) !important;
-  color: #091427 !important;
+  border-color: var(--te-calling-input-border) !important;
+  background: var(--te-calling-input-bg) !important;
+  color: var(--te-calling-input-copy) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
 }
 
@@ -502,15 +924,15 @@ a:hover {
 .te-calling-panel .mantine-TextInput-input::placeholder,
 .te-calling-panel .mantine-Select-input::placeholder,
 .te-calling-panel input::placeholder {
-  color: rgba(86, 109, 151, 0.7) !important;
+  color: var(--te-calling-input-placeholder) !important;
 }
 
 .te-calling-panel .mantine-Switch-label {
-  color: #d8e4ff;
+  color: var(--te-calling-body);
 }
 
 .te-calling-panel--accent .mantine-Button-root[data-variant="subtle"] {
-  color: #8fc4ff;
+  color: var(--te-link);
 }
 
 .te-calling-panel--accent .mantine-Button-root[data-variant="subtle"]:hover {
@@ -519,25 +941,21 @@ a:hover {
 
 .te-calling-queue-row {
   cursor: pointer;
-  border: 1px solid rgba(84, 110, 161, 0.22);
-  background:
-    linear-gradient(180deg, rgba(13, 29, 56, 0.84), rgba(10, 22, 43, 0.84)),
-    radial-gradient(260px 120px at 100% 0%, rgba(44, 110, 255, 0.14), transparent 62%);
+  border: 1px solid var(--te-calling-queue-border);
+  background: var(--te-calling-queue-bg);
   transition: transform 180ms ease, border-color 180ms ease, box-shadow 200ms ease;
 }
 
 .te-calling-queue-row:hover {
   transform: translateY(-1px);
-  border-color: rgba(113, 150, 223, 0.36);
-  box-shadow: 0 18px 28px rgba(6, 16, 33, 0.2);
+  border-color: var(--te-calling-queue-hover-border);
+  box-shadow: var(--te-calling-queue-hover-shadow);
 }
 
 .te-calling-queue-row[data-active="true"] {
-  border-color: rgba(120, 176, 255, 0.62);
-  box-shadow: 0 0 0 1px rgba(86, 149, 255, 0.28), 0 22px 36px rgba(6, 16, 33, 0.26);
-  background:
-    linear-gradient(180deg, rgba(14, 35, 69, 0.92), rgba(11, 26, 51, 0.9)),
-    radial-gradient(260px 120px at 100% 0%, rgba(61, 133, 255, 0.22), transparent 62%);
+  border-color: var(--te-calling-queue-active-border);
+  box-shadow: var(--te-calling-queue-active-shadow);
+  background: var(--te-calling-queue-active-bg);
 }
 
 .te-calling-queue-meta {
@@ -548,10 +966,8 @@ a:hover {
 }
 
 .te-stage-rail {
-  border: 1px solid rgba(86, 113, 166, 0.22);
-  background:
-    linear-gradient(180deg, rgba(12, 27, 52, 0.86), rgba(8, 18, 36, 0.82)),
-    radial-gradient(260px 120px at 0% 0%, rgba(17, 199, 176, 0.12), transparent 62%);
+  border: 1px solid var(--te-calling-stage-border);
+  background: var(--te-calling-stage-bg);
 }
 
 .te-stage-track {
@@ -570,7 +986,7 @@ a:hover {
   right: 24px;
   top: 16px;
   height: 1px;
-  background: linear-gradient(90deg, rgba(80, 178, 255, 0.3), rgba(14, 194, 169, 0.18));
+  background: var(--te-calling-stage-line);
 }
 
 .te-stage-item {
@@ -589,16 +1005,16 @@ a:hover {
   width: 32px;
   height: 32px;
   border-radius: 999px;
-  border: 1px solid rgba(95, 126, 186, 0.42);
-  background: rgba(7, 17, 31, 0.88);
-  color: #7f9bca;
+  border: 1px solid var(--te-calling-stage-node-border);
+  background: var(--te-calling-stage-node-bg);
+  color: var(--te-calling-soft);
   font-size: 0.74rem;
   font-weight: 800;
   letter-spacing: 0.02em;
 }
 
 .te-stage-caption {
-  color: #8ea8cc;
+  color: var(--te-calling-soft);
   font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -607,18 +1023,18 @@ a:hover {
 }
 
 .te-stage-item[data-active="true"] .te-stage-node {
-  border-color: rgba(82, 214, 183, 0.42);
-  background: linear-gradient(180deg, rgba(12, 37, 43, 0.95), rgba(8, 22, 30, 0.9));
-  color: #9de7d8;
+  border-color: var(--te-calling-stage-node-active-border);
+  background: var(--te-calling-stage-node-active-bg);
+  color: var(--te-calling-success);
 }
 
 .te-stage-item[data-current="true"] .te-stage-node {
   transform: translateY(-1px);
-  box-shadow: 0 0 0 1px rgba(79, 177, 255, 0.22), 0 18px 30px rgba(5, 15, 31, 0.24);
+  box-shadow: var(--te-calling-stage-node-current-shadow);
 }
 
 .te-stage-item[data-active="true"] .te-stage-caption {
-  color: #d9e7ff;
+  color: var(--te-calling-heading);
 }
 
 .te-calling-summary-grid {
@@ -628,10 +1044,8 @@ a:hover {
 }
 
 .te-calling-brief-card {
-  border: 1px solid rgba(82, 110, 161, 0.2);
-  background:
-    linear-gradient(180deg, rgba(14, 30, 57, 0.8), rgba(10, 22, 42, 0.76)),
-    radial-gradient(220px 120px at 100% 0%, rgba(39, 116, 255, 0.14), transparent 62%);
+  border: 1px solid var(--te-calling-brief-border);
+  background: var(--te-calling-brief-bg);
 }
 
 .te-calling-control-grid {
@@ -663,10 +1077,8 @@ a:hover {
 }
 
 .te-calling-meter {
-  border: 1px solid rgba(91, 120, 177, 0.22);
-  background:
-    linear-gradient(180deg, rgba(11, 27, 50, 0.84), rgba(8, 19, 37, 0.84)),
-    radial-gradient(280px 130px at 0% 0%, rgba(10, 176, 139, 0.14), transparent 62%);
+  border: 1px solid var(--te-calling-meter-border);
+  background: var(--te-calling-meter-bg);
 }
 
 .te-calling-meter--compact {
@@ -678,10 +1090,8 @@ a:hover {
   flex-direction: column;
   flex: 1 1 0;
   min-height: 0;
-  border: 1px solid rgba(86, 113, 166, 0.2);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 34, 0.88), rgba(10, 22, 42, 0.86)),
-    radial-gradient(300px 140px at 100% 0%, rgba(17, 199, 176, 0.08), transparent 62%);
+  border: 1px solid var(--te-calling-transcript-border);
+  background: var(--te-calling-transcript-bg);
 }
 
 .te-disposition-grid {
@@ -691,20 +1101,18 @@ a:hover {
 }
 
 .te-calling-inline-note {
-  border: 1px solid rgba(87, 113, 162, 0.18);
-  background: linear-gradient(180deg, rgba(14, 28, 52, 0.74), rgba(10, 19, 38, 0.78));
+  border: 1px solid var(--te-calling-note-border);
+  background: var(--te-calling-note-bg);
 }
 
 .te-compliance-row {
-  border: 1px solid rgba(86, 110, 158, 0.18);
-  background: linear-gradient(180deg, rgba(14, 28, 52, 0.72), rgba(9, 18, 36, 0.74));
+  border: 1px solid var(--te-calling-note-border);
+  background: var(--te-calling-note-bg);
 }
 
 .te-calling-alert {
-  border: 1px solid rgba(255, 205, 106, 0.24);
-  background:
-    linear-gradient(180deg, rgba(64, 42, 10, 0.8), rgba(43, 28, 8, 0.86)),
-    radial-gradient(260px 120px at 0% 0%, rgba(255, 187, 68, 0.16), transparent 62%);
+  border: 1px solid var(--te-calling-alert-border);
+  background: var(--te-calling-alert-bg);
 }
 
 .te-compliance-grid {
@@ -713,39 +1121,33 @@ a:hover {
 }
 
 .te-transcript-bubble {
-  border: 1px solid rgba(86, 111, 160, 0.22);
-  background: linear-gradient(180deg, rgba(14, 28, 52, 0.78), rgba(9, 20, 38, 0.76));
+  border: 1px solid var(--te-calling-bubble-border);
+  background: var(--te-calling-bubble-bg);
 }
 
 .te-transcript-bubble[data-who="agent"] {
-  border-color: rgba(85, 149, 255, 0.28);
-  background:
-    linear-gradient(180deg, rgba(15, 40, 76, 0.84), rgba(10, 27, 53, 0.82)),
-    radial-gradient(240px 120px at 100% 0%, rgba(72, 127, 255, 0.16), transparent 62%);
+  border-color: var(--te-calling-bubble-agent-border);
+  background: var(--te-calling-bubble-agent-bg);
 }
 
 .te-transcript-bubble[data-who="user"] {
-  border-color: rgba(46, 170, 142, 0.26);
-  background:
-    linear-gradient(180deg, rgba(11, 43, 46, 0.84), rgba(9, 31, 33, 0.82)),
-    radial-gradient(220px 120px at 100% 0%, rgba(17, 199, 176, 0.14), transparent 62%);
+  border-color: var(--te-calling-bubble-user-border);
+  background: var(--te-calling-bubble-user-bg);
 }
 
 .te-transcript-bubble[data-who="system"] {
-  border-color: rgba(122, 143, 181, 0.2);
-  background: linear-gradient(180deg, rgba(22, 31, 50, 0.82), rgba(13, 20, 35, 0.82));
+  border-color: var(--te-calling-bubble-system-border);
+  background: var(--te-calling-bubble-system-bg);
 }
 
 .te-transcript-partial {
-  border: 1px dashed rgba(105, 131, 187, 0.24);
-  background: rgba(8, 18, 35, 0.54);
+  border: 1px dashed var(--te-calling-partial-border);
+  background: var(--te-calling-partial-bg);
 }
 
 .te-timeline-row {
-  border: 1px solid rgba(87, 112, 160, 0.18);
-  background:
-    linear-gradient(180deg, rgba(13, 29, 54, 0.76), rgba(8, 18, 36, 0.76)),
-    radial-gradient(220px 120px at 100% 0%, rgba(49, 112, 236, 0.14), transparent 62%);
+  border: 1px solid var(--te-calling-timeline-border);
+  background: var(--te-calling-timeline-bg);
 }
 
 .te-calling-shell .mantine-Progress-section {

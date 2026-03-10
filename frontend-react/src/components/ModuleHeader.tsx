@@ -16,7 +16,7 @@ export function ModuleHeader({
       <Group justify="space-between" align="flex-start" wrap="nowrap">
         <Stack gap={4}>
           <Group gap="xs">
-            <Title order={3} c="#111827" style={{ letterSpacing: "-0.015em" }}>
+            <Title order={3} c="var(--te-heading)" style={{ letterSpacing: "-0.015em" }}>
               {title}
             </Title>
             {badge ? (
@@ -26,7 +26,7 @@ export function ModuleHeader({
             ) : null}
           </Group>
           {subtitle ? (
-            <Text size="sm" c="#4f5d73" maw={860}>
+            <Text size="sm" c="var(--te-copy)" maw={860}>
               {subtitle}
             </Text>
           ) : null}
