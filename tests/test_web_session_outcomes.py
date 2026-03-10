@@ -5,16 +5,19 @@ import tempfile
 import time
 import unittest
 from contextlib import suppress
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
 import web_app
 from audit_store import SQLiteAuditStore
+from datetime_utils import parse_date_from_text as real_parse_date_from_text
 from followup_service import FollowupService
 from strategy_engine import StrategyEngine
-from web_session import WebCallSession
+from web_session import EmotionalState, WebCallSession
 from workflow_engine import WorkflowEngine, WorkflowState
 
 
@@ -140,6 +143,7 @@ class WebSessionOutcomeTests(unittest.TestCase):
         session._session_id = "sess-profanity-1"
         session._last_activity_ts = 0.0
         session._pending_step_id = None
+        session._reply_to_step_id = None
         session._pending_customer_meta_question = None
         session._force_dynamic_reply_once = False
         session._preview_active = False
@@ -182,6 +186,76 @@ class WebSessionOutcomeTests(unittest.TestCase):
         session._persist_commitments = lambda: None
         session._persist_state = lambda: None
         session._start_generation_from_text = self._noop_async
+        return session
+
+    def _auto_ptp_session(self) -> WebCallSession:
+        session = WebCallSession.__new__(WebCallSession)
+        session._session_id = "sess-auto-ptp-1"
+        session._last_activity_ts = 0.0
+        session._pending_step_id = None
+        session._reply_to_step_id = None
+        session._pending_customer_meta_question = None
+        session._force_dynamic_reply_once = False
+        session._preview_active = False
+        session._last_user_text = ""
+        session._workflow_tz = "Asia/Kolkata"
+        session._enable_advanced_workflow = True
+        session._ptp_min_days = 0
+        session._ptp_max_days = 30
+        session._callback_hours_start = 9
+        session._callback_hours_end = 20
+        session._facts = {
+            "customer_id": "CUST-1002",
+            "campaign_id": "cmp-auto-ptp",
+            "customer_name": "Asha Rao",
+            "phone": "+919999999999",
+            "overdue_amount": "2500",
+            "brand_name": "TuringEdge",
+            "language_preference": "en-IN",
+            "ptp_date": None,
+            "reference_number": None,
+            "callback_time": None,
+        }
+        session._wf_state = WorkflowState(
+            consent=True,
+            identity_confirmed=True,
+            awareness_confirmed=True,
+            payment_made=False,
+            current_step="ask_ptp_or_callback",
+            last_agent_intent="ask_ptp_or_callback",
+        )
+        session._audit_store = self.audit
+        session._followup_service = self.followups
+        session._action_router = None
+        session._crm_adapter = None
+        session._excel_sink = None
+        session._compliance_engine = None
+        session._session_registry = None
+        session._log_redact_pii = False
+        session._last_persisted_ptp = None
+        session._last_persisted_callback = None
+        session._emotional_state = EmotionalState()
+        session._wf = WorkflowEngine(
+            enable_advanced=True,
+            max_retries=3,
+            tz="Asia/Kolkata",
+            ptp_min_days=0,
+            ptp_max_days=30,
+            callback_hours_start=9,
+            callback_hours_end=20,
+        )
+        session._preempt_mode_for_user_turn = lambda: "idle"
+        session.send_event = self._noop_send
+        session._emit_chat_message = self._noop_async
+        session._resolve_output_language = lambda language: language or "en-IN"
+        session._debug_trace = lambda *args, **kwargs: None
+        session._detect_customer_meta_question = lambda text: None
+        session._detect_language_switch_request = lambda text: None
+        session._update_policy_from_user = lambda text: None
+        session._consume_pending_step_binding = lambda: None
+        session._persist_state = lambda: None
+        session._start_generation_from_text = self._noop_async
+        session._get_strategy_decision = lambda: self.strategy.classify(45)
         return session
 
     def test_context_and_save_ptp_or_callback_persist_outcomes_and_followups(self):
@@ -242,6 +316,34 @@ class WebSessionOutcomeTests(unittest.TestCase):
         self.assertEqual(session._wf_state.last_transition_reason, "abusive_language")
         metrics = self.audit.metrics()
         self.assertEqual(metrics["profanity_incidents"], 1)
+
+    def test_handle_text_auto_captures_ordinal_ptp_and_persists_metrics(self):
+        session = self._auto_ptp_session()
+        fixed_now = datetime(2026, 3, 10, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+
+        with patch(
+            "web_session.parse_date_from_text",
+            side_effect=lambda text, *, tz, now=None: real_parse_date_from_text(text, tz=tz, now=fixed_now),
+        ):
+            asyncio.run(session.handle_text("I will make the payment on 12th"))
+
+        self.assertEqual(session._wf_state.ptp_date, "2026-03-12")
+        self.assertEqual(session._facts["ptp_date"], "2026-03-12")
+        self.assertEqual(session._wf_state.current_step, "closing")
+
+        metrics = self.audit.metrics(campaign_id="cmp-auto-ptp")
+        self.assertEqual(metrics["ptp_count"], 1)
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            outcome = conn.execute(
+                "SELECT ptp_date, campaign_id FROM outcomes WHERE session_id = ?",
+                ("sess-auto-ptp-1",),
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(outcome[0], "2026-03-12")
+        self.assertEqual(outcome[1], "cmp-auto-ptp")
 
 
 class VoiceSocketOutcomeTests(unittest.TestCase):
