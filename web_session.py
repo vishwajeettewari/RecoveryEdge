@@ -22,6 +22,8 @@ from websockets.exceptions import ConnectionClosed
 from session_store import SessionStore
 from pii import redact_pii
 from workflow_engine import WorkflowEngine, WorkflowState
+from dialogue_engine import build_conversation_state, requires_llm_reasoning
+from dialogue_normalizer import contains_short_acknowledgement, normalize_borrower_text
 from audit_store import SQLiteAuditStore
 from excel_sink import ExcelOutcomeSink
 from actions import ActionRouter
@@ -169,26 +171,26 @@ class WebCallSession:
         session_store_path: Optional[str] = None,
         dynamic_stt_language: bool = False,
         preview_partials: bool = False,
-        preview_after_ms: int = 600,
+        preview_after_ms: int = 200,
         llm_timeout_s: float = 20.0,
         tts_timeout_s: float = 20.0,
         stt_connect_timeout_s: float = 10.0,
         vad_rms_threshold: float = 500.0,
-        vad_silence_ms: int = 600,
-        stt_flush_interval_ms: int = 400,
+        vad_silence_ms: int = 300,
+        stt_flush_interval_ms: int = 200,
         audio_queue_max: int = 100,
         log_partial_transcripts: bool = True,
         log_tokens: bool = False,
         log_audio_chunks: bool = False,
         use_sdk: bool = True,
-        tts_stream_chunk_chars: int = 30,
+        tts_stream_chunk_chars: int = 24,
         tts_stream_flush_punct: bool = True,
-        tts_min_buffer_size: int = 50,
-        tts_max_chunk_length: int = 150,
+        tts_min_buffer_size: int = 18,
+        tts_max_chunk_length: int = 96,
         tts_output_audio_codec: str = "linear16",
         tts_output_audio_bitrate: Optional[str] = None,
-        tts_first_audio_timeout_s: float = 2.5,
-        post_speech_pause_ms: int = 600,
+        tts_first_audio_timeout_s: float = 1.2,
+        post_speech_pause_ms: int = 300,
         audit_store: Optional[SQLiteAuditStore] = None,
         excel_sink: Optional[ExcelOutcomeSink] = None,
         action_router: Optional[ActionRouter] = None,
@@ -331,6 +333,8 @@ class WebCallSession:
         self._drift_count: int = 0
         self._interrupted_response: str = ""
         self._interrupted_at: float = 0.0
+        self._interrupted_step: Optional[str] = None
+        self._interrupted_reason: Optional[str] = None
         self._pending_interrupt_ack: bool = False
         self._pending_repair_type: Optional[str] = None
         self._pending_resume_hint: Optional[str] = None
@@ -948,6 +952,11 @@ class WebCallSession:
         )
         self._consume_pending_step_binding()
         self._sync_workflow_from_facts()
+        self._log_structured_turn(
+            borrower_response=t,
+            analysis=analysis,
+            detected_language=lang,
+        )
         self._persist_commitments()
         self._persist_state()  # Persist state after extracting facts
         if analysis.sentiment.level == SentimentLevel.HOSTILE or analysis.intent_result.label == UserIntent.ABUSE:
@@ -1109,10 +1118,14 @@ class WebCallSession:
     def _apply_abusive_language_guard(self, *, text: str, reply_step: Optional[str]) -> None:
         if not self._is_abusive_utterance(text):
             return
-        self._wf_state.last_transition_reason = "abusive_language"
-        self._wf_state.current_step = "closing"
-        if not self._wf_state.disposition:
-            self._wf_state.disposition = "abusive_language_terminated"
+        self._wf_state.abuse_count = int(getattr(self._wf_state, "abuse_count", 0) or 0) + 1
+        if self._wf_state.abuse_count > 1:
+            self._wf_state.last_transition_reason = "abusive_language"
+            self._wf_state.current_step = "closing"
+            if not self._wf_state.disposition:
+                self._wf_state.disposition = "abusive_language_terminated"
+        else:
+            self._wf_state.last_transition_reason = "abusive_language_warning"
         if self._audit_store:
             try:
                 self._audit_store.record_violation(
@@ -1801,6 +1814,68 @@ class WebCallSession:
             return f"{name}, {out}"
         return f"Thanks, {name}. {out}"
 
+    def _trim_routine_ack_prefix(
+        self,
+        text: str,
+        *,
+        step: Optional[str],
+        language: Optional[str],
+    ) -> str:
+        out = (text or "").strip()
+        if not out:
+            return out
+        if (step or "").strip() not in {
+            "confirm_identity",
+            "confirm_awareness",
+            "ask_payment_made",
+            "ask_reference_number",
+            "ask_ptp_or_callback",
+            "confirm_ptp",
+        }:
+            return out
+        lang = self._canonical_language_code(language)
+        if lang == "hi-IN":
+            return re.sub(r"^ठीक है[\s,।.!?]*", "", out, count=1).strip() or out
+        if lang == "pa-IN":
+            return re.sub(r"^ਠੀਕ ਹੈ[\s,।.!?]*", "", out, count=1).strip() or out
+        if lang == "en-IN":
+            return re.sub(
+                r"^(?:okay|ok|alright|got it)[\s,.:!?-]*",
+                "",
+                out,
+                count=1,
+                flags=re.IGNORECASE,
+            ).strip() or out
+        return out
+
+    def _interrupt_ack_text(self, *, language: Optional[str]) -> str:
+        lang = self._canonical_language_code(language)
+        if lang == "hi-IN":
+            return "जी, बोलिए।"
+        if lang == "pa-IN":
+            return "ਜੀ, ਦੱਸੋ।"
+        return "Yes, go ahead."
+
+    def _remember_interruption_context(
+        self,
+        *,
+        step: Optional[str],
+        spoken_text: Optional[str],
+        full_text: Optional[str],
+        reason: Optional[str],
+    ) -> None:
+        remembered = self._normalize_branding_text((spoken_text or full_text or "").strip())
+        self._interrupted_response = remembered
+        self._interrupted_at = time.time()
+        self._interrupted_step = (step or "").strip() or None
+        self._interrupted_reason = (reason or "").strip() or None
+
+    def _clear_interruption_context(self) -> None:
+        self._interrupted_response = ""
+        self._interrupted_at = 0.0
+        self._interrupted_step = None
+        self._interrupted_reason = None
+
     def _has_payment_commitment_marker(self, text: str) -> bool:
         t = self._normalize_intent_text(text)
         if not t:
@@ -2028,7 +2103,60 @@ class WebCallSession:
             "reference_number": self._facts.get("reference_number"),
             "callback_time": self._facts.get("callback_time"),
             "payment_status": payment_status,
+            "corrected": bool(getattr(analysis.entities, "corrected", False)),
         }
+
+    def _conversation_state_snapshot(self, *, detected_language: Optional[str]) -> dict:
+        lang = self._resolve_output_language(detected_language)
+        return build_conversation_state(
+            facts=self._facts,
+            workflow_state=self._wf_state,
+            language=lang,
+        ).to_dict()
+
+    def _log_structured_turn(
+        self,
+        *,
+        borrower_response: str,
+        analysis: UtteranceAnalysis,
+        detected_language: Optional[str],
+    ) -> None:
+        payload = {
+            "borrower_response": borrower_response,
+            "normalized_text": getattr(analysis.intent_result, "normalized_text", normalize_borrower_text(borrower_response)),
+            "intent": getattr(analysis.intent_result, "canonical_intent", analysis.intent_result.label),
+            "intent_confidence": getattr(analysis.intent_result, "confidence", None),
+            "extracted_slots": {
+                "customer_name": analysis.entities.customer_name,
+                "ptp_date": analysis.entities.ptp_date,
+                "ptp_confidence": getattr(analysis.entities, "ptp_confidence", 0.0),
+                "callback_time": analysis.entities.callback_time,
+                "payment_status": analysis.entities.payment_status,
+                "reference_number": analysis.entities.reference_number,
+                "corrected": getattr(analysis.entities, "corrected", False),
+            },
+            "conversation_state": self._conversation_state_snapshot(detected_language=detected_language),
+            "timestamp": time.time(),
+        }
+        log_event(
+            logger,
+            "deterministic_turn",
+            session_id=self._session_id,
+            borrower_response=borrower_response,
+            normalized_text=payload["normalized_text"],
+            intent=payload["intent"],
+            extracted_slots=payload["extracted_slots"],
+            conversation_state=payload["conversation_state"],
+        )
+        if self._audit_store:
+            try:
+                self._audit_store.record_event(
+                    event_type="deterministic_turn",
+                    session_id=self._session_id,
+                    payload=payload,
+                )
+            except Exception as exc:
+                log_event(logger, "deterministic_turn_log_error", session_id=self._session_id, error=str(exc))
 
     async def _handle_hostile_turn(
         self,
@@ -2037,29 +2165,47 @@ class WebCallSession:
         language: Optional[str],
     ) -> None:
         lang = self._resolve_output_language(language) or "hi-IN"
-        self._wf_state.last_transition_reason = "abusive_language"
-        self._wf_state.disposition = "abusive_language_terminated"
-        self._wf_state.current_step = "closing"
+        abuse_count = int(getattr(self._wf_state, "abuse_count", 0) or 0)
+        close_call = abuse_count > 1
+        if close_call:
+            self._wf_state.last_transition_reason = "abusive_language"
+            self._wf_state.disposition = "abusive_language_terminated"
+            self._wf_state.current_step = "closing"
+        else:
+            self._wf_state.last_transition_reason = "abusive_language_warning"
         self._response_step_override = None
         self._pending_language_confirmation = None
         self._dialogue_state = self._dialogue_state_manager.sync_from_step(
-            "closing",
+            "closing" if close_call else self._wf_state.current_step,
             payment_made=getattr(self._wf_state, "payment_made", None),
             ptp_date=getattr(self._wf_state, "ptp_date", None),
             reference_number=getattr(self._wf_state, "reference_number", None),
             payment_assist_offered=getattr(self, "_payment_assist_offered", False),
         )
         self._emit_workflow_update()
-        assistant_text = self._fixed_prompt_for_step("closing", language=lang)
+        if close_call:
+            if lang.lower().startswith("hi"):
+                assistant_text = "समझ गया सर, मैं बाद में कॉल कर लेता हूँ।"
+            elif lang.lower().startswith("pa"):
+                assistant_text = "ਸਮਝ ਗਿਆ ਸਰ, ਮੈਂ ਬਾਅਦ ਵਿੱਚ ਕਾਲ ਕਰ ਲੈਂਦਾ ਹਾਂ।"
+            else:
+                assistant_text = "Understood. I will call back later."
+        else:
+            if lang.lower().startswith("hi"):
+                assistant_text = "मैं आपकी बात सुन रहा हूँ, लेकिन कृपया शांत रहिए। अब बताइए, भुगतान किया है या किस तारीख तक करेंगे?"
+            elif lang.lower().startswith("pa"):
+                assistant_text = "ਮੈਂ ਤੁਹਾਡੀ ਗੱਲ ਸੁਣ ਰਿਹਾ ਹਾਂ, ਪਰ ਕਿਰਪਾ ਕਰਕੇ ਸ਼ਾਂਤ ਰਹੋ। ਹੁਣ ਦੱਸੋ, ਭੁਗਤਾਨ ਹੋ ਗਿਆ ਹੈ ਜਾਂ ਕਿਹੜੀ ਤਾਰੀਖ ਤੱਕ ਕਰੋਗੇ?"
+            else:
+                assistant_text = "I am listening, but please keep the conversation respectful. Tell me whether payment is done or by what date you will pay."
         self._persist_state()
         if not hasattr(self, "_cancel_lock") or not hasattr(self, "tts_ws_url"):
             return
         await self._start_fixed_turn(
             assistant_text=assistant_text,
             language=lang,
-            step="closing",
+            step="closing" if close_call else (self._wf_state.current_step or "ask_payment_made"),
             update_workflow=False,
-            schedule_no_response=False,
+            schedule_no_response=not close_call,
         )
 
     def _language_confirmation_prompt(
@@ -3303,6 +3449,11 @@ class WebCallSession:
                         self._reply_to_utterance_id = None
                         self._consume_pending_step_binding()
                         self._sync_workflow_from_facts()
+                        self._log_structured_turn(
+                            borrower_response=text,
+                            analysis=analysis,
+                            detected_language=transcript.language,
+                        )
                         self._persist_commitments()
                         self._persist_state()  # Persist state after extracting facts
                         if analysis.sentiment.level == SentimentLevel.HOSTILE or analysis.intent_result.label == UserIntent.ABUSE:
@@ -3360,7 +3511,7 @@ class WebCallSession:
                         post_interrupt = await self._handle_post_interrupt(text)
                         if post_interrupt:
                             self._pending_resume_hint = post_interrupt
-                            self._force_dynamic_reply_once = True
+                            self._force_dynamic_reply_once = False
 
                         log_event(
                             logger,
@@ -3716,7 +3867,12 @@ class WebCallSession:
                 next_step=next_step,
             )
             if self._should_use_fixed_turn(step=next_step, language=language, preview=preview):
-                fixed = self._fixed_prompt_for_step(next_step, language=language)
+                fixed = self._resolve_deterministic_turn_prompt(step=next_step, language=language)
+                self._force_dynamic_reply_once = False
+                self._pending_interrupt_ack = False
+                self._pending_repair_type = None
+                self._pending_resume_hint = None
+                self._pending_customer_meta_question = None
                 self._debug_trace("start_fixed_turn_from_text", step=next_step, assistant_text=fixed)
                 self._gen_task = asyncio.create_task(
                     self._run_fixed_turn(assistant_text=fixed, language=language, step=next_step),
@@ -3807,7 +3963,12 @@ class WebCallSession:
                 next_step=next_step,
             )
             if self._should_use_fixed_turn(step=next_step, language=language, preview=preview):
-                fixed = self._fixed_prompt_for_step(next_step, language=language)
+                fixed = self._resolve_deterministic_turn_prompt(step=next_step, language=language)
+                self._force_dynamic_reply_once = False
+                self._pending_interrupt_ack = False
+                self._pending_repair_type = None
+                self._pending_resume_hint = None
+                self._pending_customer_meta_question = None
                 self._debug_trace("start_fixed_turn_from_stt", step=next_step, assistant_text=fixed)
                 self._gen_task = asyncio.create_task(
                     self._run_fixed_turn(assistant_text=fixed, language=language, step=next_step),
@@ -3947,6 +4108,12 @@ class WebCallSession:
                 audio_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await audio_task
+                self._remember_interruption_context(
+                    step=step,
+                    spoken_text="",
+                    full_text=assistant_text,
+                    reason="fixed_turn_cancelled",
+                )
                 await self._emit_timeline_event(
                     "agent_tts_end",
                     utterance_id=self._current_utterance_id,
@@ -4036,6 +4203,59 @@ class WebCallSession:
             return "Are you able to continue right now?"
         return None
 
+    def _resolve_deterministic_turn_prompt(self, *, step: str, language: Optional[str]) -> str:
+        lang = self._resolve_output_language(language)
+        is_hi = bool(lang and lang.lower().startswith("hi"))
+        is_pa = bool(lang and lang.lower().startswith("pa"))
+        base = self._fixed_prompt_for_step(step, language=lang)
+
+        if self._pending_customer_meta_question:
+            if self._pending_customer_meta_question == "prompt_probe":
+                preface = (
+                    "मैं अंदरूनी निर्देश साझा नहीं कर सकती।"
+                    if is_hi
+                    else "ਮੈਂ ਅੰਦਰੂਨੀ ਹਦਾਇਤਾਂ ਸਾਂਝੀਆਂ ਨਹੀਂ ਕਰ ਸਕਦਾ।"
+                    if is_pa
+                    else "I cannot share internal instructions."
+                )
+            elif self._pending_customer_meta_question in {"ai_identity", "ai_identity_and_purpose"}:
+                brand = self._effective_brand_name()
+                preface = (
+                    f"मैं {brand} की ऑटोमेटेड कलेक्शन एजेंट हूँ और आपके बकाया खाते के बारे में कॉल कर रही हूँ।"
+                    if is_hi
+                    else f"ਮੈਂ {brand} ਦੀ ਆਟੋਮੇਟਡ ਕਲੈਕਸ਼ਨ ਏਜੰਟ ਹਾਂ ਅਤੇ ਤੁਹਾਡੇ ਬਕਾਇਆ ਖਾਤੇ ਬਾਰੇ ਕਾਲ ਕਰ ਰਿਹਾ ਹਾਂ।"
+                    if is_pa
+                    else f"I am an automated collections agent from {brand} calling about your overdue account."
+                )
+            else:
+                brand = self._effective_brand_name()
+                preface = (
+                    f"मैं {brand} की कलेक्शन टीम से बोल रही हूँ।"
+                    if is_hi
+                    else f"ਮੈਂ {brand} ਦੀ ਕਲੈਕਸ਼ਨ ਟੀਮ ਤੋਂ ਬੋਲ ਰਿਹਾ ਹਾਂ।"
+                    if is_pa
+                    else f"I am calling from the {brand} collections team."
+                )
+            base = f"{preface} {base}".strip()
+
+        if self._pending_repair_type == "confusion":
+            base = self._alternate_prompt_for_step(step, lang) or base
+        elif self._pending_repair_type == "correction":
+            preface = "ठीक है, मैंने सही जानकारी नोट कर ली।" if is_hi else "ਠੀਕ ਹੈ, ਮੈਂ ਸਹੀ ਜਾਣਕਾਰੀ ਨੋਟ ਕਰ ਲਈ ਹੈ।" if is_pa else "Understood. I have noted the correction."
+            base = f"{preface} {base}".strip()
+        elif self._pending_repair_type == "topic_drift":
+            preface = "समझ गया।" if is_hi else "ਸਮਝ ਗਿਆ।" if is_pa else "Understood."
+            base = f"{preface} {base}".strip()
+
+        if self._pending_interrupt_ack:
+            base = self._trim_routine_ack_prefix(base, step=step, language=lang)
+
+        if self._pending_resume_hint:
+            prefix = "मैं वही बात पूरी करता हूँ।" if is_hi else "ਮੈਂ ਉਹੀ ਗੱਲ ਪੂਰੀ ਕਰਦਾ ਹਾਂ।" if is_pa else "I will complete that point."
+            base = f"{prefix} {base}".strip()
+
+        return self._trim_routine_ack_prefix(base, step=step, language=lang)
+
     def _fixed_prompt_for_step(self, step: str, language: Optional[str] = None) -> str:
         """Deterministic prompts for key workflow steps (no LLM)."""
         step = (step or "").strip()
@@ -4065,6 +4285,7 @@ class WebCallSession:
             return "Sorry, I did not catch your name clearly. Please tell me your full name once more."
 
         def finalize(text: str) -> str:
+            text = self._trim_routine_ack_prefix(text, step=step, language=lang)
             text = self._maybe_acknowledge_customer_name(text, step=step, language=lang)
             return self._apply_hindi_speaker_style(text, lang)
 
@@ -4551,11 +4772,17 @@ class WebCallSession:
             "closing",
         }:
             return False
-        if self._force_dynamic_reply_once:
+        if self._requires_dynamic_reasoning_turn():
             return False
         if step == "ask_payment_made" and self._wf_state.last_transition_reason == "payment_status_unclear":
             return False
         return True
+
+    def _requires_dynamic_reasoning_turn(self) -> bool:
+        return requires_llm_reasoning(
+            workflow_state=self._wf_state,
+            pending_customer_meta_question=self._pending_customer_meta_question,
+        )
 
     def _build_runtime_user_instruction(self, *, step: str, user_text: str) -> str:
         """Wrap the customer utterance with strict step instructions for the LLM."""
@@ -4587,8 +4814,9 @@ class WebCallSession:
                     )
         if self._pending_interrupt_ack:
             base.append(
-                "The customer interrupted you. Start with one short natural acknowledgment "
-                "(for example: 'Got it' or 'I understand'), then continue with the required next question."
+                "The customer interrupted you. Do not apologize or start with filler like "
+                "'Okay', 'Got it', or 'I understand' if the customer already gave a direct answer, "
+                "correction, or question. Respond directly and continue with the required next-step question."
             )
         if self._pending_repair_type:
             if self._pending_repair_type == "confusion":
@@ -5248,6 +5476,12 @@ class WebCallSession:
                 interrupted_text = (spoken_text or "").strip()
                 interrupted_text = self._normalize_branding_text(interrupted_text)
                 self._current_utterance_status = "interrupted"
+                self._remember_interruption_context(
+                    step=active_step,
+                    spoken_text=interrupted_text,
+                    full_text=assistant_text or self._current_llm_text,
+                    reason="llm_cancelled",
+                )
                 if utterance_emitted:
                     await self._emit_timeline_event(
                         "agent_tts_end",
@@ -5938,21 +6172,34 @@ class WebCallSession:
         if self._gen_task and not self._gen_task.done():
             logger.info("Barge-in triggered (%s)", reason)
             fade_ms = self._barge_in_fade_ms
+            utterance_id = getattr(self, "_reply_to_utterance_id", None) or getattr(self, "_current_utterance_id", None)
+            interrupted_step = (
+                self._reply_to_step_id
+                or self._pending_step_id
+                or self._wf_state.last_agent_intent
+                or self._wf_state.current_step
+            )
             await self.send_event(
                 {
                     "type": "barge_in",
                     "reason": reason,
                     "fade_ms": fade_ms,
-                    "utterance_id": self._reply_to_utterance_id or self._current_utterance_id,
+                    "utterance_id": utterance_id,
                 }
             )
             log_event(logger, "barge_in", session_id=self._session_id, reason=reason)
             self._current_utterance_status = "interrupted"
-            self._pending_interrupt_ack = True
-            self._force_dynamic_reply_once = True
+            self._pending_interrupt_ack = False
+            self._force_dynamic_reply_once = False
+            self._remember_interruption_context(
+                step=interrupted_step,
+                spoken_text="",
+                full_text=self._current_llm_text,
+                reason=reason,
+            )
             await self._emit_timeline_event(
                 "barge_in",
-                utterance_id=self._reply_to_utterance_id or self._current_utterance_id,
+                utterance_id=utterance_id,
                 reason=reason,
             )
             if fade_ms > 0:
@@ -6244,8 +6491,7 @@ class WebCallSession:
         return False
 
     def _is_ambiguous_short_reply(self, text: str) -> bool:
-        t = (text or "").strip().lower()
-        t = re.sub(r"[^a-z0-9\s]", " ", t)
+        t = normalize_borrower_text(text)
         tokens = [tok for tok in t.split() if tok]
         if not tokens or len(tokens) > 2:
             return False
@@ -6434,6 +6680,9 @@ class WebCallSession:
             "motherf",
             "fuck you",
             "bhenchod",
+            "माँ की चूत",
+            "मां की चूत",
+            "रांड के पिल्ले",
             "बहनचोद",
             "भोसड़ी",
             "भोसड़ी",
@@ -6712,11 +6961,17 @@ class WebCallSession:
         return False
 
     def _is_low_information_user_text(self, text: str) -> bool:
-        t = re.sub(r"[^a-z0-9\s]", " ", (text or "").lower())
+        t = normalize_borrower_text(text)
         tokens = [tok for tok in t.split() if tok]
         if not tokens:
             return True
-        if self._is_yes(text) or self._is_no(text) or self._is_payment_negative_utterance(text):
+        if (
+            self._is_yes(text)
+            or self._is_no(text)
+            or self._is_payment_negative_utterance(text)
+            or self._is_payment_progress_response(text)
+            or contains_short_acknowledgement(text)
+        ):
             return False
         if len(tokens) >= 5:
             return False
@@ -6724,12 +6979,10 @@ class WebCallSession:
             "hi",
             "hello",
             "hey",
-            "ok",
-            "okay",
+            "ठीक",
             "but",
             "so",
-            "hmm",
-            "hm",
+            "हूँ",
             "uh",
             "um",
             "sorry",
@@ -7410,6 +7663,7 @@ class WebCallSession:
                 except Exception:
                     pass
 
+        out = self._trim_routine_ack_prefix(out, step=step, language=language)
         out = self._maybe_acknowledge_customer_name(out, step=step, language=language)
         out = self._apply_hindi_speaker_style(out, language)
 
@@ -7419,6 +7673,7 @@ class WebCallSession:
                 out = self._fixed_prompt_for_step(step or self._wf_state.current_step, language=language)
             except Exception:
                 pass
+            out = self._trim_routine_ack_prefix(out, step=step, language=language)
             out = self._maybe_acknowledge_customer_name(out, step=step, language=language)
             out = self._apply_hindi_speaker_style(out, language)
         _, out = self._guard_prompt_repetition(
@@ -7524,6 +7779,8 @@ class WebCallSession:
         for pattern in confusion_signals:
             if re.search(pattern, t):
                 return "confusion"
+        if contains_short_acknowledgement(user_text) or self._is_payment_progress_response(user_text):
+            return None
 
         bound_step = (
             self._reply_to_step_id
@@ -7634,31 +7891,32 @@ class WebCallSession:
         if not (self._tts_playing.is_set() or self._tts_pending):
             return
 
-        # Quick acknowledgment of interruption
-        interrupt_acknowledgments = [
-            "Sorry, go ahead.",
-            "Yes, please.",
-            "I'm listening.",
-            "Please continue."
-        ]
-        ack = random.choice(interrupt_acknowledgments)
+        lang = self._resolve_output_language()
+        interrupted_step = (
+            self._reply_to_step_id
+            or self._pending_step_id
+            or self._wf_state.last_agent_intent
+            or self._wf_state.current_step
+        )
+        ack = self._interrupt_ack_text(language=lang)
         fade_ms = self._barge_in_fade_ms
-        
+        utterance_id = getattr(self, "_reply_to_utterance_id", None) or getattr(self, "_current_utterance_id", None)
+
         # Tell the client to fade out audio and clear its queue.
         await self.send_event(
             {
                 "type": "barge_in",
                 "reason": reason,
                 "fade_ms": fade_ms,
-                "utterance_id": self._reply_to_utterance_id or self._current_utterance_id,
+                "utterance_id": utterance_id,
             }
         )
         self._current_utterance_status = "interrupted"
-        self._pending_interrupt_ack = True
-        self._force_dynamic_reply_once = True
+        self._pending_interrupt_ack = False
+        self._force_dynamic_reply_once = False
         await self._emit_timeline_event(
             "barge_in",
-            utterance_id=self._reply_to_utterance_id or self._current_utterance_id,
+            utterance_id=utterance_id,
             reason=reason,
         )
         await self.send_event({"type": "status", "state": "listening"})
@@ -7666,9 +7924,13 @@ class WebCallSession:
         # Send acknowledgment event (don't speak it, just UI)
         await self.send_event({"type": "interrupt_acknowledged", "text": ack})
 
-        # Save what we were going to say for potential resumption
-        self._interrupted_response = self._current_llm_text
-        self._interrupted_at = time.time()
+        # Save interruption context for a possible graceful resume.
+        self._remember_interruption_context(
+            step=interrupted_step,
+            spoken_text="",
+            full_text=self._current_llm_text,
+            reason=reason,
+        )
 
         log_event(logger, "graceful_interrupt", session_id=self._session_id,
                   saved_chars=len(self._current_llm_text),
@@ -7676,29 +7938,50 @@ class WebCallSession:
         await self._cancel_generation()
 
     def _should_resume_interrupted(self) -> Optional[str]:
-        """Check if we should resume a previous interrupted response."""
-        # Only resume if interruption was recent (< 30s) and we had substantial content
-        if time.time() - self._interrupted_at > 30:
+        """Return the interrupted workflow step if a recent resume is viable."""
+        interrupted_at = float(getattr(self, "_interrupted_at", 0.0) or 0.0)
+        if not interrupted_at or (time.time() - interrupted_at) > 30:
             return None
-        
-        if len(self._interrupted_response) < 20:
+        step = str(getattr(self, "_interrupted_step", "") or "").strip()
+        if step:
+            return step
+        interrupted_response = str(getattr(self, "_interrupted_response", "") or "").strip()
+        if len(interrupted_response) < 20:
             return None
-        
-        # Check if user asked us to continue
-        return self._interrupted_response
+        return self._wf_state.current_step or self._reply_to_step_id or self._pending_step_id
 
     async def _handle_post_interrupt(self, user_text: str) -> Optional[str]:
         """Handle follow-up after interruption."""
         # If user asks us to continue what we were saying
-        continue_signals = ['continue', 'go on', 'what were you saying', 
-                           'you were saying', 'aur batao', 'continue karo']
-        
-        if any(s in user_text.lower() for s in continue_signals):
-            resume = self._should_resume_interrupted()
-            if resume:
-                return f"As I was saying, {resume}"
-        
-        # If user changed subject, acknowledge and move on
+        text_norm = self._normalize_intent_text(user_text)
+        continue_signals = (
+            "continue",
+            "go on",
+            "what were you saying",
+            "you were saying",
+            "carry on",
+            "aur batao",
+            "continue karo",
+            "aage bolo",
+            "बोलिए",
+            "आगे बोलिए",
+            "आगे बताइए",
+            "हाँ बोलिए",
+            "जी बोलिए",
+            "ਦੱਸੋ",
+            "ਅੱਗੇ ਦੱਸੋ",
+            "ਹਾਂ ਦੱਸੋ",
+        )
+        if any(signal in text_norm for signal in continue_signals):
+            resume_step = self._should_resume_interrupted()
+            if resume_step:
+                self._set_response_step_override(resume_step, reason="resume_after_barge_in")
+                self._pending_repair_type = None
+                return "resume_after_barge_in"
+
+        if text_norm and not self._is_low_information_user_text(user_text):
+            self._clear_interruption_context()
+
         return None
 
     def _calculate_drift_tolerance(self) -> int:

@@ -101,6 +101,8 @@ def _render_prompt(step: str, state: WorkflowState, facts: dict[str, object], la
     name = str(facts.get("customer_name") or "").strip()
     ptp_date = str(state.ptp_date or facts.get("ptp_date") or "").strip()
     if language.startswith("pa"):
+        if state.last_transition_reason == "abusive_language_warning":
+            return "ਮੈਂ ਤੁਹਾਡੀ ਗੱਲ ਸੁਣ ਰਿਹਾ ਹਾਂ, ਪਰ ਕਿਰਪਾ ਕਰਕੇ ਸ਼ਾਂਤ ਰਹੋ। ਹੁਣ ਦੱਸੋ, ਭੁਗਤਾਨ ਹੋ ਗਿਆ ਹੈ ਜਾਂ ਕਿਹੜੀ ਤਾਰੀਖ ਤੱਕ ਕਰੋਗੇ?"
         if step == "consent":
             return "ਇਹ ਕਾਲ ਰਿਕਾਰਡ ਕੀਤੀ ਜਾ ਸਕਦੀ ਹੈ। ਕੀ ਮੈਂ ਅੱਗੇ ਵੱਧਾਂ?"
         if step == "confirm_identity":
@@ -120,10 +122,12 @@ def _render_prompt(step: str, state: WorkflowState, facts: dict[str, object], la
         if step == "confirm_ptp":
             return f"ਤੁਸੀਂ {ptp_date} ਤੱਕ ਭੁਗਤਾਨ ਕਰਨ ਦਾ ਵਾਅਦਾ ਕੀਤਾ ਹੈ। ਕੀ ਮੈਂ ਇਸਨੂੰ ਨੋਟ ਕਰ ਦਿਆਂ?"
         if step == "closing" and state.last_transition_reason == "abusive_language":
-            return "ਠੀਕ ਹੈ। ਤੁਹਾਡੇ ਸਮੇਂ ਲਈ ਧੰਨਵਾਦ।"
+            return "ਸਮਝ ਗਿਆ ਸਰ, ਮੈਂ ਬਾਅਦ ਵਿੱਚ ਕਾਲ ਕਰ ਲੈਂਦਾ ਹਾਂ।"
         if step == "closing" and state.ptp_date:
             return f"ਧੰਨਵਾਦ। ਤੁਸੀਂ {ptp_date} ਤੱਕ ਭੁਗਤਾਨ ਕਰਨ ਦਾ ਵਾਅਦਾ ਕੀਤਾ ਹੈ। ਜੇ ਤੁਸੀਂ ਚਾਹੋ ਤਾਂ ਮੈਂ ਭੁਗਤਾਨ ਲਿੰਕ ਵਟਸਐਪ 'ਤੇ ਭੇਜ ਸਕਦਾ ਹਾਂ।"
         return "ਧੰਨਵਾਦ, ਤੁਹਾਡੇ ਸਮੇਂ ਲਈ।"
+    if state.last_transition_reason == "abusive_language_warning":
+        return "मैं आपकी बात सुन रहा हूँ, लेकिन कृपया शांत रहिए। अब बताइए, भुगतान किया है या किस तारीख तक करेंगे?"
     if step == "consent":
         return "यह कॉल रिकॉर्ड हो सकती है। क्या मैं आगे बढ़ूँ?"
     if step == "confirm_identity":
@@ -143,7 +147,7 @@ def _render_prompt(step: str, state: WorkflowState, facts: dict[str, object], la
     if step == "confirm_ptp":
         return f"आपने {ptp_date} तक भुगतान करने का वादा किया है। क्या मैं इसे नोट कर दूँ?"
     if step == "closing" and state.last_transition_reason == "abusive_language":
-        return "ठीक है। धन्यवाद आपके समय के लिए।"
+        return "समझ गया सर, मैं बाद में कॉल कर लेता हूँ।"
     if step == "closing" and state.ptp_date:
         return f"धन्यवाद। आपने {ptp_date} तक भुगतान करने का वादा किया है। अगर आप चाहें तो मैं भुगतान लिंक व्हाट्सऐप पर भेज सकता हूँ।"
     if step == "closing" and state.reference_number:
@@ -284,7 +288,7 @@ def scenario_specs() -> list[ScenarioSpec]:
             expect_ptp=True,
             expect_language_offer=True,
             expect_language_switch=False,
-            expected_required_steps=("confirm_awareness", "ask_ptp_or_callback", "closing"),
+            expected_required_steps=("confirm_awareness", "ask_payment_made", "closing"),
         ),
         ScenarioSpec(
             key="borrower_mixes_hindi_and_punjabi",
@@ -322,13 +326,14 @@ def scenario_specs() -> list[ScenarioSpec]:
         ),
         ScenarioSpec(
             key="borrower_abuses_agent",
-            description="Hostile language should force a safe exit.",
+            description="Repeated hostile language should warn once and then force a safe exit.",
             known_customer_name="Ravi Kumar",
             turns=[
                 SimulatedUserTurn("हाँ"),
                 SimulatedUserTurn("हाँ"),
                 SimulatedUserTurn("हाँ"),
                 SimulatedUserTurn("भाड़ में जाइए"),
+                SimulatedUserTurn("मैंने कहा भाड़ में जाइए"),
             ],
             expected_final_step="closing",
             expected_payment_made=None,
@@ -459,11 +464,18 @@ def simulate_voice_agent_scenario(spec: ScenarioSpec) -> dict:
             language_offers.append(analysis.language_decision.candidate_language)
 
         if analysis.sentiment.level == SentimentLevel.HOSTILE:
-            state.last_transition_reason = "abusive_language"
-            state.disposition = "abusive_language_terminated"
-            state.current_step = "closing"
+            state.abuse_count = int(getattr(state, "abuse_count", 0) or 0) + 1
+            close_call = state.abuse_count > 1
+            if close_call:
+                state.last_transition_reason = "abusive_language"
+                state.disposition = "abusive_language_terminated"
+                state.current_step = "closing"
+                assistant_step = "closing"
+            else:
+                state.last_transition_reason = "abusive_language_warning"
+                assistant_step = state.current_step
             dialogue_state = dialogue_manager.sync_from_step(
-                "closing",
+                assistant_step,
                 payment_made=state.payment_made,
                 ptp_date=state.ptp_date,
                 reference_number=state.reference_number,
@@ -471,8 +483,8 @@ def simulate_voice_agent_scenario(spec: ScenarioSpec) -> dict:
             )
             assistant_step, assistant_prompt, prompt_action = _apply_prompt_guard(
                 prompt_guard,
-                step="closing",
-                prompt=_render_prompt("closing", state, facts, "hi-IN"),
+                step=assistant_step,
+                prompt=_render_prompt(assistant_step, state, facts, "hi-IN"),
                 language="hi-IN",
                 state=state,
                 facts=facts,
@@ -494,7 +506,9 @@ def simulate_voice_agent_scenario(spec: ScenarioSpec) -> dict:
                     reference_number_after=state.reference_number,
                 )
             )
-            break
+            if close_call:
+                break
+            continue
 
         engine.update_from_user(
             user_turn.text,
@@ -637,7 +651,7 @@ def write_validation_artifacts(output_dir: str | Path) -> dict[str, str]:
         "",
         "## Updated Architecture",
         "",
-        "Audio Input -> Streaming STT -> Intent Classifier -> Entity Extractor -> Sentiment Detector -> Dialogue State Manager -> Language Detection (gated) -> LLM Response Generator -> Streaming TTS",
+        "Audio Stream -> Streaming STT -> Intent Classifier -> Slot Extractor -> Dialogue State Machine -> Policy Engine -> Deterministic Response Generator -> Streaming TTS",
         "",
         "## Audit Summary",
         "",

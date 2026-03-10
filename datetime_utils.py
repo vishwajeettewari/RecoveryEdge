@@ -6,6 +6,8 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+from ptp_parser import parse_ptp_date
+
 _DATE_ISO_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 _DATE_DMY_RE = re.compile(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b")
 _ORDINAL_DAY_RE = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b", re.IGNORECASE)
@@ -154,6 +156,10 @@ def _next_valid_day_of_month(*, day: int, today: date) -> Optional[date]:
 
 
 def parse_date_from_text(text: str, *, tz: str, now: Optional[datetime] = None) -> Optional[str]:
+    ptp_result = parse_ptp_date(text, tz=tz, now=now)
+    if ptp_result.ptp_date:
+        return ptp_result.ptp_date
+
     t = _normalize_text(text)
     if not t:
         return None

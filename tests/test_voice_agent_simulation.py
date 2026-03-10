@@ -53,7 +53,7 @@ class VoiceAgentSimulationTests(unittest.TestCase):
         self.assertEqual(result["last_transition_reason"], "abusive_language")
         self.assertEqual(
             result["turns"][-1]["assistant_prompt"],
-            "ठीक है। धन्यवाद आपके समय के लिए।",
+            "समझ गया सर, मैं बाद में कॉल कर लेता हूँ।",
         )
 
     def test_borrower_changes_answer_mid_conversation(self):

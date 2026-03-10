@@ -645,7 +645,11 @@ class SQLiteAuditStore:
         scope_active = bool(campaign_id or state or dpd_bucket)
         conn = self._connect()
         try:
-            if scope_active:
+            direct_campaign_scope = bool(campaign_id and not state and not dpd_bucket)
+            if direct_campaign_scope:
+                outcome_where = " WHERE campaign_id = ?"
+                outcome_args = [campaign_id]
+            elif scope_active:
                 outcome_scope, outcome_args = self._task_scope_exists(
                     customer_column="outcomes.customer_id",
                     campaign_id=campaign_id,
@@ -665,7 +669,14 @@ class SQLiteAuditStore:
             )
             task_where = f" WHERE {' AND '.join(['1=1', *task_filters])}"
 
-            if scope_active:
+            if direct_campaign_scope:
+                account_scope = "campaign_accounts.campaign_id = ?"
+                account_scope_args = [campaign_id]
+                run_scope = "campaign_runs.campaign_id = ?"
+                run_scope_args = [campaign_id]
+                event_scope = "o.campaign_id = ?"
+                event_scope_args = [campaign_id]
+            elif scope_active:
                 account_scope, account_scope_args = self._task_scope_exists(
                     customer_column="campaign_accounts.customer_id",
                     campaign_id=campaign_id,

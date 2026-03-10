@@ -313,9 +313,15 @@ class WebSessionOutcomeTests(unittest.TestCase):
 
         asyncio.run(session.handle_text("fuck you"))
 
-        self.assertEqual(session._wf_state.last_transition_reason, "abusive_language")
+        self.assertEqual(session._wf_state.last_transition_reason, "abusive_language_warning")
         metrics = self.audit.metrics()
         self.assertEqual(metrics["profanity_incidents"], 1)
+
+        asyncio.run(session.handle_text("fuck you"))
+
+        self.assertEqual(session._wf_state.last_transition_reason, "abusive_language")
+        metrics = self.audit.metrics()
+        self.assertEqual(metrics["profanity_incidents"], 2)
 
     def test_handle_text_auto_captures_ordinal_ptp_and_persists_metrics(self):
         session = self._auto_ptp_session()

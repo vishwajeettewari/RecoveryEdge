@@ -552,6 +552,73 @@ class WebSessionGuardTests(unittest.TestCase):
         out = s._humanize_response("Please share your payment date.", language="en-IN")
         self.assertIn("Could you share", out)
 
+    def test_trim_routine_ack_prefix_removes_hindi_theek_hai_for_normal_steps(self):
+        s = self._session_stub()
+        out = s._trim_routine_ack_prefix(
+            "ठीक है। क्या मैं Rohit Yadav जी से बात कर रहा हूँ?",
+            step="confirm_identity",
+            language="hi-IN",
+        )
+        self.assertEqual(out, "क्या मैं Rohit Yadav जी से बात कर रहा हूँ?")
+
+    def test_graceful_interrupt_preserves_step_context_without_forcing_filler_ack(self):
+        s = self._session_stub()
+        s._tts_pending = True
+        s._current_llm_text = "क्या आपने भुगतान किया है?"
+        s._wf_state.current_step = "ask_payment_made"
+        s._reply_to_step_id = "ask_payment_made"
+        events: list[dict] = []
+
+        async def fake_send(event):
+            events.append(event)
+
+        async def fake_noop(*_args, **_kwargs):
+            return None
+
+        s.send_event = fake_send
+        s._emit_timeline_event = fake_noop  # type: ignore[method-assign]
+        s._cancel_generation = fake_noop  # type: ignore[method-assign]
+        s._set_turn_state = lambda *_args, **_kwargs: None
+
+        asyncio.run(s._graceful_interrupt("stt_final"))
+
+        self.assertEqual(s._interrupted_step, "ask_payment_made")
+        self.assertEqual(s._interrupted_response, "क्या आपने भुगतान किया है?")
+        self.assertFalse(s._pending_interrupt_ack)
+        self.assertFalse(s._force_dynamic_reply_once)
+        self.assertIn({"type": "interrupt_acknowledged", "text": "Yes, go ahead."}, events)
+
+    def test_handle_post_interrupt_resume_sets_override_to_interrupted_step(self):
+        s = self._session_stub()
+        s._interrupted_step = "ask_payment_made"
+        s._interrupted_response = "क्या आपने भुगतान किया है?"
+        s._interrupted_at = time.time()
+
+        out = asyncio.run(s._handle_post_interrupt("continue"))
+
+        self.assertEqual(out, "resume_after_barge_in")
+        self.assertEqual(s._response_step_override, "ask_payment_made")
+
+    def test_handle_post_interrupt_clears_context_after_substantive_user_reply(self):
+        s = self._session_stub()
+        s._interrupted_step = "ask_payment_made"
+        s._interrupted_response = "क्या आपने भुगतान किया है?"
+        s._interrupted_at = time.time()
+
+        out = asyncio.run(s._handle_post_interrupt("मैंने भुगतान कर दिया है"))
+
+        self.assertIsNone(out)
+        self.assertIsNone(s._interrupted_step)
+        self.assertEqual(s._interrupted_response, "")
+
+    def test_resume_hint_uses_graceful_resume_prefix(self):
+        s = self._session_stub()
+        s._pending_resume_hint = "resume_after_barge_in"
+        s._wf_state.current_step = "ask_payment_made"
+        out = s._resolve_deterministic_turn_prompt(step="ask_payment_made", language="hi-IN")
+        self.assertTrue(out.startswith("मैं वही बात पूरी करता हूँ।"))
+        self.assertNotIn("ठीक है।", out)
+
     def test_low_information_text_catches_discourse_fillers(self):
         s = self._session_stub()
         self.assertTrue(s._is_low_information_user_text("But,"))

@@ -175,6 +175,21 @@ def _is_yes_no_challenge_text(t_norm: str) -> bool:
     return any(phrase in t_norm for phrase in phrases)
 
 
+def _is_correction_text(t_norm: str) -> bool:
+    if not t_norm:
+        return False
+    phrases = (
+        "नहीं",
+        "नही",
+        "गलत",
+        "wrong",
+        "no i said",
+        "actually",
+        "i meant",
+    )
+    return any(t_norm.startswith(phrase) for phrase in phrases)
+
+
 def _is_yes(text: str) -> bool:
     t = _norm(text)
     tokens = [tok for tok in t.split() if tok]
@@ -384,6 +399,7 @@ class WorkflowState:
     document_requested: bool = False
     legal_hold: bool = False
     emi_restructure_requested: bool = False
+    abuse_count: int = 0
 
     # edge-case flags
     dnd_requested: bool = False
@@ -929,15 +945,17 @@ class WorkflowEngine:
             return
 
         step = reply_to_step_id or state.last_agent_intent or state.current_step
+        t_norm = _norm(t)
+        is_correction = _is_correction_text(t_norm) or bool((extracted or {}).get("corrected"))
 
         # Facts extracted elsewhere (preferred, because it is more conservative).
         extracted = extracted or {}
-        if extracted.get("reference_number") and not state.reference_number:
+        if extracted.get("reference_number") and (not state.reference_number or is_correction):
             state.reference_number = str(extracted["reference_number"])
         if extracted.get("payment_status") is not None:
             state.payment_made = bool(extracted["payment_status"])
         if self._enable_advanced:
-            if extracted.get("ptp_date") and not state.ptp_date:
+            if extracted.get("ptp_date") and (not state.ptp_date or is_correction):
                 parsed = parse_date_from_text(str(extracted["ptp_date"]), tz=self._tz, now=self._now())
                 if parsed and validate_ptp_date(
                     parsed,
@@ -949,7 +967,7 @@ class WorkflowEngine:
                     state.ptp_date = parsed
                 else:
                     state.last_transition_reason = "invalid_ptp_date"
-            if extracted.get("callback_time") and not state.callback_time:
+            if extracted.get("callback_time") and (not state.callback_time or is_correction):
                 parsed = parse_time_from_text(str(extracted["callback_time"]))
                 if parsed and validate_callback_time(
                     parsed,
@@ -960,12 +978,10 @@ class WorkflowEngine:
                 else:
                     state.last_transition_reason = "invalid_callback_time"
         else:
-            if extracted.get("ptp_date") and not state.ptp_date:
+            if extracted.get("ptp_date") and (not state.ptp_date or is_correction):
                 state.ptp_date = str(extracted["ptp_date"])
-            if extracted.get("callback_time") and not state.callback_time:
+            if extracted.get("callback_time") and (not state.callback_time or is_correction):
                 state.callback_time = str(extracted["callback_time"])
-
-        t_norm = _norm(t)
         if step in {"confirm_awareness", "ask_payment_made", "ask_reference_number", "ask_ptp_or_callback", "confirm_ptp"}:
             if _is_name_reconfirmation_text(t_norm) or (
                 state.last_transition_reason == "identity_reconfirm_requested"
@@ -975,8 +991,11 @@ class WorkflowEngine:
                 state.current_step = step
                 return
 
+        correction_slot_payload = is_correction and bool(
+            extracted.get("ptp_date") or extracted.get("callback_time") or extracted.get("reference_number")
+        )
         payment_step = step in {"ask_payment_made", "ask_reference_number", "ask_ptp_or_callback"}
-        negative_cls = self._classify_payment_negative(t) if payment_step else None
+        negative_cls = None if correction_slot_payload else self._classify_payment_negative(t) if payment_step else None
         if payment_step and negative_cls:
             strength, reason = negative_cls
             state.refusal_detected = True
@@ -1327,6 +1346,15 @@ class WorkflowEngine:
                 state.last_transition_reason = "awareness_denied_context"
 
         if step == "confirm_ptp":
+            if correction_slot_payload:
+                state.ptp_confirmed = False
+                state.disposition = None
+                if state.ptp_date:
+                    state.ptp_confirmation_required = True
+                    state.current_step = "confirm_ptp"
+                else:
+                    state.current_step = self.compute_next_step(state)
+                return
             if _is_yes(t):
                 state.ptp_confirmed = True
                 state.ptp_confirmation_required = False

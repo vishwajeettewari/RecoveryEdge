@@ -1,5 +1,35 @@
 # Current Task
 
+## Full Repository Audit
+
+- [x] Map the repo structure, runtime entrypoints, and verification surfaces so the audit covers backend, frontend, tests, and operational glue.
+- [x] Run the strongest available local verification for Python and React, capture failures, and separate real regressions from environment-only blockers.
+- [x] Inspect high-risk modules end to end for correctness, security, configuration safety, and test coverage gaps.
+- [x] Write a detailed review section with prioritized findings, concrete evidence, and residual risks.
+
+### Full Repository Audit Notes
+
+- User requested audit only. No product changes should be made unless an audit step requires non-functional task tracking updates in this file.
+
+## Full Repository Audit Review
+
+- Verification run:
+  - `python3 -m py_compile *.py tests/*.py testing/*.py` passed.
+  - `pytest -q` failed with 5 regressions out of 244 tests.
+  - `npm test -- --run` passed: 7 files, 13 tests.
+  - `npm run build` passed, but Vite emitted a large-bundle warning for a 1.26 MB pre-gzip main JS chunk.
+- Highest-priority findings:
+  - `audit_store.py` scopes outcome metrics through task existence checks, so campaign/state/bucket-filtered analytics drop valid outcomes when no matching task row exists. This undercounts PTP and callback metrics in exactly the session-driven paths covered by `tests/test_web_session_outcomes.py`. Root cause lives in `_task_scope_exists` and the scoped `outcomes` queries inside `metrics()`.
+  - `web_app.py` rebuilds `demo["router"]` inside `_refresh_demo_runtime_config()` on every telephony request. The `/api/telephony/test_call` and `/api/telephony/agent_call` handlers call this right before dispatch, so any injected router wrapper, monkeypatch, or in-process runtime state is discarded and the request uses a fresh router instead. That is why the telephony queueing tests now ignore the stubbed `call_sid` values.
+  - `frontend-react/src/api/client.ts` stores the access token in `localStorage` and also sends it as a bearer token on every request, even though the backend already sets HttpOnly auth cookies. This widens token-exfiltration surface unnecessarily and makes XSS materially worse than a cookie-only design.
+  - `web_session.py` returns success from `save_ptp_or_callback` even when Excel/audit persistence fails, because the critical writes are wrapped in broad `except Exception: pass` blocks. A real storage failure would leave the operator seeing a successful save while analytics and audit trails silently miss the commitment.
+- Lower-priority findings:
+  - `frontend-react/src/app/AppRoutes.tsx` eagerly imports every major page, which matches the Vite warning and explains why the whole authenticated shell ships as one large JS entry chunk instead of route-split bundles.
+  - `pytest.ini` declares `asyncio_default_fixture_loop_scope = function`, but the current `pytest -q` run reports it as an unknown config option. The suite still runs, but the async test configuration is drifting from the installed toolchain.
+  - `web_app.py` still uses `@app.on_event("startup")`, which now emits FastAPI deprecation warnings and should move to lifespan handlers before framework upgrades make it noisy or brittle.
+
+# Current Task
+
 ## Calling Console Action Fit And Command Center Scope Wiring
 
 - [x] Re-audit the Calling Console at narrower desktop widths, identify the remaining clipped action buttons, and fix the responsive action rail without regressing the rest of the layout.
@@ -543,5 +573,60 @@
   - direct Azure deployment smoke test showing `gpt-5.2-chat` returns `200` on chat completions
   - live cloned-db Operations Copilot call showing:
     - Azure request to `/openai/deployments/gpt-5.2-chat/chat/completions`
-    - API response `200`
-    - `model_invocations` latest row: `provider=azure_openai`, `model_name=gpt-5.2-chat`, `status=succeeded`
+  - API response `200`
+  - `model_invocations` latest row: `provider=azure_openai`, `model_name=gpt-5.2-chat`, `status=succeeded`
+
+# Sarvam Voice Latency And Tone Audit
+
+- [x] Inspect the live Sarvam voice stack wiring to identify which LLM, STT, TTS, and buffering settings are currently active in this repo.
+- [x] Trace where response tone is constrained so the “robotic” behavior can be attributed to prompt design, TTS speaker choice, or both.
+- [x] Compare the current repo choices against Sarvam official model and voice docs to separate configuration opportunities from true platform limitations.
+- [x] Document concrete recommendations on latency reduction and naturalness, including whether another model is necessary.
+
+# Sarvam Voice Latency And Tone Audit Review
+
+- The current repo is configured for `sarvam-m` chat, `saarika:v2.5` streaming STT, and `bulbul:v3` TTS with speaker `shubh`; see `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/.env` and `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/web_app.py`.
+- The strongest source of robotic behavior is prompt policy, not just the model vendor: `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/sarvam_llm_service.py` and `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/web_session.py` repeatedly instruct the agent to be deterministic, extremely short, question-only, and tightly state-driven, which suppresses natural phrasing.
+- The repo already has a TTS humanization layer, but it is intentionally mild and effectively English-only today; Hindi output bypasses `_humanize_response(...)`, and prosody hints are disabled by default in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/web_session.py`.
+- Latency is also being shaped by conservative turn-taking and speech buffering defaults: `VAD_SILENCE_MS=600`, `TTS_STREAM_CHUNK_CHARS=50`, `TTS_MIN_BUFFER_SIZE=30`, and `POST_SPEECH_PAUSE_MS=800` in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/web_app.py`, plus a first-sentence gate before TTS starts in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/web_session.py`.
+- Based on Sarvam docs, the first config change worth testing is upgrading streaming STT from legacy `saarika:v2.5` to `saaras:v3`, then tuning the local VAD / TTS chunking values. For naturalness, voice selection and text style need tuning before replacing the LLM. A different TTS provider is only necessary if Bulbul speaker options still do not meet your target after prompt and chunking changes.
+
+# RecoveryEdge Deterministic Voice Engine
+
+- [x] Audit the current live turn path across `web_session.py`, `voice_pipeline.py`, `intent_classifier.py`, `workflow_engine.py`, and `datetime_utils.py` to identify where latency, looping, and slot errors enter the flow.
+- [x] Introduce a deterministic normalization + intent + slot extraction layer for payment status, PTP, callback, dispute, acknowledgement, greeting, and abuse, including short multilingual utterances and correction-aware overwrites.
+- [x] Add a dedicated deterministic PTP parser module with Hindi, English, and relative-date support plus unit coverage for the required borrower phrases.
+- [x] Tighten the dialogue state machine and response generation path so routine steps use deterministic templates and only explicitly complex cases fall back to LLM.
+- [x] Reduce response latency by using faster STT flush thresholds / preview cadence in the session path and by preferring fixed turns over LLM for normal collections steps.
+- [x] Add structured logging, conversation simulations, and focused tests for parser accuracy, loop prevention, abuse handling, slot correction, and state transitions.
+- [x] Run targeted verification and document the resulting architecture, behavior changes, and remaining risks below.
+
+# RecoveryEdge Deterministic Voice Engine Review
+
+- Added `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/dialogue_normalizer.py` and `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/ptp_parser.py` so multilingual borrower text is normalized before classification and PTP dates are parsed deterministically across Hindi, English, romanized Hindi, and correction phrases such as `नहीं 11`.
+- Updated `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/intent_classifier.py`, `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/entity_extractor.py`, and `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/workflow_engine.py` so short acknowledgements stop looking like topic drift, slot corrections overwrite prior PTP and callback values, abuse/refusal/dispute handling is deterministic, and normal cases no longer rely on the LLM path.
+- Updated `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/web_session.py`, `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/web_app.py`, and `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/main.py` to cut STT/TTS buffering defaults, switch the default streaming STT model to `saaras:v3`, add structured deterministic-turn logging, and keep fixed-template responses on the low-latency path except for complex reasoning cases.
+- Added `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/dialogue_engine.py`, `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/testing/voice_agent_stress.py`, and new tests for PTP parsing, intent classification, correction overwrites, outcome persistence, simulation coverage, and 50-call stress validation.
+- Verification completed with:
+  - `python3 -m unittest tests.test_ptp_parser tests.test_intent_classifier_deterministic tests.test_workflow_engine_corrections tests.test_workflow_engine tests.test_voice_pipeline tests.test_web_session_guards tests.test_web_session_outcomes tests.test_voice_agent_simulation tests.test_voice_agent_stress tests.test_ops_layers`
+- Verification result:
+  - `211` tests passed. The deterministic stress harness now reports 50 simulated calls with zero loop occurrences, high PTP capture accuracy, and classifier probe coverage across payment-done, PTP, callback, dispute, acknowledgement, greeting, and abuse utterances.
+
+# RecoveryEdge Graceful Barge-In
+
+- [x] Audit the current VAD/STT interruption path, interruption context storage, and resume behavior to isolate why barge-ins still feel abrupt or repetitive.
+- [x] Refactor the interruption flow so barge-ins cancel agent speech cleanly, preserve the interrupted step context, and avoid generic filler acknowledgments on the next response.
+- [x] Make resume-after-interrupt behavior deterministic and step-aware so explicit “continue” style replies pick up the right thread without replaying awkward prefixes or stale content.
+- [x] Add focused regression coverage for interruption context capture, graceful resume, and no-filler deterministic prompts after barge-in.
+- [x] Run targeted verification and document the outcome below.
+
+# RecoveryEdge Graceful Barge-In Review
+
+- Updated `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/web_session.py` so barge-in now interrupts speech without injecting a spoken filler acknowledgment on the next turn. The UI still receives a short `interrupt_acknowledged` event, but routine spoken prompts no longer restart with `ठीक है`, `Okay`, or `Got it`.
+- The interruption path now stores explicit interruption context including the interrupted workflow step, remembered response text, timestamp, and reason. Resume logic uses that stored step instead of replaying raw partial text, which makes explicit continue-style borrower replies deterministic and less awkward.
+- Resume behavior is now step-aware: when the borrower says `continue`, `जी बोलिए`, `आगे बताइए`, `go on`, or equivalent Punjabi/Hinglish variants soon after an interruption, the response step is rebound to the interrupted workflow step and the agent continues with a clean deterministic prompt.
+- Added focused regression coverage in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/tests/test_web_session_guards.py` for interruption context capture, resume-step override, clearing stale interruption context after substantive borrower replies, and removal of routine Hindi `ठीक है` prefixes from deterministic prompts.
+- Verification completed with:
+  - `python3 -m unittest tests.test_web_session_guards tests.test_voice_agent_simulation tests.test_web_session_outcomes tests.test_voice_pipeline tests.test_voice_agent_stress tests.test_ops_layers`
+- Verification result:
+  - `154` tests passed. Remaining runtime caveat: perceived barge-in smoothness still depends on the client/player fade-out and live provider RTT, so a running app process should be restarted once to pick up the new server behavior before live-call evaluation.
