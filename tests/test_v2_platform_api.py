@@ -38,6 +38,7 @@ class V2PlatformApiTests(unittest.TestCase):
         os.environ["APP_ENV"] = "demo"
         os.environ["DEMO_MODE"] = "1"
         os.environ["PILOT_MODE"] = "1"
+        os.environ["OPS_COPILOT_LLM_ENABLED"] = "0"
         os.environ["JWT_SECRET"] = "test-secret"
         os.environ["COOKIE_SECURE"] = "0"
         if webhook_secret:

@@ -41,25 +41,26 @@ export const appTheme = createTheme({
   },
   components: {
     AppShell: {
-      styles: {
+      styles: () => ({
         main: {
-          color: tokens.colors.text,
+          color: "var(--te-component-text)",
         },
-      },
+      }),
     },
     Card: {
       defaultProps: {
         withBorder: true,
         radius: "lg",
       },
-      styles: {
+      styles: () => ({
         root: {
-          borderColor: tokens.colors.border,
-          backgroundColor: tokens.colors.surface,
-          boxShadow: tokens.shadows.soft,
+          borderColor: "var(--te-component-border)",
+          backgroundColor: "var(--te-component-surface)",
+          boxShadow: "var(--te-component-shadow)",
           backdropFilter: "blur(18px) saturate(125%)",
+          color: "var(--te-component-text)",
         },
-      },
+      }),
     },
     NavLink: {
       styles: {
@@ -87,52 +88,56 @@ export const appTheme = createTheme({
       },
     },
     TextInput: {
-      styles: {
+      styles: () => ({
         input: {
-          borderColor: tokens.colors.border,
-          backgroundColor: "#f8fbff",
+          borderColor: "var(--te-input-border)",
+          backgroundColor: "var(--te-input-bg)",
+          color: "var(--te-input-text)",
         },
-      },
+      }),
     },
     PasswordInput: {
-      styles: {
+      styles: () => ({
         input: {
-          borderColor: tokens.colors.border,
-          backgroundColor: "#f8fbff",
+          borderColor: "var(--te-input-border)",
+          backgroundColor: "var(--te-input-bg)",
+          color: "var(--te-input-text)",
         },
-      },
+      }),
     },
     Select: {
-      styles: {
+      styles: () => ({
         input: {
-          borderColor: tokens.colors.border,
-          backgroundColor: "#f8fbff",
+          borderColor: "var(--te-input-border)",
+          backgroundColor: "var(--te-input-bg)",
+          color: "var(--te-input-text)",
         },
-      },
+      }),
     },
     JsonInput: {
-      styles: {
+      styles: () => ({
         input: {
-          borderColor: tokens.colors.border,
-          backgroundColor: "#f8fbff",
+          borderColor: "var(--te-input-border)",
+          backgroundColor: "var(--te-input-bg)",
+          color: "var(--te-input-text)",
         },
-      },
+      }),
     },
     Paper: {
-      styles: {
+      styles: () => ({
         root: {
-          borderColor: tokens.colors.border,
+          borderColor: "var(--te-component-border)",
           backdropFilter: "blur(16px) saturate(120%)",
+          color: "var(--te-component-text)",
         },
-      },
+      }),
     },
     Drawer: {
-      styles: {
+      styles: () => ({
         content: {
-          background:
-            "radial-gradient(600px 220px at 100% 0%, rgba(30,100,255,0.12), transparent 50%), #f7faff",
+          background: "var(--te-drawer-bg)",
         },
-      },
+      }),
     },
     Badge: {
       styles: {
@@ -150,54 +155,53 @@ export const appTheme = createTheme({
         verticalSpacing: "sm",
         stickyHeader: true,
       },
-      styles: {
+      styles: () => ({
         th: {
           fontSize: "0.76rem",
           textTransform: "uppercase",
           letterSpacing: "0.06em",
-          color: "#556074",
+          color: "var(--te-table-head-text)",
           fontWeight: 700,
-          background: "rgba(244, 248, 255, 0.94)",
-          borderBottom: "1px solid rgba(19, 28, 45, 0.1)",
+          background: "var(--te-table-head-bg)",
+          borderBottom: "1px solid var(--te-table-head-border)",
         },
         td: {
-          borderBottom: "1px solid rgba(19, 28, 45, 0.07)",
-          color: "#1b2330",
+          borderBottom: "1px solid var(--te-table-cell-border)",
+          color: "var(--te-table-cell-text)",
           fontSize: "0.85rem",
           verticalAlign: "top",
         },
-      },
+      }),
     },
     Tabs: {
-      styles: {
+      styles: () => ({
         list: {
-          borderBottom: "1px solid rgba(19, 28, 45, 0.1)",
+          borderBottom: "1px solid var(--te-tabs-list-border)",
           gap: 6,
         },
         tab: {
           borderTopLeftRadius: 10,
           borderTopRightRadius: 10,
           fontWeight: 600,
-          color: "#536079",
+          color: "var(--te-tabs-text)",
           "&[data-active]": {
-            color: "#0e2145",
-            background: "linear-gradient(180deg, rgba(18, 93, 255, 0.13), rgba(18, 93, 255, 0.04))",
-            borderColor: "rgba(18, 93, 255, 0.34)",
+            color: "var(--te-tabs-active-text)",
+            background: "var(--te-tabs-active-bg)",
+            borderColor: "var(--te-tabs-active-border)",
           },
         },
-      },
+      }),
     },
     Modal: {
-      styles: {
+      styles: () => ({
         content: {
-          background:
-            "radial-gradient(480px 180px at 100% 0%, rgba(18, 93, 255, 0.12), transparent 55%), #f8fbff",
+          background: "var(--te-modal-bg)",
         },
         header: {
           background: "transparent",
-          borderBottom: "1px solid rgba(19, 28, 45, 0.08)",
+          borderBottom: "1px solid var(--te-modal-header-border)",
         },
-      },
+      }),
     },
   },
 });

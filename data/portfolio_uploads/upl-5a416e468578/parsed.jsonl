@@ -1,0 +1,2 @@
+{"customer_id": "FLOW-1", "customer_name": "Asha Rao", "phone": "9876543210", "dpd": "42", "initial_amount": "100000", "remaining_amount": "22000", "language": "en", "due_date": "2026-03-14"}
+{"customer_id": "FLOW-2", "customer_name": "Rohan Verma", "phone": "9876543211", "dpd": "68", "initial_amount": "135000", "remaining_amount": "41000", "language": "hi", "due_date": "2026-03-16"}

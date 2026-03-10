@@ -1,4 +1,4 @@
-import { Badge, Card, Grid, Group, Loader, Progress, ScrollArea, Select, SimpleGrid, Stack, Table, Text, Title } from "@mantine/core";
+import { Badge, Card, Grid, Group, Loader, Progress, ScrollArea, Select, SimpleGrid, Stack, Table, Text, Title, useComputedColorScheme } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useMemo, useState } from "react";
@@ -71,12 +71,12 @@ function kpi(label: string, value: string | number, hint?: string) {
   return (
     <Card className="te-kpi-card">
       <Stack gap={2}>
-        <Text size="sm" c="dimmed">
+        <Text size="sm" c="var(--te-copy)">
           {label}
         </Text>
-        <Title order={3}>{value}</Title>
+        <Title order={3} c="var(--te-heading)">{value}</Title>
         {hint ? (
-          <Text size="xs" c="dimmed">
+          <Text size="xs" c="var(--te-copy)">
             {hint}
           </Text>
         ) : null}
@@ -97,18 +97,20 @@ function percent(n?: number | null): string {
   return `${Number(n || 0).toFixed(1)}%`;
 }
 
-function heatColor(value: number, max: number): string {
+function heatColor(value: number, max: number, isDark: boolean): string {
   if (!value || max <= 0) {
-    return "rgba(18, 93, 255, 0.06)";
+    return isDark ? "rgba(93, 150, 255, 0.08)" : "rgba(18, 93, 255, 0.06)";
   }
-  const alpha = 0.12 + (value / max) * 0.58;
-  return `rgba(18, 93, 255, ${Math.min(0.7, alpha).toFixed(2)})`;
+  const alpha = isDark ? 0.18 + (value / max) * 0.54 : 0.12 + (value / max) * 0.58;
+  return `rgba(18, 93, 255, ${Math.min(0.74, alpha).toFixed(2)})`;
 }
 
 const LIVE_REFRESH_MS = 10_000;
 
 export function OverviewPage() {
   const [campaignId, setCampaignId] = useState("");
+  const computedColorScheme = useComputedColorScheme("light");
+  const isDark = computedColorScheme === "dark";
 
   const metrics = useQuery({
     queryKey: ["metrics", campaignId],
@@ -178,6 +180,18 @@ export function OverviewPage() {
   const maxMatrixValue = Math.max(0, ...matrixValues);
   const containmentRate =
     rollForward.data && rollForward.data.total_transitions > 0 ? 100 - Number(rollForward.data.roll_forward_pct || 0) : null;
+  const chartAxisColor = isDark ? "#d7e3f7" : "#58667d";
+  const chartGridColor = isDark ? "rgba(151, 171, 204, 0.16)" : "rgba(90, 106, 140, 0.14)";
+  const chartTooltipStyle = {
+    background: isDark ? "rgba(9, 14, 22, 0.96)" : "rgba(255, 255, 255, 0.98)",
+    border: isDark ? "1px solid rgba(118, 135, 168, 0.18)" : "1px solid rgba(107, 127, 168, 0.16)",
+    borderRadius: "14px",
+    boxShadow: isDark ? "0 16px 28px rgba(0, 0, 0, 0.26)" : "0 14px 24px rgba(15, 24, 42, 0.1)",
+    color: isDark ? "#f7fbff" : "#172235",
+  } as const;
+  const chartTooltipLabelStyle = { color: isDark ? "#f7fbff" : "#172235", fontWeight: 700 } as const;
+  const chartTooltipItemStyle = { color: isDark ? "#d4def0" : "#425067" } as const;
+  const chartCursor = { fill: isDark ? "rgba(132, 184, 255, 0.08)" : "rgba(18, 93, 255, 0.05)" } as const;
 
   return (
     <Stack gap="md">
@@ -202,11 +216,11 @@ export function OverviewPage() {
       <Card className="te-data-card">
         <Group justify="space-between" wrap="wrap">
           <div>
-            <Text size="xs" tt="uppercase" fw={700} c="dimmed">
+            <Text size="xs" tt="uppercase" fw={700} c="var(--te-copy)">
               Demo Story
             </Text>
-            <Title order={4}>Upload portfolio, capture commitment, prove follow-through discipline.</Title>
-            <Text size="sm" c="dimmed" mt={4}>
+            <Title order={4} c="var(--te-heading)">Upload portfolio, capture commitment, prove follow-through discipline.</Title>
+            <Text size="sm" c="var(--te-copy)" mt={4}>
               {selectedCampaign
                 ? `Current scope: ${selectedCampaign.name} (${selectedCampaign.campaign_id})`
                 : "Use the campaign filter to isolate the buyer's uploaded portfolio during the demo."}
@@ -253,41 +267,41 @@ export function OverviewPage() {
         <Grid.Col span={{ base: 12, lg: 6 }}>
           <Card className="te-data-card">
             <Group justify="space-between" mb="sm">
-              <Title order={4}>PTP Discipline Engine</Title>
+              <Title order={4} c="var(--te-heading)">PTP Discipline Engine</Title>
               <Badge variant="outline">Operational</Badge>
             </Group>
-            <Text size="sm" c="dimmed" mb="md">
+            <Text size="sm" c="var(--te-copy)" mb="md">
               This is the proof that commitment handling is disciplined, not just high-volume.
             </Text>
             <div style={{ height: 260 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={followupData}>
-                  <CartesianGrid strokeDasharray="4 4" />
-                  <XAxis dataKey="label" />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip />
+                  <CartesianGrid stroke={chartGridColor} strokeDasharray="4 4" />
+                  <XAxis dataKey="label" tick={{ fill: chartAxisColor, fontSize: 12 }} axisLine={{ stroke: chartGridColor }} tickLine={{ stroke: chartGridColor }} />
+                  <YAxis allowDecimals={false} tick={{ fill: chartAxisColor, fontSize: 12 }} axisLine={{ stroke: chartGridColor }} tickLine={{ stroke: chartGridColor }} />
+                  <Tooltip contentStyle={chartTooltipStyle} labelStyle={chartTooltipLabelStyle} itemStyle={chartTooltipItemStyle} cursor={chartCursor} />
                   <Bar dataKey="value" fill="#125dff" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
             <SimpleGrid cols={{ base: 1, md: 3 }} mt="md">
               <Card>
-                <Text size="sm" c="dimmed">
+                <Text size="sm" c="var(--te-copy)">
                   Due Today
                 </Text>
-                <Title order={4}>{Number(m.followups_due_today || 0)}</Title>
+                <Title order={4} c="var(--te-heading)">{Number(m.followups_due_today || 0)}</Title>
               </Card>
               <Card>
-                <Text size="sm" c="dimmed">
+                <Text size="sm" c="var(--te-copy)">
                   Total Scheduled
                 </Text>
-                <Title order={4}>{Number(m.followups_scheduled_total || 0)}</Title>
+                <Title order={4} c="var(--te-heading)">{Number(m.followups_scheduled_total || 0)}</Title>
               </Card>
               <Card>
-                <Text size="sm" c="dimmed">
+                <Text size="sm" c="var(--te-copy)">
                   Queue SLA Breaches
                 </Text>
-                <Title order={4}>{Number(m.sla_breaches || 0)}</Title>
+                <Title order={4} c="var(--te-heading)">{Number(m.sla_breaches || 0)}</Title>
               </Card>
             </SimpleGrid>
           </Card>
@@ -296,17 +310,17 @@ export function OverviewPage() {
         <Grid.Col span={{ base: 12, lg: 6 }}>
           <Card className="te-data-card">
             <Group justify="space-between" mb="sm">
-              <Title order={4}>Bucket Pressure And Conversion</Title>
+              <Title order={4} c="var(--te-heading)">Bucket Pressure And Conversion</Title>
               <Badge variant="outline">DPD Lens</Badge>
             </Group>
             <div style={{ height: 260 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={bucketData}>
-                  <CartesianGrid strokeDasharray="4 4" />
-                  <XAxis dataKey="bucket" />
-                  <YAxis yAxisId="left" allowDecimals={false} />
-                  <YAxis yAxisId="right" orientation="right" />
-                  <Tooltip />
+                  <CartesianGrid stroke={chartGridColor} strokeDasharray="4 4" />
+                  <XAxis dataKey="bucket" tick={{ fill: chartAxisColor, fontSize: 12 }} axisLine={{ stroke: chartGridColor }} tickLine={{ stroke: chartGridColor }} />
+                  <YAxis yAxisId="left" allowDecimals={false} tick={{ fill: chartAxisColor, fontSize: 12 }} axisLine={{ stroke: chartGridColor }} tickLine={{ stroke: chartGridColor }} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fill: chartAxisColor, fontSize: 12 }} axisLine={{ stroke: chartGridColor }} tickLine={{ stroke: chartGridColor }} />
+                  <Tooltip contentStyle={chartTooltipStyle} labelStyle={chartTooltipLabelStyle} itemStyle={chartTooltipItemStyle} cursor={chartCursor} />
                   <Bar yAxisId="left" dataKey="exposure" fill="#125dff" radius={[8, 8, 0, 0]} />
                   <Bar yAxisId="right" dataKey="ptpRate" fill="#14a44d" radius={[8, 8, 0, 0]} />
                 </BarChart>
@@ -339,8 +353,8 @@ export function OverviewPage() {
       <Card className="te-data-card">
         <Group justify="space-between" mb="sm">
           <div>
-            <Title order={4}>Roll-Forward Heatmap</Title>
-            <Text size="sm" c="dimmed">
+            <Title order={4} c="var(--te-heading)">Roll-Forward Heatmap</Title>
+            <Text size="sm" c="var(--te-copy)">
               The metric this buyer will care about once missed PTPs start appearing.
             </Text>
           </div>
@@ -360,11 +374,18 @@ export function OverviewPage() {
               <Table.Tbody>
                 {matrixBuckets.map((from) => (
                   <Table.Tr key={from}>
-                    <Table.Td fw={700}>{from}</Table.Td>
+                    <Table.Td style={{ color: "var(--te-heading)", fontWeight: 700 }}>{from}</Table.Td>
                     {matrixBuckets.map((to) => {
                       const value = Number(rollForward.data?.matrix?.[from]?.[to] || 0);
                       return (
-                        <Table.Td key={`${from}-${to}`} style={{ background: heatColor(value, maxMatrixValue) }}>
+                        <Table.Td
+                          key={`${from}-${to}`}
+                          style={{
+                            background: heatColor(value, maxMatrixValue, isDark),
+                            color: value ? "var(--te-heading)" : "var(--te-copy)",
+                            fontWeight: value ? 700 : 500,
+                          }}
+                        >
                           {value || "-"}
                         </Table.Td>
                       );
@@ -383,17 +404,17 @@ export function OverviewPage() {
         <Grid.Col span={{ base: 12, lg: 7 }}>
           <Card className="te-data-card">
             <Group justify="space-between" mb="sm">
-              <Title order={4}>Recovery Trend</Title>
+              <Title order={4} c="var(--te-heading)">Recovery Trend</Title>
               <Badge variant="outline">Actual payments</Badge>
             </Group>
             {recoveryData.length ? (
               <div style={{ height: 280 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={recoveryData}>
-                    <CartesianGrid strokeDasharray="4 4" />
-                    <XAxis dataKey="date" minTickGap={24} />
-                    <YAxis />
-                    <Tooltip formatter={(value) => rupees(Number(value || 0))} />
+                    <CartesianGrid stroke={chartGridColor} strokeDasharray="4 4" />
+                    <XAxis dataKey="date" minTickGap={24} tick={{ fill: chartAxisColor, fontSize: 12 }} axisLine={{ stroke: chartGridColor }} tickLine={{ stroke: chartGridColor }} />
+                    <YAxis tick={{ fill: chartAxisColor, fontSize: 12 }} axisLine={{ stroke: chartGridColor }} tickLine={{ stroke: chartGridColor }} />
+                    <Tooltip formatter={(value) => rupees(Number(value || 0))} contentStyle={chartTooltipStyle} labelStyle={chartTooltipLabelStyle} itemStyle={chartTooltipItemStyle} cursor={chartCursor} />
                     <Line type="monotone" dataKey="amount" stroke="#125dff" strokeWidth={3} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -407,7 +428,7 @@ export function OverviewPage() {
         <Grid.Col span={{ base: 12, lg: 5 }}>
           <Card className="te-data-card">
             <Group justify="space-between" mb="sm">
-              <Title order={4}>Agent Leaderboard</Title>
+              <Title order={4} c="var(--te-heading)">Agent Leaderboard</Title>
               <Badge variant="outline">Collections desk</Badge>
             </Group>
             {(agents.data?.agents || []).length ? (
@@ -426,8 +447,8 @@ export function OverviewPage() {
                       <Table.Tr key={`${row.rank}-${row.display_name}`}>
                         <Table.Td>
                           <Stack gap={2}>
-                            <Text fw={600}>{row.display_name}</Text>
-                            <Text size="xs" c="dimmed">
+                            <Text fw={600} c="var(--te-heading)">{row.display_name}</Text>
+                            <Text size="xs" c="var(--te-copy)">
                               AHT {Number(row.avg_handle_time_s || 0).toFixed(0)}s
                             </Text>
                           </Stack>
@@ -435,7 +456,7 @@ export function OverviewPage() {
                         <Table.Td>
                           <Group gap="xs">
                             <Progress value={Math.min(100, Math.max(0, Number(row.ptp_conversion_pct || 0)))} style={{ flex: 1 }} />
-                            <Text size="sm">{percent(row.ptp_conversion_pct)}</Text>
+                            <Text size="sm" c="var(--te-heading)">{percent(row.ptp_conversion_pct)}</Text>
                           </Group>
                         </Table.Td>
                         <Table.Td>{row.total_calls}</Table.Td>
@@ -456,8 +477,8 @@ export function OverviewPage() {
         <Grid.Col span={{ base: 12, lg: 6 }}>
           <Card className="te-data-card">
             <Group justify="space-between" mb="sm">
-              <Title order={4}>Queue Snapshot</Title>
-              <Text size="sm" c="dimmed">
+              <Title order={4} c="var(--te-heading)">Queue Snapshot</Title>
+              <Text size="sm" c="var(--te-copy)">
                 What the operations team is working right now
               </Text>
             </Group>
@@ -465,10 +486,10 @@ export function OverviewPage() {
               <div style={{ height: 240 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={queueRows}>
-                    <CartesianGrid strokeDasharray="4 4" />
-                    <XAxis dataKey="state" minTickGap={12} />
-                    <YAxis allowDecimals={false} />
-                    <Tooltip />
+                    <CartesianGrid stroke={chartGridColor} strokeDasharray="4 4" />
+                    <XAxis dataKey="state" minTickGap={12} tick={{ fill: chartAxisColor, fontSize: 12 }} axisLine={{ stroke: chartGridColor }} tickLine={{ stroke: chartGridColor }} />
+                    <YAxis allowDecimals={false} tick={{ fill: chartAxisColor, fontSize: 12 }} axisLine={{ stroke: chartGridColor }} tickLine={{ stroke: chartGridColor }} />
+                    <Tooltip contentStyle={chartTooltipStyle} labelStyle={chartTooltipLabelStyle} itemStyle={chartTooltipItemStyle} cursor={chartCursor} />
                     <Bar dataKey="count" fill="#0b7fab" radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -482,8 +503,8 @@ export function OverviewPage() {
         <Grid.Col span={{ base: 12, lg: 6 }}>
           <Card className="te-data-card">
             <Group justify="space-between" mb="sm">
-              <Title order={4}>Campaign Performance</Title>
-              <Text size="sm" c="dimmed">
+              <Title order={4} c="var(--te-heading)">Campaign Performance</Title>
+              <Text size="sm" c="var(--te-copy)">
                 Launch-to-completion progress by campaign
               </Text>
             </Group>
@@ -512,7 +533,7 @@ export function OverviewPage() {
                           <Table.Td>
                             <Group gap="xs">
                               <Progress value={Math.min(100, Math.max(0, rate))} style={{ flex: 1 }} />
-                              <Text size="sm">{percent(rate)}</Text>
+                              <Text size="sm" c="var(--te-heading)">{percent(rate)}</Text>
                             </Group>
                           </Table.Td>
                         </Table.Tr>

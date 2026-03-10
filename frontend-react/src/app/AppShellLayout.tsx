@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   AppShell,
   Avatar,
   Badge,
@@ -11,11 +12,14 @@ import {
   Paper,
   Stack,
   Text,
+  Tooltip,
   UnstyledButton,
+  useComputedColorScheme,
+  useMantineColorScheme,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, LogOut, User, Building2 } from "lucide-react";
+import { ChevronDown, LogOut, User, Building2, MoonStar, SunMedium } from "lucide-react";
 import { useEffect } from "react";
 import { Link, NavLink as RouterNavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
@@ -25,7 +29,6 @@ import { apiFetch } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
 import { canShowNavItem, NAV_ITEMS } from "./nav";
 import type { BuildInfo } from "../types/api";
-import { tokens } from "../theme/tokens";
 
 function toTitle(slug: string): string {
   if (!slug) return "Overview";
@@ -39,6 +42,9 @@ function toTitle(slug: string): string {
 export function AppShellLayout() {
   const [opened, { toggle }] = useDisclosure(false);
   const { user, role, permissions, logout } = useAuth();
+  const { setColorScheme } = useMantineColorScheme();
+  const computedColorScheme = useComputedColorScheme("light");
+  const isDark = computedColorScheme === "dark";
   const location = useLocation();
   const navigate = useNavigate();
   const isCallingRoute = location.pathname.startsWith("/app/calling");
@@ -55,7 +61,7 @@ export function AppShellLayout() {
     .map((segment, index, segments) => {
       const to = `/${segments.slice(0, index + 1).join("/")}`;
       return (
-        <Link key={to} to={to} style={{ textDecoration: "none", color: tokens.colors.primary }}>
+        <Link key={to} to={to} style={{ textDecoration: "none", color: "var(--te-shell-crumb)" }}>
           {toTitle(segment)}
         </Link>
       );
@@ -106,6 +112,14 @@ export function AppShellLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
+  const shellMainBackground = "var(--te-shell-main-bg)";
+  const shellHeaderBackground = "var(--te-shell-header-bg)";
+  const shellNavbarBackground = "var(--te-shell-navbar-bg)";
+  const shellHeaderBorder = "1px solid var(--te-shell-header-border)";
+  const shellNavbarBorder = "1px solid var(--te-shell-navbar-border)";
+  const shellSurface = "var(--te-shell-surface)";
+  const shellChromeBorder = "1px solid var(--te-shell-chip-border)";
+
   return (
     <AppShell
       header={{ height: 82 }}
@@ -113,8 +127,7 @@ export function AppShellLayout() {
       padding={isCallingRoute ? "md" : "lg"}
       styles={{
         main: {
-          background:
-            "radial-gradient(1100px 620px at -6% -12%, rgba(71, 130, 255, 0.18), transparent 48%), radial-gradient(940px 520px at 108% -12%, rgba(0, 181, 153, 0.14), transparent 48%), linear-gradient(180deg, #f7f9fd 0%, #f2f5fb 52%, #edf2f9 100%)",
+          background: shellMainBackground,
           paddingTop: isCallingRoute ? 90 : 94,
         },
       }}
@@ -123,29 +136,28 @@ export function AppShellLayout() {
         px="md"
         py="xs"
         style={{
-          borderBottom: "1px solid rgba(15, 24, 42, 0.09)",
-          background:
-            "radial-gradient(560px 220px at -20% 0%, rgba(64, 124, 255, 0.22), transparent 56%), radial-gradient(520px 260px at 120% 0%, rgba(0, 188, 160, 0.16), transparent 56%), linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.72))",
+          borderBottom: shellHeaderBorder,
+          background: shellHeaderBackground,
           backdropFilter: "blur(20px) saturate(138%)",
-          boxShadow: "0 12px 30px rgba(12, 25, 48, 0.08)",
+          boxShadow: "var(--te-shell-shadow)",
         }}
       >
         <Group justify="space-between" align="center" h="100%" wrap="nowrap">
           <Group gap="sm" wrap="nowrap">
-            <Burger opened={opened} onClick={toggle} hiddenFrom="md" size="sm" color="#454b57" />
-            <img src={logoMark} alt="Recovery OS" width={36} height={36} style={{ borderRadius: 11, boxShadow: "0 8px 24px rgba(5,18,35,0.4)" }} />
+            <Burger opened={opened} onClick={toggle} hiddenFrom="md" size="sm" color="var(--te-shell-burger)" />
+            <img src={logoMark} alt="Recovery OS" width={36} height={36} style={{ borderRadius: 11, boxShadow: "var(--te-shell-mark-shadow)" }} />
             <Stack gap={0}>
               <Group gap={6} align="center">
-                <Text fw={800} size="md" c="#101217" style={{ letterSpacing: "-0.01em" }}>NBFC Recovery OS</Text>
+                <Text fw={800} size="md" c="var(--te-shell-title)" style={{ letterSpacing: "-0.01em" }}>NBFC Recovery OS</Text>
                 <Badge variant="filled" color="blue" radius="sm" style={{ boxShadow: "0 6px 18px rgba(18, 93, 255, 0.3)" }}>
                   Ops Floor
                 </Badge>
               </Group>
               <Group gap={8} align="center">
-                <Building2 size={13} color="#5f6672" />
-                <Text size="xs" c="#5f6672">TuringEdge Demo Org</Text>
-                <Text size="xs" c="#8b94a4">•</Text>
-                <Text size="xs" c="#5f6672">{crumbs.length ? crumbs[crumbs.length - 1] : "Overview"}</Text>
+                <Building2 size={13} color="var(--te-shell-copy)" />
+                <Text size="xs" c="var(--te-shell-copy)">TuringEdge Demo Org</Text>
+                <Text size="xs" c="var(--te-shell-muted)">•</Text>
+                <Text size="xs" c="var(--te-shell-copy)">{crumbs.length ? crumbs[crumbs.length - 1] : "Overview"}</Text>
               </Group>
             </Stack>
           </Group>
@@ -157,7 +169,24 @@ export function AppShellLayout() {
             {buildQuery.data?.pilot_mode ? (
               <Badge variant="light" color="orange" radius="sm">PILOT</Badge>
             ) : null}
-            <Badge variant="outline" color="blue" radius="sm" style={{ color: "#2f415f", borderColor: "rgba(0, 113, 227, 0.35)" }}>
+            <Tooltip label={isDark ? "Switch to light mode" : "Switch to dark mode"}>
+              <ActionIcon
+                variant="default"
+                radius="xl"
+                size="lg"
+                onClick={() => setColorScheme(isDark ? "light" : "dark")}
+                aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+                style={{
+                  border: shellChromeBorder,
+                  background: "var(--te-shell-chip-bg)",
+                  boxShadow: "var(--te-shell-chip-shadow)",
+                  color: "var(--te-shell-title)",
+                }}
+              >
+                {isDark ? <SunMedium size={16} /> : <MoonStar size={16} />}
+              </ActionIcon>
+            </Tooltip>
+            <Badge variant="outline" color="blue" radius="sm" style={{ color: "var(--te-shell-badge-copy)", borderColor: "var(--te-shell-badge-border)" }}>
               BUILD {String(buildQuery.data?.static_token || "-").toUpperCase()}
             </Badge>
             <Menu shadow="md" width={250} position="bottom-end">
@@ -169,19 +198,19 @@ export function AppShellLayout() {
                     style={{
                       padding: "6px 10px",
                       borderRadius: 999,
-                      border: "1px solid rgba(17, 27, 45, 0.14)",
-                      background: "linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.74))",
-                      boxShadow: "0 8px 22px rgba(12, 25, 48, 0.08)",
+                      border: shellChromeBorder,
+                      background: "var(--te-shell-chip-bg)",
+                      boxShadow: "var(--te-shell-chip-shadow)",
                     }}
                   >
                     <Avatar radius="xl" color="blue" variant="light" size="sm">
                       {(user?.full_name || user?.username || "U").slice(0, 1).toUpperCase()}
                     </Avatar>
                     <Box>
-                      <Text size="xs" fw={600} lh={1.1} c="#1d1d1f">{user?.full_name || user?.username || "User"}</Text>
-                      <Text size="10px" c="#6e6e73" lh={1.1}>{role || "-"}</Text>
+                      <Text size="xs" fw={600} lh={1.1} c="var(--te-shell-title)">{user?.full_name || user?.username || "User"}</Text>
+                      <Text size="10px" c="var(--te-shell-muted)" lh={1.1}>{role || "-"}</Text>
                     </Box>
-                    <ChevronDown size={14} color="#6e6e73" />
+                    <ChevronDown size={14} color="var(--te-shell-muted)" />
                   </Group>
                 </UnstyledButton>
               </Menu.Target>
@@ -206,28 +235,27 @@ export function AppShellLayout() {
         p="sm"
         className="te-subtle-scroll"
         style={{
-          borderRight: "1px solid rgba(15, 24, 42, 0.08)",
-          background:
-            "radial-gradient(540px 240px at 0% 0%, rgba(34, 104, 255, 0.14), transparent 58%), radial-gradient(500px 240px at 100% 8%, rgba(0, 188, 160, 0.08), transparent 58%), linear-gradient(180deg, rgba(255, 255, 255, 0.78) 0%, rgba(255, 255, 255, 0.62) 52%, rgba(255, 255, 255, 0.72) 100%)",
+          borderRight: shellNavbarBorder,
+          background: shellNavbarBackground,
           backdropFilter: "blur(20px) saturate(134%)",
-          boxShadow: "inset -1px 0 0 rgba(90, 106, 140, 0.1)",
+          boxShadow: "var(--te-shell-navbar-shadow)",
         }}
       >
         <Stack h="100%" justify="space-between">
           <Stack gap="sm">
-            <Paper radius="md" p="sm" withBorder style={{ borderColor: "rgba(15, 24, 42, 0.1)", background: "rgba(255, 255, 255, 0.62)" }}>
+            <Paper radius="md" p="sm" withBorder style={{ borderColor: "var(--te-shell-navbar-border)", background: shellSurface }}>
               <Stack gap={8}>
                 <img
                   src={turingEdgeLogo}
                   alt="TuringEdge"
-                  style={{ width: "100%", maxWidth: 186, objectFit: "contain", filter: "contrast(1.08)" }}
+                  style={{ width: "100%", maxWidth: 186, objectFit: "contain", filter: "var(--te-shell-wordmark-filter)" }}
                 />
-                <Text size="11px" c="#6f7784" fw={600} tt="uppercase" style={{ letterSpacing: "0.09em" }}>
+                <Text size="11px" c="var(--te-shell-muted)" fw={600} tt="uppercase" style={{ letterSpacing: "0.09em" }}>
                   TuringEdge Command
                 </Text>
               </Stack>
             </Paper>
-            <Divider color="rgba(15, 24, 42, 0.1)" />
+            <Divider color="var(--te-shell-navbar-border)" />
             {navItems.map((item) => {
               const Icon = item.icon;
               return (
@@ -241,11 +269,16 @@ export function AppShellLayout() {
                   styles={{
                     root: {
                       borderRadius: 12,
-                      color: "#263242",
-                      border: "1px solid transparent",
+                      color: "var(--te-shell-nav)",
+                      border: "1px solid var(--te-shell-nav-border)",
+                      background: "var(--te-shell-nav-bg)",
+                      "&:hover": {
+                        borderColor: "var(--te-shell-nav-hover-border)",
+                        background: "var(--te-shell-nav-hover-bg)",
+                      },
                     },
                     section: {
-                      color: "#4f6078",
+                      color: "var(--te-shell-nav-icon)",
                     },
                     label: {
                       fontWeight: 600,
@@ -254,10 +287,9 @@ export function AppShellLayout() {
                   style={
                     location.pathname === item.to || location.pathname.startsWith(item.to + "/")
                       ? {
-                          background:
-                            "linear-gradient(90deg, rgba(0, 113, 227, 0.18), rgba(0, 113, 227, 0.08))",
-                          borderColor: "rgba(0, 113, 227, 0.4)",
-                          boxShadow: "0 10px 20px rgba(17, 32, 57, 0.09)",
+                          background: "var(--te-shell-nav-active-bg)",
+                          borderColor: "var(--te-shell-nav-active-border)",
+                          boxShadow: "var(--te-shell-nav-active-shadow)",
                         }
                       : undefined
                   }
@@ -266,7 +298,7 @@ export function AppShellLayout() {
               );
             })}
           </Stack>
-          <Text size="xs" c="#6f7784" px="xs">
+          <Text size="xs" c="var(--te-shell-muted)" px="xs">
             Recovery OS v1 | Build {buildQuery.data?.static_token || "-"}
           </Text>
         </Stack>

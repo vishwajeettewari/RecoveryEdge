@@ -49,6 +49,7 @@ from event_bus_service import EventBusService
 from experiment_service import ExperimentService
 from journey_orchestrator_service import JourneyOrchestratorService
 from model_router_service import ModelRouterService
+from ops_copilot_llm_service import OpsCopilotLLMService
 from ops_control_service import OpsControlService
 from payment_orchestration_service import PaymentOrchestrationService
 from recovery_brain_service import RecoveryBrainService
@@ -1514,6 +1515,23 @@ def _get_demo_singletons() -> Dict[str, object]:
     approvals = ApprovalService(db_path)
     experiments = ExperimentService(db_path)
     model_router = ModelRouterService(db_path)
+    ops_copilot_llm = OpsCopilotLLMService(
+        endpoint=get_env("AZURE_OPENAI_ENDPOINT"),
+        api_key=get_env("AZURE_OPENAI_API_KEY"),
+        deployment=(
+            get_env("OPS_COPILOT_AZURE_OPENAI_MODEL")
+            or get_env("AZURE_OPENAI_CHAT_MODEL")
+            or "gpt-5.2-chat"
+        ),
+        api_version=(
+            get_env("OPS_COPILOT_AZURE_OPENAI_API_VERSION")
+            or get_env("AZURE_OPENAI_API_VERSION", "2024-10-21")
+            or "2024-10-21"
+        ),
+        timeout_s=float(get_env("OPS_COPILOT_LLM_TIMEOUT_S", "15") or "15"),
+        enabled=get_env_bool("OPS_COPILOT_LLM_ENABLED", True),
+        model_router=model_router,
+    )
     recovery_brain = RecoveryBrainService(
         db_path,
         model_router=model_router,
@@ -1527,6 +1545,7 @@ def _get_demo_singletons() -> Dict[str, object]:
         approvals=approvals,
         experiments=experiments,
         strategy_engine=strategy,
+        copilot_llm=ops_copilot_llm,
     )
     # Best-effort reindex on startup for demos (fast for small docs).
     try:
@@ -1562,6 +1581,7 @@ def _get_demo_singletons() -> Dict[str, object]:
             "approval_service": approvals,
             "experiment_service": experiments,
             "model_router": model_router,
+            "ops_copilot_llm": ops_copilot_llm,
             "recovery_brain": recovery_brain,
             "ops_control": ops_control,
             "campaign_tasks": {},
@@ -4969,7 +4989,8 @@ async def api_control_layer_chat(request: Request):
         body = {}
     ctx = _get_auth_context(request)
     campaign_id = str(body.get("campaign_id") or "").strip() or None
-    out = ops_control.chat(
+    out = await asyncio.to_thread(
+        ops_control.chat,
         tenant_id=_tenant_id(request),
         actor=_actor(request),
         role=str(ctx.get("role") or ""),

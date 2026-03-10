@@ -10,6 +10,14 @@ from web_session import EmotionalState, WebCallSession
 from sarvam_stt_service import Transcript
 import asyncio
 from workflow_engine import WorkflowEngine, WorkflowState
+from voice_pipeline import (
+    DialogueState,
+    DialogueStateManager,
+    InterruptionPolicy,
+    LanguageDetectionGate,
+    PromptHistoryGuard,
+    UtteranceIntentClassifier,
+)
 
 
 class _DummySTT:
@@ -85,7 +93,13 @@ class WebSessionGuardTests(unittest.TestCase):
         s.tts_speaker = "shubh"
         s.tts_model = "bulbul:v3"
         s._strategy_engine = None
+        s._session_store = None
+        s._excel_sink = None
+        s._audit_store = None
+        s._crm_adapter = None
         s._wf_state = WorkflowState()
+        s._last_persisted_ptp = None
+        s._last_persisted_callback = None
         s._facts = {
             "ptp_date": None,
             "callback_time": None,
@@ -110,6 +124,14 @@ class WebSessionGuardTests(unittest.TestCase):
         }
         s._emotional_state = EmotionalState()
         s._auto_align_language = False
+        s._intent_classifier = UtteranceIntentClassifier(tz=s._workflow_tz)
+        s._language_gate = LanguageDetectionGate()
+        s._dialogue_state_manager = DialogueStateManager()
+        s._interruption_policy = InterruptionPolicy()
+        s._prompt_history_guard = PromptHistoryGuard()
+        s._dialogue_state = s._dialogue_state_manager.current_state
+        s._pending_language_confirmation = None
+        s._response_step_override = None
         s._wf = WorkflowEngine(
             enable_advanced=s._enable_advanced_workflow,
             max_retries=3,
@@ -568,6 +590,7 @@ class WebSessionGuardTests(unittest.TestCase):
         s._pending_step_id = "confirm_identity"
         s._extract_facts_from_text("ਮੇਰਾ ਨਾਮ ਮਨੋਜ ਕੁਮਾਰ ਹੈ")
         self.assertEqual(s._facts.get("customer_name"), "ਮਨੋਜ ਕੁਮਾਰ")
+        self.assertIsNone(s._facts.get("language_preference"))
 
     def test_extract_name_from_ack_prefixed_gurmukhi_identity_phrase(self):
         s = self._session_stub()
@@ -590,17 +613,20 @@ class WebSessionGuardTests(unittest.TestCase):
         merged = s._merge_identity_pending_final(merged, "ਤਿਵਾਰੀ।")
         self.assertEqual(merged, "मेरा नाम है विश्वजीत। ਤਿਵਾਰੀ।")
 
-    def test_recover_identity_from_pending_final_confirms_full_name(self):
+    def test_recover_identity_from_pending_final_requires_confirmation_for_full_name(self):
         s = self._session_stub()
         s._pending_step_id = "confirm_identity"
-        self.assertTrue(
+        s._wf_state.consent = True
+        s._wf_state.current_step = "confirm_identity"
+        self.assertFalse(
             s._recover_identity_from_pending_final(
                 "मेरा नाम है विश्वजीत। ਤਿਵਾਰੀ।",
                 "confirm_identity",
             )
         )
         self.assertEqual(s._facts.get("customer_name"), "विश्वजीत ਤਿਵਾਰੀ")
-        self.assertTrue(s._wf_state.identity_confirmed)
+        self.assertFalse(s._wf_state.identity_confirmed)
+        self.assertEqual(s._wf_state.current_step, "confirm_identity")
 
     def test_extract_name_from_bare_identity_reply_ignores_affirmation(self):
         s = self._session_stub()
@@ -700,6 +726,34 @@ class WebSessionGuardTests(unittest.TestCase):
         self.assertIn("मैंने आपका नाम विश्वजीत तिवारी सुना", out)
         self.assertIn("₹900", out)
 
+    def test_punjabi_payment_prompt_uses_native_script(self):
+        s = self._session_stub()
+        s._facts["language_preference"] = "pa-IN"
+        s._facts["overdue_amount"] = "900"
+        out = s._fixed_prompt_for_step("ask_payment_made", language="pa-IN")
+        self.assertIn("ਕੀ ਤੁਸੀਂ", out)
+        self.assertIn("₹900", out)
+
+    def test_punjabi_confirm_ptp_prompt_restates_commitment(self):
+        s = self._session_stub()
+        s._facts["language_preference"] = "pa-IN"
+        s._facts["overdue_amount"] = "900"
+        s._facts["ptp_date"] = "2026-03-11"
+        s._wf_state.ptp_date = "2026-03-11"
+        out = s._fixed_prompt_for_step("confirm_ptp", language="pa-IN")
+        self.assertIn("ਭੁਗਤਾਨ ਦੇ ਵਾਅਦੇ", out)
+        self.assertIn("₹900", out)
+
+    def test_hindi_confirm_ptp_prompt_requests_explicit_confirmation(self):
+        s = self._session_stub()
+        s._facts["language_preference"] = "hi-IN"
+        s._facts["overdue_amount"] = "900"
+        s._facts["ptp_date"] = "2026-03-11"
+        s._wf_state.ptp_date = "2026-03-11"
+        out = s._fixed_prompt_for_step("confirm_ptp", language="hi-IN")
+        self.assertIn("भुगतान वादा", out)
+        self.assertIn("₹900", out)
+
     def test_dynamic_response_acknowledges_name_and_matches_male_voice(self):
         s = self._session_stub()
         s.tts_speaker = "shubh"
@@ -794,6 +848,14 @@ class WebSessionGuardTests(unittest.TestCase):
         self.assertIn("UTR", out)
         self.assertIn("भुगतान", out)
 
+    def test_closing_prompt_offers_payment_link_after_ptp(self):
+        s = self._session_stub()
+        s._facts["language_preference"] = "hi-IN"
+        s._wf_state.ptp_date = "2026-03-11"
+        out = s._fixed_prompt_for_step("closing", language="hi-IN")
+        self.assertIn("व्हाट्सऐप", out)
+        self.assertIn("भुगतान लिंक", out)
+
     def test_hindi_consent_prompt_is_short_and_localized(self):
         s = self._session_stub()
         s._facts["language_preference"] = "hi-IN"
@@ -810,6 +872,12 @@ class WebSessionGuardTests(unittest.TestCase):
         self.assertIn("क्या मैं आगे बढ़ूँ?", out)
         self.assertNotIn("This call may be recorded", out)
         self.assertLess(len(out), 150)
+
+    def test_hindi_dynamic_greeting_uses_on_behalf_wording(self):
+        s = self._session_stub()
+        s._facts["language_preference"] = "hi-IN"
+        out = s._select_varied_greeting()
+        self.assertIn("की ओर से", out)
 
     def test_start_greeting_uses_dynamic_greeting_when_no_custom_text(self):
         s = self._session_stub()
@@ -862,6 +930,71 @@ class WebSessionGuardTests(unittest.TestCase):
         self.assertEqual(applied.get("language"), "unknown")
         self.assertEqual(s.stt.language, "unknown")
         self.assertIn("क्या मैं आगे बढ़ूँ?", captured.get("text", ""))
+
+    def test_handle_text_name_in_gurmukhi_does_not_offer_language_switch(self):
+        s = self._session_stub()
+        s._pending_step_id = "confirm_identity"
+        s._wf_state.current_step = "confirm_identity"
+        s._wf_state.last_agent_intent = "confirm_identity"
+        s.send_event = self._noop_send_event
+        async def noop_chat_message(*args, **kwargs):
+            return None
+        s._emit_chat_message = noop_chat_message  # type: ignore[method-assign]
+        s._log_message = lambda *args, **kwargs: None
+        s._debug_trace = lambda *args, **kwargs: None
+        s._preempt_mode_for_user_turn = lambda: ""
+        captured: dict[str, str] = {"started": ""}
+
+        async def fake_offer_language_switch_confirmation(*, candidate_language, bound_step, source, reason):
+            captured["candidate_language"] = candidate_language
+            captured["bound_step"] = bound_step
+            captured["source"] = source
+            captured["reason"] = reason
+
+        async def fake_start_generation_from_text(*, user_text, language, preview=False):
+            captured["started"] = user_text
+            captured["language"] = language
+
+        s._offer_language_switch_confirmation = fake_offer_language_switch_confirmation  # type: ignore[method-assign]
+        s._start_generation_from_text = fake_start_generation_from_text  # type: ignore[method-assign]
+
+        asyncio.run(s.handle_text("ਮੇਰਾ ਨਾਮ ਵਿਸ਼ਵਜੀਤ ਤਿਵਾੜੀ ਹੈ"))
+        self.assertNotIn("candidate_language", captured)
+        self.assertEqual(captured.get("started"), "ਮੇਰਾ ਨਾਮ ਵਿਸ਼ਵਜੀਤ ਤਿਵਾੜੀ ਹੈ")
+
+    def test_handle_text_explicit_language_request_requires_confirmation(self):
+        s = self._session_stub()
+        s._pending_step_id = "ask_payment_made"
+        s._wf_state.current_step = "ask_payment_made"
+        s._wf_state.last_agent_intent = "ask_payment_made"
+        s.send_event = self._noop_send_event
+
+        async def noop_chat_message(*args, **kwargs):
+            return None
+
+        s._emit_chat_message = noop_chat_message  # type: ignore[method-assign]
+        s._log_message = lambda *args, **kwargs: None
+        s._debug_trace = lambda *args, **kwargs: None
+        s._preempt_mode_for_user_turn = lambda: ""
+        captured: dict[str, str] = {}
+
+        async def fake_offer_language_switch_confirmation(*, candidate_language, bound_step, source, reason):
+            captured["candidate_language"] = candidate_language
+            captured["bound_step"] = bound_step
+            captured["source"] = source
+            captured["reason"] = reason
+
+        async def fail_handle_language_switch_request(*args, **kwargs):
+            raise AssertionError("language switch should not execute before confirmation")
+
+        s._offer_language_switch_confirmation = fake_offer_language_switch_confirmation  # type: ignore[method-assign]
+        s._handle_language_switch_request = fail_handle_language_switch_request  # type: ignore[method-assign]
+
+        asyncio.run(s.handle_text("Please talk in Hindi."))
+
+        self.assertEqual(captured.get("candidate_language"), "hi-IN")
+        self.assertEqual(captured.get("bound_step"), "ask_payment_made")
+        self.assertEqual(captured.get("source"), "typed")
 
     def test_non_english_stt_connect_language_uses_auto_detect(self):
         s = self._session_stub()
@@ -957,6 +1090,51 @@ class WebSessionGuardTests(unittest.TestCase):
         self.assertEqual(captured.get("language"), "en-IN")
         self.assertEqual(captured.get("step"), "closing")
 
+    def test_language_confirmation_yes_executes_switch(self):
+        s = self._session_stub()
+        s._pending_language_confirmation = {
+            "candidate_language": "hi-IN",
+            "bound_step": "ask_payment_made",
+            "source": "stt_final",
+            "reason": "explicit_request",
+        }
+        captured: dict[str, str] = {}
+
+        async def fake_handle_language_switch_request(*, requested_language, bound_step, source):
+            captured["requested_language"] = requested_language
+            captured["bound_step"] = bound_step
+            captured["source"] = source
+
+        s._handle_language_switch_request = fake_handle_language_switch_request  # type: ignore[method-assign]
+
+        handled = asyncio.run(s._maybe_handle_language_confirmation_response("yes"))
+
+        self.assertTrue(handled)
+        self.assertEqual(captured.get("requested_language"), "hi-IN")
+        self.assertEqual(captured.get("bound_step"), "ask_payment_made")
+        self.assertEqual(captured.get("source"), "language_confirmation")
+
+    def test_repair_mode_resets_language_and_restores_last_valid_state(self):
+        s = self._session_stub()
+        s._dialogue_state = DialogueState.PTP_CAPTURE
+        s._dialogue_state_manager.last_valid_state = DialogueState.PAYMENT_STATUS
+        s._facts["language_preference"] = "pa-IN"
+        captured: dict[str, str] = {}
+
+        async def fake_start_fixed_turn(*, assistant_text, language, step, update_workflow=False):
+            captured["assistant_text"] = assistant_text
+            captured["language"] = language
+            captured["step"] = step
+
+        s._start_fixed_turn = fake_start_fixed_turn  # type: ignore[method-assign]
+
+        asyncio.run(s._enter_repair_mode())
+
+        self.assertEqual(s._facts.get("language_preference"), "hi-IN")
+        self.assertEqual(s._wf_state.current_step, "ask_payment_made")
+        self.assertEqual(captured.get("language"), "hi-IN")
+        self.assertIn("माफ़ कीजिए, मैं हिंदी में बात करता हूँ।", captured.get("assistant_text", ""))
+
     def test_detect_misunderstanding_ignores_payment_commitment_reply(self):
         s = self._session_stub()
         s._wf_state.current_step = "ask_ptp_or_callback"
@@ -1025,7 +1203,7 @@ class WebSessionGuardTests(unittest.TestCase):
         s._facts["language_preference"] = "hi-IN"
         s._wf_state.last_transition_reason = "abusive_language"
         out = s._fixed_prompt_for_step("closing", language="hi-IN")
-        self.assertIn("अपमानजनक भाषा", out)
+        self.assertEqual(out, "ठीक है। धन्यवाद आपके समय के लिए।")
 
     def test_stt_stream_restart_flag_is_consumed_once(self):
         s = self._session_stub()

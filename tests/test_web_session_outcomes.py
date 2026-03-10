@@ -345,6 +345,35 @@ class WebSessionOutcomeTests(unittest.TestCase):
         self.assertEqual(outcome[0], "2026-03-12")
         self.assertEqual(outcome[1], "cmp-auto-ptp")
 
+    def test_relative_ptp_waits_for_confirmation_before_persisting(self):
+        session = self._auto_ptp_session()
+        fixed_now = datetime(2026, 3, 10, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+
+        with patch(
+            "web_session.parse_date_from_text",
+            side_effect=lambda text, *, tz, now=None: real_parse_date_from_text(text, tz=tz, now=fixed_now),
+        ):
+            asyncio.run(session.handle_text("I will pay tomorrow"))
+
+        self.assertEqual(session._wf_state.ptp_date, "2026-03-11")
+        self.assertEqual(session._wf_state.current_step, "confirm_ptp")
+        self.assertTrue(session._wf_state.ptp_confirmation_required)
+        self.assertFalse(session._wf_state.ptp_confirmed)
+
+        metrics = self.audit.metrics(campaign_id="cmp-auto-ptp")
+        self.assertEqual(metrics["ptp_count"], 0)
+
+        with patch(
+            "web_session.parse_date_from_text",
+            side_effect=lambda text, *, tz, now=None: real_parse_date_from_text(text, tz=tz, now=fixed_now),
+        ):
+            asyncio.run(session.handle_text("yes"))
+
+        self.assertTrue(session._wf_state.ptp_confirmed)
+        self.assertEqual(session._wf_state.current_step, "closing")
+        metrics = self.audit.metrics(campaign_id="cmp-auto-ptp")
+        self.assertEqual(metrics["ptp_count"], 1)
+
 
 class VoiceSocketOutcomeTests(unittest.TestCase):
     def setUp(self):
@@ -368,6 +397,7 @@ class VoiceSocketOutcomeTests(unittest.TestCase):
         os.environ["APP_ENV"] = "demo"
         os.environ["DEMO_MODE"] = "1"
         os.environ["PILOT_MODE"] = "1"
+        os.environ["OPS_COPILOT_LLM_ENABLED"] = "0"
         os.environ["JWT_SECRET"] = "test-secret"
         os.environ["COOKIE_SECURE"] = "0"
         self._reset_app_state()
