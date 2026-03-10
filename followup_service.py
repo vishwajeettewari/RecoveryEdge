@@ -39,6 +39,44 @@ class FollowupService:
             ("ptp_t_plus_1_miss", datetime.combine(base_date + timedelta(days=1), datetime.min.time(), tz).replace(hour=11, minute=0)),
         ]
 
+        return self._insert_followups(
+            session_id=session_id,
+            customer_id=customer_id,
+            phone=phone,
+            channel=channel,
+            schedule=schedule,
+        )
+
+    def schedule_callback_followup(
+        self,
+        *,
+        session_id: str,
+        customer_id: Optional[str],
+        phone: Optional[str],
+        callback_time: Optional[str] = None,
+        callback_ts: Optional[float] = None,
+        channel: str = "voice",
+    ) -> List[Dict[str, str]]:
+        scheduled_dt = self._resolve_callback_datetime(callback_time=callback_time, callback_ts=callback_ts)
+        if scheduled_dt is None:
+            return []
+        return self._insert_followups(
+            session_id=session_id,
+            customer_id=customer_id,
+            phone=phone,
+            channel=channel,
+            schedule=[("callback_due", scheduled_dt)],
+        )
+
+    def _insert_followups(
+        self,
+        *,
+        session_id: str,
+        customer_id: Optional[str],
+        phone: Optional[str],
+        channel: str,
+        schedule: List[tuple[str, datetime]],
+    ) -> List[Dict[str, str]]:
         out: List[Dict[str, str]] = []
         conn = self._connect()
         now = time.time()
@@ -57,6 +95,31 @@ class FollowupService:
         finally:
             conn.close()
         return out
+
+    def _resolve_callback_datetime(
+        self,
+        *,
+        callback_time: Optional[str],
+        callback_ts: Optional[float],
+    ) -> Optional[datetime]:
+        tz = ZoneInfo(self.tz_name)
+        if callback_ts is not None:
+            try:
+                return datetime.fromtimestamp(float(callback_ts), tz)
+            except Exception:
+                return None
+        raw = str(callback_time or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.strptime(raw, "%H:%M")
+        except Exception:
+            return None
+        now = datetime.now(tz)
+        scheduled = now.replace(hour=parsed.hour, minute=parsed.minute, second=0, microsecond=0)
+        if scheduled <= now:
+            scheduled += timedelta(days=1)
+        return scheduled
 
     def due_followups(self, limit: int = 200) -> List[Dict[str, object]]:
         conn = self._connect()

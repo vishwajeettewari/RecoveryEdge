@@ -1,0 +1,198 @@
+.te-overview-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(92, 121, 174, 0.24);
+  border-radius: 24px;
+  background:
+    radial-gradient(680px 320px at 0% 0%, rgba(18, 93, 255, 0.2), transparent 58%),
+    radial-gradient(560px 260px at 100% 0%, rgba(10, 176, 139, 0.16), transparent 56%),
+    linear-gradient(140deg, rgba(255, 255, 255, 0.97), rgba(244, 249, 255, 0.94));
+  box-shadow: 0 26px 50px rgba(15, 24, 42, 0.12);
+}
+
+.te-overview-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+  gap: 18px;
+}
+
+.te-overview-hero-copy {
+  min-width: 0;
+}
+
+.te-overview-hero-kicker {
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #2458bf;
+}
+
+.te-overview-hero-title {
+  max-width: 16ch;
+  margin-top: 6px;
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  line-height: 0.95;
+  letter-spacing: -0.05em;
+  color: #101828;
+}
+
+.te-overview-hero-subtitle {
+  max-width: 58ch;
+  margin-top: 12px;
+  font-size: 1rem;
+  line-height: 1.65;
+  color: #465467;
+}
+
+.te-overview-hero-detail {
+  max-width: 62ch;
+  color: #607089;
+}
+
+.te-overview-hero-aside {
+  display: grid;
+  gap: 14px;
+}
+
+.te-overview-pressure-card {
+  border: 1px solid rgba(94, 121, 170, 0.18);
+  border-radius: 20px;
+  background:
+    radial-gradient(340px 180px at 0% 0%, rgba(255, 255, 255, 0.48), transparent 65%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(251, 253, 255, 0.82));
+}
+
+.te-overview-pressure-label,
+.te-overview-mini-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #6a768b;
+}
+
+.te-overview-mini-card {
+  min-height: 118px;
+  border: 1px solid rgba(104, 125, 167, 0.18);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(247, 250, 255, 0.82));
+}
+
+.te-overview-signal-card {
+  height: 100%;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(248, 250, 255, 0.88)),
+    radial-gradient(360px 180px at 100% 0%, rgba(18, 93, 255, 0.06), transparent 62%);
+  box-shadow: 0 18px 34px rgba(15, 24, 42, 0.08);
+}
+
+.te-overview-signal-card--teal {
+  border-color: rgba(10, 176, 139, 0.22);
+}
+
+.te-overview-signal-card--blue {
+  border-color: rgba(18, 93, 255, 0.22);
+}
+
+.te-overview-signal-card--orange {
+  border-color: rgba(214, 134, 37, 0.26);
+}
+
+.te-overview-signal-card--red {
+  border-color: rgba(217, 75, 75, 0.25);
+}
+
+.te-overview-signal-value {
+  letter-spacing: -0.04em;
+}
+
+.te-overview-bucket-card {
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(249, 251, 255, 0.9));
+}
+
+.te-overview-bucket-card--teal {
+  border-color: rgba(10, 176, 139, 0.18);
+}
+
+.te-overview-bucket-card--blue {
+  border-color: rgba(18, 93, 255, 0.18);
+}
+
+.te-overview-bucket-card--orange {
+  border-color: rgba(214, 134, 37, 0.22);
+}
+
+.te-overview-bucket-card--red {
+  border-color: rgba(217, 75, 75, 0.22);
+}
+
+.te-overview-attention-card {
+  background:
+    radial-gradient(420px 200px at 100% 0%, rgba(18, 93, 255, 0.1), transparent 60%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(249, 251, 255, 0.9));
+}
+
+.te-overview-attention-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(109, 126, 163, 0.16);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.te-overview-attention-row--teal {
+  border-color: rgba(10, 176, 139, 0.18);
+}
+
+.te-overview-attention-row--blue {
+  border-color: rgba(18, 93, 255, 0.18);
+}
+
+.te-overview-attention-row--orange {
+  border-color: rgba(214, 134, 37, 0.2);
+}
+
+.te-overview-attention-row--red {
+  border-color: rgba(217, 75, 75, 0.2);
+}
+
+.te-overview-attention-copy {
+  min-width: 0;
+}
+
+.te-overview-stat-card {
+  height: 100%;
+  border-radius: 16px;
+  border-color: rgba(108, 124, 160, 0.16);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(247, 249, 254, 0.78));
+}
+
+@media (max-width: 1200px) {
+  .te-overview-hero-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .te-overview-hero-title {
+    max-width: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .te-overview-hero {
+    border-radius: 20px;
+  }
+
+  .te-overview-hero-title {
+    font-size: 2.35rem;
+  }
+
+  .te-overview-attention-row {
+    grid-template-columns: 1fr;
+  }
+}

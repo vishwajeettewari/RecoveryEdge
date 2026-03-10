@@ -406,6 +406,24 @@ class WorkflowEngineTests(unittest.TestCase):
         eng.update_from_user("day after tomorrow", st, reply_to_step_id="ask_ptp_or_callback")
         self.assertEqual(st.ptp_date, "2026-02-07")
 
+    def test_ordinal_day_phrase_sets_ptp_in_current_month(self):
+        now = datetime(2026, 3, 10, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        eng = WorkflowEngine(enable_advanced=True, now_fn=lambda: now)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("I will make the payment on 12th", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertEqual(st.ptp_date, "2026-03-12")
+        self.assertEqual(st.current_step, "closing")
+
+    def test_ordinal_day_phrase_rolls_to_next_month_when_past(self):
+        now = datetime(2026, 3, 20, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        eng = WorkflowEngine(enable_advanced=True, now_fn=lambda: now)
+        st = WorkflowState(consent=True, identity_confirmed=True, awareness_confirmed=True, payment_made=False)
+        st.current_step = "ask_ptp_or_callback"
+        eng.update_from_user("Payment on 12th", st, reply_to_step_id="ask_ptp_or_callback")
+        self.assertEqual(st.ptp_date, "2026-04-12")
+        self.assertEqual(st.current_step, "closing")
+
     def test_in_days_phrase_sets_ptp_not_callback_time(self):
         now = datetime(2026, 2, 5, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
         eng = WorkflowEngine(enable_advanced=True, now_fn=lambda: now)

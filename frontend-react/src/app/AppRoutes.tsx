@@ -13,6 +13,7 @@ import { ForgotPasswordPage } from "../features/auth/ForgotPasswordPage";
 import { LoginPage } from "../features/auth/LoginPage";
 import { IntegrationsPage } from "../features/integrations/IntegrationsPage";
 import { OverviewPage } from "../features/overview/OverviewPage";
+import { RiskPortfolioPage } from "../features/overview/RiskPortfolioPage";
 import { PortfolioPage } from "../features/portfolio/PortfolioPage";
 import { ProfilePage } from "../features/profile/ProfilePage";
 import { ReportsPage } from "../features/reports/ReportsPage";
@@ -44,6 +45,15 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={PERMS.VIEW_DASHBOARD}>
                 <OverviewPage />
+              </RequirePermission>
+            }
+          />
+
+          <Route
+            path="risk-portfolio"
+            element={
+              <RequirePermission permission={PERMS.VIEW_DASHBOARD}>
+                <RiskPortfolioPage />
               </RequirePermission>
             }
           />

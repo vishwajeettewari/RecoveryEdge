@@ -86,6 +86,23 @@ class PortfolioServiceTests(unittest.TestCase):
         self.assertEqual(len(items1), 3)
         self.assertEqual([x["idempotency_key"] for x in items1], [x["idempotency_key"] for x in items2])
 
+        callback1 = svc.schedule_callback_followup(
+            session_id="s1",
+            customer_id="c1",
+            phone="999",
+            callback_ts=1739185200.0,
+            channel="voice",
+        )
+        callback2 = svc.schedule_callback_followup(
+            session_id="s1",
+            customer_id="c1",
+            phone="999",
+            callback_ts=1739185200.0,
+            channel="voice",
+        )
+        self.assertEqual(len(callback1), 1)
+        self.assertEqual(callback1[0]["idempotency_key"], callback2[0]["idempotency_key"])
+
     def test_crm_outbound_queue_and_replay(self):
         crm = CRMAdapter(self.db_path)
         self.audit.upsert_outcome(session_id="s-replay", customer_id="c9", disposition="ptp")

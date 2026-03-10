@@ -10,6 +10,7 @@ import {
   LifeBuoy,
   PhoneCall,
   Plug,
+  Radar,
   Settings,
   Users,
 } from "lucide-react";
@@ -27,7 +28,8 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { to: "/app/dashboard", label: "Home / Overview", icon: Gauge, permission: PERMS.VIEW_DASHBOARD },
+  { to: "/app/dashboard", label: "Operations Overview", icon: Gauge, permission: PERMS.VIEW_DASHBOARD },
+  { to: "/app/risk-portfolio", label: "Risk & Portfolio", icon: Radar, permission: PERMS.VIEW_DASHBOARD },
   { to: "/app/command-center", label: "AI Command Center", icon: LayoutDashboard, permission: PERMS.VIEW_DASHBOARD },
   { to: "/app/control", label: "Operations Copilot", icon: Bot, permission: PERMS.VIEW_DASHBOARD },
   { to: "/app/portfolio", label: "Portfolios & Campaigns", icon: FileUp, permission: PERMS.PORTFOLIO_MANAGE },
@@ -61,7 +63,7 @@ export function canShowNavItem(opts: {
   if (item.permission && !permissions.includes(item.permission)) {
     return false;
   }
-  if ((role || "").toUpperCase() === ROLES.CALLING_AGENT && item.to === "/app/dashboard") {
+  if ((role || "").toUpperCase() === ROLES.CALLING_AGENT && (item.to === "/app/dashboard" || item.to === "/app/risk-portfolio")) {
     return false;
   }
   return true;

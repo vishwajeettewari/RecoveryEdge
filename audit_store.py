@@ -846,6 +846,29 @@ class SQLiteAuditStore:
                     or 0
                 )
 
+            if campaign_id:
+                profanity_incidents = int(
+                    safe_number(
+                        """
+                        SELECT COUNT(*) AS n
+                        FROM violations v
+                        JOIN outcomes o ON o.session_id = v.session_id
+                        WHERE v.kind = 'profanity'
+                          AND o.campaign_id = ?
+                        """,
+                        (campaign_id,),
+                    )
+                    or 0
+                )
+            else:
+                profanity_incidents = int(
+                    safe_number(
+                        "SELECT COUNT(*) AS n FROM violations WHERE kind = 'profanity'",
+                        (),
+                    )
+                    or 0
+                )
+
             contact_rate_pct = round((float(contacted or 0) / max(1.0, float(assigned or 0))) * 100.0, 2) if assigned else 0.0
             followup_discipline_rate_pct = (
                 round((followups_completed_today / max(1, followups_due_today)) * 100.0, 2) if followups_due_today else 0.0
@@ -878,6 +901,7 @@ class SQLiteAuditStore:
                 "followup_discipline_rate_pct": followup_discipline_rate_pct,
                 "ptp_miss_count": ptp_miss_count,
                 "ptp_miss_open_alerts": ptp_miss_open_alerts,
+                "profanity_incidents": profanity_incidents,
             }
         finally:
             conn.close()
@@ -1787,6 +1811,8 @@ class SQLiteAuditStore:
         matrix: Dict[str, Dict[str, int]] = {b: {b2: 0 for b2 in BUCKETS} for b in BUCKETS}
         total_transitions = 0
         roll_forward_count = 0
+        rollback_count = 0
+        cure_count = 0
         for snaps in cust_snaps.values():
             if len(snaps) < 2:
                 continue
@@ -1799,6 +1825,10 @@ class SQLiteAuditStore:
             total_transitions += 1
             if bucket_order.get(to_b, 0) > bucket_order.get(from_b, 0):
                 roll_forward_count += 1
+            elif bucket_order.get(to_b, 0) < bucket_order.get(from_b, 0):
+                rollback_count += 1
+            if from_b != "0" and to_b == "0":
+                cure_count += 1
 
         return {
             "buckets": BUCKETS,
@@ -1806,6 +1836,10 @@ class SQLiteAuditStore:
             "total_transitions": total_transitions,
             "roll_forward_count": roll_forward_count,
             "roll_forward_pct": round((roll_forward_count / max(1, total_transitions)) * 100.0, 2),
+            "rollback_count": rollback_count,
+            "rollback_pct": round((rollback_count / max(1, total_transitions)) * 100.0, 2),
+            "cure_count": cure_count,
+            "cure_rate_pct": round((cure_count / max(1, total_transitions)) * 100.0, 2),
             "window_days": int(days),
             "campaign_id": campaign_id,
         }

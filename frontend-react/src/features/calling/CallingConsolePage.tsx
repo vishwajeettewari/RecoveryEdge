@@ -274,6 +274,7 @@ export function CallingConsolePage() {
   const [testCallBusy, setTestCallBusy] = useState(false);
   const [testCallSid, setTestCallSid] = useState("");
   const [testCallStatus, setTestCallStatus] = useState("");
+  const [telephonySessionId, setTelephonySessionId] = useState("");
   const [selectedLanguage, setSelectedLanguage] = useState("hi-IN");
   const [selectedVoice, setSelectedVoice] = useState("shubh");
   const [ptpDateDraft, setPtpDateDraft] = useState("");
@@ -327,6 +328,12 @@ export function CallingConsolePage() {
       if (first?.id) setSelectedTaskId(first.id);
     }
   }, [tasksQuery.data, selectedTaskId]);
+
+  useEffect(() => {
+    setTelephonySessionId("");
+    setTestCallSid("");
+    setTestCallStatus("");
+  }, [selectedTaskId]);
 
   const assignedQueue = useMemo(() => {
     const rows = tasksQuery.data?.rows || [];
@@ -948,6 +955,7 @@ export function CallingConsolePage() {
     try {
       const out = await apiFetch<{
         ok: boolean;
+        session_id?: string;
         result?: { call_sid?: string; call_status?: string; delivery_status?: string; normalized_to?: string };
       }>("/api/telephony/agent_call", {
         method: "POST",
@@ -965,6 +973,7 @@ export function CallingConsolePage() {
       });
       const sid = String(out.result?.call_sid || "");
       const status = String(out.result?.call_status || out.result?.delivery_status || "queued");
+      setTelephonySessionId(String(out.session_id || ""));
       setTestCallSid(sid);
       setTestCallStatus(status);
       notifications.show({
@@ -993,6 +1002,10 @@ export function CallingConsolePage() {
               : "closed";
     try {
       const body: Record<string, unknown> = { state, disposition, notes: `action:${action}` };
+      const outcomeSessionId = linkedSession?.session_id || telephonySessionId;
+      if (outcomeSessionId) {
+        body.session_id = outcomeSessionId;
+      }
       if (action === "PTP") {
         const ptpDate = (ptpDateDraft || linkedSession?.ptp_date || task.ptp_date || "").trim();
         if (!ptpDate) {

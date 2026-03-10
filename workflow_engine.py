@@ -108,6 +108,12 @@ def _has_callback_intent_text(t_norm: str) -> bool:
     return any(marker in t_norm for marker in markers)
 
 
+def _has_relative_day_without_callback_context(t_norm: str) -> bool:
+    if not _RELATIVE_DAY_PHRASE_RE.search(t_norm):
+        return False
+    return not _has_callback_intent_text(t_norm)
+
+
 def _is_name_reconfirmation_text(t_norm: str) -> bool:
     if not t_norm:
         return False
@@ -605,6 +611,18 @@ class WorkflowEngine:
             "cleared the payment",
             "payment cleared",
             "settled payment",
+            "payment kar diya",
+            "payment ho gaya",
+            "bhugtan kar diya",
+            "bhugtan ho gaya",
+            "पेमेंट कर दिया",
+            "पेमेंट हो गया",
+            "पेमेंट हो गयी",
+            "भुगतान कर दिया",
+            "भुगतान हो गया",
+            "भुगतान हो गयी",
+            "पेमेंट किया है",
+            "भुगतान किया है",
         )
         if not any(p in t_norm for p in paid_phrases):
             return False
@@ -616,7 +634,7 @@ class WorkflowEngine:
         raw = (text or "").lower()
         t_norm = _norm(text)
         # Do not reinterpret date commitments like "in 10 days" as callback clock-time.
-        if _RELATIVE_DAY_PHRASE_RE.search(t_norm):
+        if _has_relative_day_without_callback_context(t_norm):
             return None
         # Avoid reading date literals (e.g. 01/02/2026) as callback times unless the
         # user also gives explicit time context.
@@ -855,12 +873,40 @@ class WorkflowEngine:
                 "job loss",
                 "fired",
                 "salary delayed",
+                "salary late",
+                "salary not credited",
+                "salary issue",
+                "salary late hai",
+                "job chali gayi",
+                "job chala gaya",
+                "paisa nahi hai",
+                "paise nahi hai",
+                "paise nahi hain",
+                "ghar me emergency",
+                "ghar mein emergency",
+                "hospital me",
+                "hospital mein",
                 "salary not",
                 "salary issue",
                 "hospital",
                 "medical",
                 "sick",
                 "emergency",
+                "नौकरी चली गई",
+                "नौकरी चला गया",
+                "जॉब चली गई",
+                "जॉब चला गया",
+                "पैसे नहीं हैं",
+                "पैसे नहीं है",
+                "पैसा नहीं है",
+                "सैलरी लेट है",
+                "सैलरी नहीं आई",
+                "अस्पताल में",
+                "हॉस्पिटल में",
+                "बीमार",
+                "इलाज",
+                "घर में इमरजेंसी",
+                "घर में आपातकाल",
             )
             if any(p in t_norm for p in hardship_phrases):
                 state.hardship_detected = True
@@ -911,6 +957,15 @@ class WorkflowEngine:
                     "not the person",
                     "no such person",
                     "not this person",
+                    "गलत नंबर",
+                    "गलत नम्बर",
+                    "गलत व्यक्ति",
+                    "गलत आदमी",
+                    "मैं वो व्यक्ति नहीं हूँ",
+                    "मैं वह व्यक्ति नहीं हूँ",
+                    "मैं वो आदमी नहीं हूँ",
+                    "यह गलत नंबर है",
+                    "ये गलत नंबर है",
                 )
             ):
                 state.wrong_party = True

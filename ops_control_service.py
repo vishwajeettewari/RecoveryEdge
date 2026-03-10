@@ -330,6 +330,7 @@ class OpsControlService:
             recovery = self.audit.realized_recovery_trend(days=30, campaign_id=campaign_id)
             roll = self.audit.roll_forward_matrix(days=30, campaign_id=campaign_id)
             containment_rate = None if not roll.get("total_transitions") else round(100.0 - float(roll.get("roll_forward_pct") or 0.0), 1)
+            cure_rate = round(float(roll.get("cure_rate_pct") or 0.0), 1) if roll.get("total_transitions") else None
             score = self._campaign_score(
                 contact_rate=float(metrics.get("contact_rate_pct") or 0.0),
                 discipline=float(metrics.get("followup_discipline_rate_pct") or 0.0),
@@ -348,6 +349,7 @@ class OpsControlService:
                     "followup_discipline_rate_pct": round(float(metrics.get("followup_discipline_rate_pct") or 0.0), 1),
                     "recovery_rate_pct": round(float(recovery.get("recovery_rate_pct") or 0.0), 1),
                     "containment_rate_pct": containment_rate,
+                    "cure_rate_pct": cure_rate,
                     "ptp_count": int(metrics.get("ptp_count") or 0),
                     "ptp_miss_open_alerts": int(metrics.get("ptp_miss_open_alerts") or 0),
                     "expected_recovery_amount": float(metrics.get("expected_recovery_amount") or 0.0),
@@ -448,6 +450,7 @@ class OpsControlService:
                 missed_ptp_rate_pct = round((missed_ptp_count / max(1, ptp_count)) * 100.0, 1) if ptp_count else 0.0
                 roll_forward_pct = self._bucket_roll_forward_pct(roll=roll, bucket=bucket)
                 containment_rate_pct = None if roll_forward_pct is None else round(100.0 - roll_forward_pct, 1)
+                cure_rate_pct = self._bucket_cure_rate_pct(roll=roll, bucket=bucket)
                 sample = int(max(exposure, outcomes_total))
                 confidence = self._confidence(sample)
                 score = (ptp_rate_pct * 0.55) + ((containment_rate_pct or 0.0) * 0.25) + ((100.0 - missed_ptp_rate_pct) * 0.20)
@@ -468,6 +471,7 @@ class OpsControlService:
                         "open_ptp_alerts": int(open_ptp_alerts),
                         "roll_forward_pct": roll_forward_pct,
                         "containment_rate_pct": containment_rate_pct,
+                        "cure_rate_pct": cure_rate_pct,
                         "current_strategy": strategy_mode,
                         "current_tone": tone_profile,
                         "sample_size": sample,
@@ -1063,6 +1067,20 @@ class OpsControlService:
             if cls._RISK_ORDER.get(str(target), 0) > source_rank:
                 forward += float(value or 0.0)
         return round((forward / total) * 100.0, 1)
+
+    @classmethod
+    def _bucket_cure_rate_pct(cls, *, roll: Dict[str, Any], bucket: str) -> Optional[float]:
+        if bucket == "0":
+            return None
+        matrix = roll.get("matrix") if isinstance(roll.get("matrix"), dict) else {}
+        current = matrix.get(bucket) if isinstance(matrix.get(bucket), dict) else {}
+        if not current:
+            return None
+        total = sum(float(v or 0.0) for v in current.values())
+        if total <= 0:
+            return None
+        cured = float(current.get("0") or 0.0)
+        return round((cured / total) * 100.0, 1)
 
     def _best_bucket(self, buckets: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         ranked = [row for row in buckets if int(row.get("sample_size") or 0) > 0]

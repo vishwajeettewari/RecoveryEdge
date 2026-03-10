@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -128,6 +129,43 @@ class PortfolioWizardTests(unittest.TestCase):
             self.assertIn("excluded_count", cfg)
         finally:
             conn.close()
+
+    def test_sample_portfolio_file_supports_initial_and_remaining_amounts(self):
+        sample_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "sample_portfolio_collections_dashboard.csv")
+        with open(sample_path, "rb") as f:
+            upload = self.portfolio.upload(filename="sample_portfolio_collections_dashboard.csv", content=f.read())
+
+        mapped = self.portfolio.map_columns(
+            upload_id=upload["upload_id"],
+            mappings={
+                "customer_id": "customer_id",
+                "customer_name": "customer_name",
+                "phone": "phone",
+                "dpd": "dpd",
+                "initial_amount": "initial_amount",
+                "remaining_amount": "remaining_amount",
+                "language": "language",
+                "due_date": "due_date",
+            },
+            portfolio_name="Full Collections Portfolio",
+        )
+        summary = self.portfolio.validate(portfolio_id=mapped["portfolio_id"])
+        self.assertEqual(summary["valid_rows"], 5)
+
+        preview = self.portfolio.preview(portfolio_id=mapped["portfolio_id"], limit=5)
+        self.assertEqual(preview[0]["initial_amount"], 85000.0)
+        self.assertEqual(preview[0]["remaining_amount"], 12450.0)
+        self.assertEqual(preview[0]["amount_due"], 12450.0)
+
+        launch_candidates = self.portfolio.launch_candidates(
+            portfolio_id=mapped["portfolio_id"],
+            exclusion_id=None,
+            exclude_predicate="remaining_amount > 50000",
+        )
+        self.assertEqual(launch_candidates["selected_count"], 4)
+        self.assertEqual(launch_candidates["excluded_count"], 1)
+        self.assertEqual(launch_candidates["selected_rows"][0]["remaining_amount"], 12450.0)
+        self.assertEqual(launch_candidates["selected_rows"][0]["amount_due"], 12450.0)
 
 
 if __name__ == "__main__":

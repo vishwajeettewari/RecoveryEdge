@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TuringEdge Recovery OS | Prototype Filmstrip</title>
+    <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+    <style>
+      :root {
+        --bg: #030913;
+        --frame: #07121f;
+        --frame-2: #0b1829;
+        --line: rgba(152, 189, 255, 0.22);
+        --text: #eef5ff;
+        --muted: #a8bdd8;
+        --green: #6deecd;
+        --blue: #78a8ff;
+        --amber: #ffc489;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        width: max-content;
+        padding: 80px;
+        background:
+          radial-gradient(circle at 10% 10%, rgba(120, 168, 255, 0.18), transparent 22%),
+          radial-gradient(circle at 90% 14%, rgba(109, 238, 205, 0.12), transparent 20%),
+          linear-gradient(180deg, #06101b 0%, #030913 100%);
+        font-family: "Avenir Next", "SF Pro Display", "Segoe UI", sans-serif;
+        color: var(--text);
+      }
+
+      .strip {
+        display: flex;
+        gap: 80px;
+        align-items: flex-start;
+      }
+
+      .shot {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        flex: none;
+        border-radius: 48px;
+        border: 1px solid var(--line);
+        background:
+          radial-gradient(circle at 14% 16%, rgba(120, 168, 255, 0.18), transparent 30%),
+          radial-gradient(circle at 86% 82%, rgba(109, 238, 205, 0.12), transparent 28%),
+          linear-gradient(135deg, rgba(8, 18, 31, 0.98), rgba(3, 8, 15, 1));
+        box-shadow: 0 34px 90px rgba(0, 0, 0, 0.34);
+      }
+
+      .shot::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        background-size: 72px 72px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.38), rgba(0, 0, 0, 0));
+      }
+
+      .shot.theme-dashboard {
+        background:
+          radial-gradient(circle at 14% 16%, rgba(120, 168, 255, 0.2), transparent 30%),
+          radial-gradient(circle at 86% 82%, rgba(255, 196, 137, 0.14), transparent 28%),
+          linear-gradient(135deg, rgba(11, 21, 35, 0.98), rgba(4, 8, 14, 1));
+      }
+
+      .shot.theme-close {
+        background:
+          radial-gradient(circle at 10% 10%, rgba(120, 168, 255, 0.2), transparent 24%),
+          radial-gradient(circle at 90% 10%, rgba(109, 238, 205, 0.16), transparent 24%),
+          linear-gradient(135deg, rgba(5, 11, 19, 1), rgba(3, 7, 13, 1));
+      }
+
+      .aura {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(18px);
+      }
+
+      .aura.one {
+        top: -80px;
+        left: -120px;
+        width: 440px;
+        height: 440px;
+        background: radial-gradient(circle, rgba(120, 168, 255, 0.32), transparent 70%);
+      }
+
+      .aura.two {
+        right: -120px;
+        bottom: -150px;
+        width: 460px;
+        height: 460px;
+        background: radial-gradient(circle, rgba(109, 238, 205, 0.22), transparent 70%);
+      }
+
+      .layout {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: 540px 1fr;
+        gap: 34px;
+        width: 100%;
+        height: 100%;
+        padding: 56px;
+      }
+
+      .copy {
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        width: fit-content;
+        padding: 11px 16px;
+        border-radius: 999px;
+        border: 1px solid rgba(120, 168, 255, 0.24);
+        background: rgba(120, 168, 255, 0.08);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--green), var(--blue));
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 88px;
+        line-height: 0.92;
+        letter-spacing: -0.055em;
+      }
+
+      p.lede {
+        margin: 0;
+        color: var(--muted);
+        font-size: 27px;
+        line-height: 1.45;
+      }
+
+      .pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .pill {
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.045);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .guide {
+        display: grid;
+        gap: 14px;
+        margin-top: auto;
+      }
+
+      .guide-card {
+        padding: 18px 20px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .guide-card strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .guide-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1.45;
+      }
+
+      .stage {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 320px;
+        gap: 18px;
+      }
+
+      .stage.single {
+        grid-template-columns: 1fr;
+      }
+
+      .stage.grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-auto-rows: minmax(0, 1fr);
+      }
+
+      .panel {
+        position: relative;
+        overflow: hidden;
+        border-radius: 28px;
+        border: 1px solid rgba(160, 198, 255, 0.18);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .panel img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .panel-label {
+        position: absolute;
+        top: 18px;
+        left: 18px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(3, 9, 16, 0.78);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .callout {
+        position: absolute;
+        right: 20px;
+        bottom: 20px;
+        max-width: 320px;
+        padding: 18px 20px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(4, 10, 18, 0.8);
+      }
+
+      .callout strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--green);
+      }
+
+      .callout p {
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.45;
+      }
+
+      .side-cards {
+        display: grid;
+        gap: 16px;
+      }
+
+      .side-card {
+        padding: 18px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.045);
+      }
+
+      .side-card strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--amber);
+      }
+
+      .side-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.45;
+      }
+
+      .footer {
+        position: absolute;
+        right: 34px;
+        bottom: 28px;
+        z-index: 2;
+        display: flex;
+        gap: 14px;
+      }
+
+      .footer span {
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="strip">
+      <section class="shot">
+        <div class="aura one"></div>
+        <div class="aura two"></div>
+        <div class="layout">
+          <div class="copy">
+            <div class="eyebrow">Shot 01</div>
+            <h2>Turn collections metrics into actions.</h2>
+            <p class="lede">Start the film on the control layer so the product opens as a decision system, not another dashboard.</p>
+            <div class="pills">
+              <span class="pill">Agentic Control</span>
+              <span class="pill">Grounded AI</span>
+              <span class="pill">Governed Action</span>
+            </div>
+            <div class="guide">
+              <div class="guide-card">
+                <strong>Voiceover</strong>
+                <p>TuringEdge Recovery OS gives collections leaders one control layer from portfolio upload to governed action.</p>
+              </div>
+              <div class="guide-card">
+                <strong>Prototype Transition</strong>
+                <p>Smart Animate to Shot 02 with an ease-out 700ms push so the stage feels cinematic.</p>
+              </div>
+            </div>
+          </div>
+          <div class="stage">
+            <div class="panel">
+              <span class="panel-label">Operations Copilot</span>
+              <img src="./screenshots/03-ops-copilot-hero.png" alt="Operations Copilot hero" />
+              <div class="callout">
+                <strong>Story Hook</strong>
+                <p>Turn live operating metrics into explainable next-best action.</p>
+              </div>
+            </div>
+            <div class="side-cards">
+              <div class="panel">
+                <span class="panel-label">Control Room Inset</span>
+                <img src="./screenshots/02-overview-control-room.png" alt="Overview control room inset" />
+              </div>
+              <div class="side-card">
+                <strong>Next</strong>
+                <p>Slide into portfolio launch to prove the workflow starts with real operational intake.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="footer"><span>00:00-00:10</span><span>to Shot 02</span></div>
+      </section>
+
+      <section class="shot">
+        <div class="aura one"></div>
+        <div class="aura two"></div>
+        <div class="layout">
+          <div class="copy">
+            <div class="eyebrow">Shot 02</div>
+            <h2>Operationalize the sheet in minutes.</h2>
+            <p class="lede">Move from category story into hard proof: the lender spreadsheet becomes a live campaign without a brittle handoff.</p>
+            <div class="pills">
+              <span class="pill">Upload</span>
+              <span class="pill">Map</span>
+              <span class="pill">Validate</span>
+              <span class="pill">Launch</span>
+            </div>
+            <div class="guide">
+              <div class="guide-card">
+                <strong>Voiceover</strong>
+                <p>A portfolio sheet comes in, fields are mapped, validated, and launched into a live campaign.</p>
+              </div>
+              <div class="guide-card">
+                <strong>Prototype Transition</strong>
+                <p>Animate the screen block slightly left while the typography settles to imply forward momentum.</p>
+              </div>
+            </div>
+          </div>
+          <div class="stage single">
+            <div class="panel">
+              <span class="panel-label">Portfolio Intake</span>
+              <img src="./screenshots/05-portfolio-launch.png" alt="Portfolio upload and launch" />
+              <div class="callout">
+                <strong>Proof Point</strong>
+                <p>Upload, validate, and launch without rebuilding the operating context in another tool.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="footer"><span>00:10-00:20</span><span>to Shot 03</span></div>
+      </section>
+
+      <section class="shot">
+        <div class="aura one"></div>
+        <div class="aura two"></div>
+        <div class="layout">
+          <div class="copy">
+            <div class="eyebrow">Shot 03</div>
+            <h2>Capture the promise at the desk.</h2>
+            <p class="lede">Tie the agent workflow to the buyer’s control problem: PTPs and callbacks are captured where the conversation happens.</p>
+            <div class="pills">
+              <span class="pill">Live Desk</span>
+              <span class="pill">PTP</span>
+              <span class="pill">Callback</span>
+            </div>
+            <div class="guide">
+              <div class="guide-card">
+                <strong>Voiceover</strong>
+                <p>Agents capture commitments directly from the desk, creating a clean trail for follow-through.</p>
+              </div>
+              <div class="guide-card">
+                <strong>Prototype Transition</strong>
+                <p>Zoom the commitment panel slightly larger than Shot 02 so the commitment moment feels emphasized.</p>
+              </div>
+            </div>
+          </div>
+          <div class="stage">
+            <div class="panel">
+              <span class="panel-label">Calling Console</span>
+              <img src="./screenshots/07-calling-console-live.png" alt="Calling console" />
+            </div>
+            <div class="side-cards">
+              <div class="panel">
+                <span class="panel-label">Commitment Panel</span>
+                <img src="./screenshots/08-calling-console-commitment.png" alt="Commitment capture" />
+              </div>
+              <div class="side-card">
+                <strong>Next</strong>
+                <p>Carry the commitment forward into the supervisory proof layer on Shot 04.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="footer"><span>00:20-00:35</span><span>to Shot 04</span></div>
+      </section>
+
+      <section class="shot theme-dashboard">
+        <div class="aura one"></div>
+        <div class="aura two"></div>
+        <div class="layout">
+          <div class="copy">
+            <div class="eyebrow">Shot 04</div>
+            <h2>Prove follow-through, not just activity.</h2>
+            <p class="lede">This is the supervisory proof layer: discipline, missed-PTP pressure, containment, and recovery all live in one surface.</p>
+            <div class="pills">
+              <span class="pill">Discipline</span>
+              <span class="pill">Containment</span>
+              <span class="pill">Recovery</span>
+            </div>
+            <div class="guide">
+              <div class="guide-card">
+                <strong>Voiceover</strong>
+                <p>Supervisors see missed-PTP pressure, roll-forward risk, and recovery potential in one control surface.</p>
+              </div>
+              <div class="guide-card">
+                <strong>Prototype Transition</strong>
+                <p>Pan the KPI band and then settle into the chart region before moving into the copilot explanation frame.</p>
+              </div>
+            </div>
+          </div>
+          <div class="stage single">
+            <div class="panel">
+              <span class="panel-label">Early Bucket Control Room</span>
+              <img src="./screenshots/02-overview-control-room.png" alt="Early Bucket Control Room" />
+              <div class="callout">
+                <strong>Operational Proof</strong>
+                <p>Show the operation is containing risk after the promise instead of only logging activity.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="footer"><span>00:35-00:50</span><span>to Shot 05</span></div>
+      </section>
+
+      <section class="shot">
+        <div class="aura one"></div>
+        <div class="aura two"></div>
+        <div class="layout">
+          <div class="copy">
+            <div class="eyebrow">Shot 05</div>
+            <h2>Explain what is working. Then recommend the move.</h2>
+            <p class="lede">Hold longer here. The AI should read like a grounded decision layer with evidence, confidence, and action payloads.</p>
+            <div class="pills">
+              <span class="pill">Evidence</span>
+              <span class="pill">Confidence</span>
+              <span class="pill">Action</span>
+            </div>
+            <div class="guide">
+              <div class="guide-card">
+                <strong>Voiceover</strong>
+                <p>The copilot explains what is working by campaign, bucket, agent, or account, then proposes the next move.</p>
+              </div>
+              <div class="guide-card">
+                <strong>Prototype Transition</strong>
+                <p>Use a slower Smart Animate between Shot 04 and Shot 05 so the reasoning frame feels deliberate.</p>
+              </div>
+            </div>
+          </div>
+          <div class="stage">
+            <div class="panel">
+              <span class="panel-label">Copilot Response</span>
+              <img src="./screenshots/04-ops-copilot-response.png" alt="Copilot response" />
+              <div class="callout">
+                <strong>Differentiate</strong>
+                <p>Grounded recommendations, not vague AI summaries.</p>
+              </div>
+            </div>
+            <div class="side-cards">
+              <div class="side-card">
+                <strong>Inspectability</strong>
+                <p>Every recommendation is backed by evidence, confidence, and expected impact.</p>
+              </div>
+              <div class="side-card">
+                <strong>Next</strong>
+                <p>Close on enterprise readiness so the story lands as a deployable operating system.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="footer"><span>00:50-01:05</span><span>to Shot 06</span></div>
+      </section>
+
+      <section class="shot theme-close">
+        <div class="aura one"></div>
+        <div class="aura two"></div>
+        <div class="layout">
+          <div class="copy">
+            <div class="eyebrow">Shot 06</div>
+            <h2>Close the loop across the whole operation.</h2>
+            <p class="lede">End with enterprise readiness: supervisors, compliance, reporting, integrations, and governance live inside the same product.</p>
+            <div class="pills">
+              <span class="pill">Workbench</span>
+              <span class="pill">Compliance</span>
+              <span class="pill">Reports</span>
+              <span class="pill">Integrations</span>
+            </div>
+            <div class="guide">
+              <div class="guide-card">
+                <strong>Voiceover</strong>
+                <p>Compliance, reporting, and reconciliation stay connected to the same system, so the operation closes the loop.</p>
+              </div>
+              <div class="guide-card">
+                <strong>Prototype Transition</strong>
+                <p>Use this as the final frame or loop back to Shot 01 with a soft dissolve for an autoplay feel.</p>
+              </div>
+            </div>
+          </div>
+          <div class="stage grid">
+            <div class="panel">
+              <span class="panel-label">Workbench</span>
+              <img src="./screenshots/06-workbench-queue.png" alt="Workbench queue" />
+            </div>
+            <div class="panel">
+              <span class="panel-label">Alerts &amp; Compliance</span>
+              <img src="./screenshots/09-alerts-compliance.png" alt="Alerts and compliance" />
+            </div>
+            <div class="panel">
+              <span class="panel-label">Reports</span>
+              <img src="./screenshots/10-reports-download-center.png" alt="Reports" />
+            </div>
+            <div class="panel">
+              <span class="panel-label">Integrations</span>
+              <img src="./screenshots/11-integrations-reconciliation.png" alt="Integrations" />
+            </div>
+          </div>
+        </div>
+        <div class="footer"><span>01:05-01:20</span><span>End Frame</span></div>
+      </section>
+    </main>
+  </body>
+</html>

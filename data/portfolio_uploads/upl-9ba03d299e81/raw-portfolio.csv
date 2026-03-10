@@ -1,0 +1,3 @@
+customer_id,customer_name,phone,dpd,initial_amount,remaining_amount,language,due_date
+FLOW-1,Asha Rao,9876543210,42,100000,22000,en,2026-03-14
+FLOW-2,Rohan Verma,9876543211,68,135000,41000,hi,2026-03-16

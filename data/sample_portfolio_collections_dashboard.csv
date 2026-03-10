@@ -1,0 +1,6 @@
+customer_id,customer_name,phone,dpd,initial_amount,remaining_amount,language,due_date
+CUST-1001,Asha Rao,9876543210,18,85000,12450,en,2026-03-15
+CUST-1002,Rohan Verma,9876543211,42,125000,28600,hi,2026-03-18
+CUST-1003,Meera Iyer,9876543212,67,98000,41400,en,2026-03-20
+CUST-1004,Imran Khan,9876543213,96,152000,73300,hi,2026-03-12
+CUST-1005,Nisha Patel,9876543214,11,64000,8900,en,2026-03-11
