@@ -9,6 +9,7 @@ from contextlib import suppress
 from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 import web_app
 
@@ -17,6 +18,7 @@ class V2PlatformApiTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "demo.db")
+        self.output_path = os.path.join(self.tmp.name, "demo_output.xlsx")
 
     def tearDown(self):
         self._reset_app_state()
@@ -32,6 +34,7 @@ class V2PlatformApiTests(unittest.TestCase):
 
     def _client(self, *, webhook_secret: str | None = None) -> TestClient:
         os.environ["DEMO_DB_PATH"] = self.db_path
+        os.environ["DEMO_OUTPUT_XLSX_PATH"] = self.output_path
         os.environ["APP_ENV"] = "demo"
         os.environ["DEMO_MODE"] = "1"
         os.environ["PILOT_MODE"] = "1"
@@ -425,6 +428,7 @@ class V2PlatformApiTests(unittest.TestCase):
             self.assertEqual(update.status_code, 200, update.text)
             payload = update.json()
             self.assertTrue(payload["ok"])
+            self.assertTrue(payload.get("session_id"))
             self.assertEqual(payload["task"]["ptp_date"], "2026-03-12")
             self.assertEqual(len(payload.get("followups") or []), 3)
 
@@ -432,9 +436,22 @@ class V2PlatformApiTests(unittest.TestCase):
             self.assertEqual(metrics.status_code, 200, metrics.text)
             metrics_payload = metrics.json()
             self.assertEqual(metrics_payload["accounts_assigned"], 1)
+            self.assertEqual(metrics_payload["accounts_contacted"], 1)
             self.assertEqual(metrics_payload["expected_recovery_amount"], 1750.0)
             self.assertEqual(metrics_payload["followups_scheduled_total"], 3)
             self.assertEqual(metrics_payload["queue_snapshot"]["PTP"], 1)
+
+            wb = load_workbook(self.output_path)
+            try:
+                calls = wb["Calls"]
+                headers = [cell.value for cell in calls[1]]
+                call_rows = [dict(zip(headers, row)) for row in calls.iter_rows(min_row=2, values_only=True)]
+            finally:
+                wb.close()
+            matching = [row for row in call_rows if row.get("session_id") == payload["session_id"]]
+            self.assertGreaterEqual(len(matching), 1)
+            self.assertEqual(matching[-1]["ptp_date"], "2026-03-12")
+            self.assertEqual(matching[-1]["disposition"], "ptp_captured")
 
     def test_portfolio_to_agent_to_dashboard_and_ops_copilot_flow(self):
         with self._client() as client:
@@ -503,16 +520,48 @@ class V2PlatformApiTests(unittest.TestCase):
             self.assertEqual(launch_payload["tasks_created"], 2)
 
             demo = web_app._get_demo_singletons()
-            campaign = demo["campaign_service"]
             workbench = demo["workbench"]
             audit = demo["audit"]
-
-            batch = campaign.run_pending_batch(campaign_id)
-            self.assertGreaterEqual(batch["processed"], 1)
 
             tasks = workbench.list_tasks(campaign_id=campaign_id, page=1, page_size=10)["rows"]
             task_by_customer = {row["customer_id"]: row for row in tasks}
             callback_at = (datetime.now() + timedelta(hours=2)).isoformat()
+
+            callback_call = client.post(
+                "/api/telephony/agent_call",
+                json={
+                    "phone": task_by_customer["FLOW-1"]["phone"],
+                    "customer_name": task_by_customer["FLOW-1"]["customer_name"],
+                    "customer_id": "FLOW-1",
+                    "campaign_id": campaign_id,
+                    "amount_due": str(task_by_customer["FLOW-1"]["amount_due"]),
+                    "language": "en",
+                    "tts_speaker": "meera",
+                },
+                headers=agent_headers,
+            )
+            self.assertEqual(callback_call.status_code, 200, callback_call.text)
+            callback_call_payload = callback_call.json()
+            self.assertTrue(callback_call_payload["ok"])
+            self.assertTrue(callback_call_payload.get("session_id"))
+
+            ptp_call = client.post(
+                "/api/telephony/agent_call",
+                json={
+                    "phone": task_by_customer["FLOW-2"]["phone"],
+                    "customer_name": task_by_customer["FLOW-2"]["customer_name"],
+                    "customer_id": "FLOW-2",
+                    "campaign_id": campaign_id,
+                    "amount_due": str(task_by_customer["FLOW-2"]["amount_due"]),
+                    "language": "hi",
+                    "tts_speaker": "shubh",
+                },
+                headers=agent_headers,
+            )
+            self.assertEqual(ptp_call.status_code, 200, ptp_call.text)
+            ptp_call_payload = ptp_call.json()
+            self.assertTrue(ptp_call_payload["ok"])
+            self.assertTrue(ptp_call_payload.get("session_id"))
 
             callback_update = client.post(
                 f"/api/tasks/{task_by_customer['FLOW-1']['id']}/update",
@@ -520,6 +569,7 @@ class V2PlatformApiTests(unittest.TestCase):
                     "state": "CALLBACK",
                     "disposition": "callback_scheduled",
                     "callback_at": callback_at,
+                    "session_id": callback_call_payload["session_id"],
                     "notes": "Customer requested afternoon callback",
                 },
                 headers=agent_headers,
@@ -536,6 +586,7 @@ class V2PlatformApiTests(unittest.TestCase):
                     "state": "PTP",
                     "disposition": "ptp_captured",
                     "ptp_date": ptp_date,
+                    "session_id": ptp_call_payload["session_id"],
                     "notes": "Customer committed after salary credit",
                 },
                 headers=agent_headers,
@@ -551,12 +602,8 @@ class V2PlatformApiTests(unittest.TestCase):
             self.assertEqual(len(agent_rows), 2)
             self.assertTrue(all(str(row.get("owner") or "") == "agent" for row in agent_rows))
 
-            audit.record_dpd_snapshot(customer_id="FLOW-1", dpd_value=42, dpd_bucket="31-60", source="test")
-            audit.record_dpd_snapshot(customer_id="FLOW-1", dpd_value=0, dpd_bucket="0", source="test")
-            audit.record_dpd_snapshot(customer_id="FLOW-2", dpd_value=68, dpd_bucket="61-90", source="test")
-            audit.record_dpd_snapshot(customer_id="FLOW-2", dpd_value=92, dpd_bucket="90+", source="test")
             audit.record_violation(
-                session_id=f"task-{task_by_customer['FLOW-1']['id']}",
+                session_id=callback_call_payload["session_id"],
                 kind="profanity",
                 detail="Customer used abusive language before accepting a callback",
             )
@@ -565,7 +612,7 @@ class V2PlatformApiTests(unittest.TestCase):
             self.assertEqual(metrics.status_code, 200, metrics.text)
             metrics_payload = metrics.json()
             self.assertEqual(metrics_payload["accounts_assigned"], 2)
-            self.assertGreaterEqual(metrics_payload["accounts_contacted"], 1)
+            self.assertEqual(metrics_payload["accounts_contacted"], 2)
             self.assertEqual(metrics_payload["callback_count"], 1)
             self.assertEqual(metrics_payload["ptp_count"], 1)
             self.assertEqual(metrics_payload["expected_recovery_amount"], 41000.0)
@@ -573,14 +620,30 @@ class V2PlatformApiTests(unittest.TestCase):
             self.assertEqual(metrics_payload["queue_snapshot"]["CALLBACK"], 1)
             self.assertEqual(metrics_payload["queue_snapshot"]["PTP"], 1)
             self.assertEqual(metrics_payload["profanity_incidents"], 1)
+            self.assertGreaterEqual(metrics_payload["ended_sessions"], 2)
 
             roll = client.get(f"/api/metrics/roll-forward?campaign_id={campaign_id}&days=30", headers=mgr_headers)
             self.assertEqual(roll.status_code, 200, roll.text)
             roll_payload = roll.json()
             self.assertEqual(roll_payload["total_transitions"], 2)
-            self.assertEqual(roll_payload["cure_count"], 1)
-            self.assertEqual(roll_payload["roll_forward_count"], 1)
-            self.assertGreater(roll_payload["cure_rate_pct"], 0)
+            self.assertEqual(roll_payload["cure_count"], 0)
+            self.assertEqual(roll_payload["roll_forward_count"], 0)
+            self.assertEqual(roll_payload["matrix"]["31-60"]["31-60"], 1)
+            self.assertEqual(roll_payload["matrix"]["61-90"]["61-90"], 1)
+
+            wb = load_workbook(self.output_path)
+            try:
+                calls = wb["Calls"]
+                headers = [cell.value for cell in calls[1]]
+                call_rows = [dict(zip(headers, row)) for row in calls.iter_rows(min_row=2, values_only=True)]
+            finally:
+                wb.close()
+            callback_rows = [row for row in call_rows if row.get("session_id") == callback_call_payload["session_id"]]
+            ptp_rows = [row for row in call_rows if row.get("session_id") == ptp_call_payload["session_id"]]
+            self.assertGreaterEqual(len(callback_rows), 2)
+            self.assertGreaterEqual(len(ptp_rows), 2)
+            self.assertTrue(any(row.get("callback_time") for row in callback_rows))
+            self.assertTrue(any(row.get("ptp_date") == ptp_date for row in ptp_rows))
 
             copilot = client.post(
                 "/api/control-layer/chat",

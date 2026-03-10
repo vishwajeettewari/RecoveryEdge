@@ -1573,6 +1573,123 @@ def _get_demo_singletons() -> Dict[str, object]:
     return _demo_state
 
 
+def _dpd_value_and_bucket(value: Any) -> Tuple[Optional[int], Optional[str]]:
+    try:
+        dpd_i = max(0, int(value))
+    except Exception:
+        return None, None
+    if dpd_i <= 0:
+        return dpd_i, "0"
+    if dpd_i <= 30:
+        return dpd_i, "1-30"
+    if dpd_i <= 60:
+        return dpd_i, "31-60"
+    if dpd_i <= 90:
+        return dpd_i, "61-90"
+    return dpd_i, "90+"
+
+
+def _seed_dpd_baseline_snapshots(*, audit: SQLiteAuditStore, rows: List[Dict[str, Any]], source: str) -> int:
+    seeded = 0
+    for row in rows:
+        customer_id = str(row.get("customer_id") or "").strip()
+        dpd_i, dpd_bucket = _dpd_value_and_bucket(row.get("dpd"))
+        if not customer_id or dpd_i is None or not dpd_bucket:
+            continue
+        audit.record_dpd_snapshot(
+            customer_id=customer_id,
+            dpd_value=dpd_i,
+            dpd_bucket=dpd_bucket,
+            source=source,
+        )
+        seeded += 1
+    return seeded
+
+
+def _telephony_infra_error(call_result: Dict[str, Any]) -> bool:
+    return str(call_result.get("delivery_error") or "").strip() in {"twilio_disabled", "twilio_credentials_missing"}
+
+
+def _demo_voice_call_result(
+    *,
+    customer_phone: Optional[str],
+    stream_ws_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    normalized_to = ActionRouter._normalize_e164(customer_phone) or str(customer_phone or "").strip() or None
+    result = {
+        "ts": round(time.time(), 3),
+        "channel": "voice",
+        "to": customer_phone,
+        "provider": "demo",
+        "delivery_status": "simulated",
+        "delivery_ok": True,
+        "call_sid": f"CA_DEMO_{uuid.uuid4().hex[:10].upper()}",
+        "call_status": "simulated",
+        "normalized_to": normalized_to,
+    }
+    if stream_ws_url:
+        result["stream_ws_url"] = stream_ws_url
+    return result
+
+
+def _record_telephony_attempt(
+    *,
+    sink: ExcelOutcomeSink,
+    audit: SQLiteAuditStore,
+    session_id: str,
+    action_name: str,
+    actor: str,
+    payload: Dict[str, Any],
+    call_result: Dict[str, Any],
+    customer_id: Optional[str] = None,
+    campaign_id: Optional[str] = None,
+    start_ts: Optional[float] = None,
+) -> bool:
+    ok = bool(call_result.get("delivery_ok"))
+    normalized_to = str(call_result.get("normalized_to") or call_result.get("to") or payload.get("phone") or "")
+    status = str(call_result.get("call_status") or call_result.get("delivery_status") or "unknown")
+    if ok:
+        with contextlib.suppress(Exception):
+            sink.upsert_call(session_id=session_id, customer_id=customer_id, start_ts=start_ts or time.time())
+        with contextlib.suppress(Exception):
+            audit.upsert_outcome(
+                session_id=session_id,
+                start_ts=start_ts or time.time(),
+                customer_id=customer_id,
+                campaign_id=campaign_id,
+            )
+    with contextlib.suppress(Exception):
+        sink.log_action(session_id=session_id, action_name=action_name, payload=payload, result=call_result, ok=ok)
+    with contextlib.suppress(Exception):
+        sink.log_outbox(
+            session_id=session_id,
+            channel="voice",
+            to=normalized_to,
+            body=f"{action_name}:{status}",
+            link=str(call_result.get("call_sid") or ""),
+        )
+    with contextlib.suppress(Exception):
+        audit.record_event(
+            event_type="action",
+            session_id=session_id,
+            payload={
+                "name": action_name,
+                "actor": actor,
+                "payload": payload,
+                "result": {
+                    "provider": call_result.get("provider"),
+                    "delivery_ok": call_result.get("delivery_ok"),
+                    "delivery_status": call_result.get("delivery_status"),
+                    "delivery_error": call_result.get("delivery_error"),
+                    "call_sid": call_result.get("call_sid"),
+                    "normalized_to": call_result.get("normalized_to"),
+                    "stream_ws_url": call_result.get("stream_ws_url"),
+                },
+            },
+        )
+    return ok
+
+
 def _start_background_loops() -> None:
     global _report_scheduler_task
     if _report_scheduler_task and not _report_scheduler_task.done():
@@ -1823,6 +1940,7 @@ async def api_portfolio_launch(portfolio_id: str, request: Request):
     portfolio: PortfolioService = demo["portfolio"]  # type: ignore[assignment]
     campaign_service: CampaignService = demo["campaign_service"]  # type: ignore[assignment]
     workbench: WorkbenchService = demo["workbench"]  # type: ignore[assignment]
+    audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
     try:
         body = await request.json()
     except Exception:
@@ -1865,6 +1983,7 @@ async def api_portfolio_launch(portfolio_id: str, request: Request):
     }
     launch_id = portfolio.record_launch(portfolio_id=portfolio_id, campaign_id=campaign_id, launch_config=launch_config, status="launched")
     tasks_created = workbench.seed_tasks(campaign_id=campaign_id, portfolio_id=portfolio_id, rows=selected_rows, actor=_actor(request))
+    _seed_dpd_baseline_snapshots(audit=audit, rows=selected_rows, source="portfolio_launch")
     metrics = campaign_service.metrics(campaign_id)
     return {
         "ok": True,
@@ -2047,70 +2166,96 @@ async def api_task_update(task_id: str, request: Request):
         compliance_override=bool(body.get("compliance_override", False)),
         escalate_reason=body.get("escalate_reason"),
     )
-    if result.get("ok") and (ptp_date or callback_ts is not None):
+    if result.get("ok"):
         audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
         followups: FollowupService = demo["followups"]  # type: ignore[assignment]
         strategy: StrategyEngine = demo["strategy"]  # type: ignore[assignment]
+        sink: ExcelOutcomeSink = demo["sink"]  # type: ignore[assignment]
+        campaign_service: CampaignService = demo["campaign_service"]  # type: ignore[assignment]
         task = result.get("task") or {}
-        dpd = task.get("dpd")
-        try:
-            dpd_i = int(dpd)
-        except Exception:
-            dpd_i = None
-        if dpd_i is None or dpd_i <= 0:
-            dpd_bucket = "0"
-        elif dpd_i <= 30:
-            dpd_bucket = "1-30"
-        elif dpd_i <= 60:
-            dpd_bucket = "31-60"
-        elif dpd_i <= 90:
-            dpd_bucket = "61-90"
-        else:
-            dpd_bucket = "90+"
+        dpd_i, dpd_bucket = _dpd_value_and_bucket(task.get("dpd"))
         strategy_decision = strategy.classify(dpd_i or 0)
         callback_time = time.strftime("%H:%M", time.localtime(callback_ts)) if callback_ts is not None else None
-        manual_session_id = f"task-{task_id}"
-        if task.get("customer_id") and dpd_i is not None:
-            audit.record_dpd_snapshot(
-                customer_id=str(task.get("customer_id") or ""),
-                dpd_value=dpd_i,
+        session_id_raw = str(body.get("session_id") or "").strip()
+        session_id = session_id_raw or f"task-{task_id}"
+        state_name = str(task.get("state") or "").upper()
+        should_persist_outcome = bool(session_id_raw or ptp_date or callback_ts is not None or state_name in {"PTP", "CALLBACK", "CLOSED", "ESCALATED"})
+        completion_ts = time.time()
+        customer_id = str(task.get("customer_id") or "") or None
+        campaign_id = str(task.get("campaign_id") or "") or None
+        disposition = str(task.get("disposition") or body.get("disposition") or "") or None
+        if should_persist_outcome:
+            if customer_id and dpd_i is not None and dpd_bucket:
+                audit.record_dpd_snapshot(
+                    customer_id=customer_id,
+                    dpd_value=dpd_i,
+                    dpd_bucket=dpd_bucket,
+                    source="task_update",
+                )
+            audit.upsert_outcome(
+                session_id=session_id,
+                end_ts=completion_ts,
+                customer_id=customer_id,
+                campaign_id=campaign_id,
                 dpd_bucket=dpd_bucket,
-                source="task_update",
+                strategy_mode=strategy_decision.strategy_mode,
+                tone_profile=strategy_decision.tone_profile,
+                disposition=disposition,
+                ptp_date=ptp_date,
+                callback_time=callback_time,
             )
-        audit.upsert_outcome(
-            session_id=manual_session_id,
-            customer_id=str(task.get("customer_id") or "") or None,
-            campaign_id=str(task.get("campaign_id") or "") or None,
-            dpd_bucket=dpd_bucket,
-            strategy_mode=strategy_decision.strategy_mode,
-            tone_profile=strategy_decision.tone_profile,
-            disposition=str(task.get("disposition") or body.get("disposition") or "") or None,
-            ptp_date=ptp_date,
-            callback_time=callback_time,
-        )
-        audit.record_event(
-            event_type="task_commitment_saved",
-            session_id=manual_session_id,
-            payload={
-                "task_id": task_id,
-                "ptp_date": ptp_date,
-                "callback_time": callback_time,
-                "actor": actor,
-            },
-        )
+            with contextlib.suppress(Exception):
+                sink.upsert_call(
+                    session_id=session_id,
+                    customer_id=customer_id,
+                    end_ts=completion_ts,
+                    disposition=disposition,
+                    ptp_date=ptp_date,
+                    callback_time=callback_time,
+                )
+            with contextlib.suppress(Exception):
+                sink.log_action(
+                    session_id=session_id,
+                    action_name="save_task_outcome",
+                    payload={
+                        "task_id": task_id,
+                        "state": task.get("state"),
+                        "disposition": disposition,
+                        "ptp_date": ptp_date,
+                        "callback_time": callback_time,
+                        "actor": actor,
+                    },
+                    result={"ok": True},
+                    ok=True,
+                )
+            audit.record_event(
+                event_type="task_commitment_saved",
+                session_id=session_id,
+                payload={
+                    "task_id": task_id,
+                    "state": task.get("state"),
+                    "disposition": disposition,
+                    "ptp_date": ptp_date,
+                    "callback_time": callback_time,
+                    "actor": actor,
+                },
+            )
+            if campaign_id and customer_id:
+                outcome = "escalated" if state_name == "ESCALATED" else "completed"
+                campaign_service.record_contact(campaign_id=campaign_id, customer_id=customer_id, outcome=outcome)
         auto_followups = []
-        if ptp_date and str(task.get("state") or "").upper() == "PTP":
+        if ptp_date and state_name == "PTP":
             auto_followups.extend(followups.schedule_ptp_followups(
-                session_id=manual_session_id,
-                customer_id=str(task.get("customer_id") or "") or None,
+                session_id=session_id,
+                customer_id=customer_id,
                 ptp_date=ptp_date,
                 phone=str(task.get("phone") or "") or None,
                 channel="whatsapp",
             ))
         if callback_ts is not None:
             auto_followups.extend(followups.schedule_callback_followup(
-                session_id=manual_session_id,
-                customer_id=str(task.get("customer_id") or "") or None,
+                session_id=session_id,
+                customer_id=customer_id,
                 phone=str(task.get("phone") or "") or None,
                 callback_ts=callback_ts,
                 channel="voice",
@@ -2118,10 +2263,11 @@ async def api_task_update(task_id: str, request: Request):
         if auto_followups:
             audit.record_event(
                 event_type="followup_scheduled",
-                session_id=manual_session_id,
+                session_id=session_id,
                 payload={"source": "task_update", "items": auto_followups},
             )
             result["followups"] = auto_followups
+        result["session_id"] = session_id
     status = 200 if result.get("ok") else 400
     return JSONResponse(result, status_code=status)
 
@@ -2152,46 +2298,27 @@ async def api_telephony_test_call(request: Request):
     sink: ExcelOutcomeSink = demo["sink"]  # type: ignore[assignment]
     actor = _actor(request)
     payload = body_obj.model_dump(exclude_none=True)
+    session_id = f"tel-{uuid.uuid4().hex[:10]}"
     call_result = router.place_test_voice_call(
         customer_phone=body_obj.phone,
         customer_name=body_obj.customer_name,
         amount=body_obj.amount_due,
         timeout_s=int(body_obj.timeout_seconds or 25),
     )
-    ok = bool(call_result.get("delivery_ok"))
-    session_id = f"tel-{uuid.uuid4().hex[:10]}"
-
-    with contextlib.suppress(Exception):
-        sink.log_action(session_id=session_id, action_name="test_voice_call", payload=payload, result=call_result, ok=ok)
-    with contextlib.suppress(Exception):
-        sink.log_outbox(
-            session_id=session_id,
-            channel="voice",
-            to=str(call_result.get("normalized_to") or call_result.get("to") or body_obj.phone),
-            body=f"test_call:{call_result.get('call_status') or call_result.get('delivery_status') or 'unknown'}",
-            link=str(call_result.get("call_sid") or ""),
-        )
-    with contextlib.suppress(Exception):
-        audit.record_event(
-            event_type="action",
-            session_id=session_id,
-            payload={
-                "name": "test_voice_call",
-                "actor": actor,
-                "payload": payload,
-                "result": {
-                    "provider": call_result.get("provider"),
-                    "delivery_ok": call_result.get("delivery_ok"),
-                    "delivery_status": call_result.get("delivery_status"),
-                    "delivery_error": call_result.get("delivery_error"),
-                    "call_sid": call_result.get("call_sid"),
-                    "normalized_to": call_result.get("normalized_to"),
-                },
-            },
-        )
-
+    if _is_demo() and not call_result.get("delivery_ok") and _telephony_infra_error(call_result):
+        call_result = _demo_voice_call_result(customer_phone=body_obj.phone)
+    ok = _record_telephony_attempt(
+        sink=sink,
+        audit=audit,
+        session_id=session_id,
+        action_name="test_voice_call",
+        actor=actor,
+        payload=payload,
+        call_result=call_result,
+        start_ts=time.time(),
+    )
     status = 200 if ok else 502
-    return JSONResponse({"ok": ok, "result": call_result}, status_code=status)
+    return JSONResponse({"ok": ok, "session_id": session_id, "result": call_result}, status_code=status)
 
 
 @app.post("/api/telephony/agent_call")
@@ -2214,7 +2341,8 @@ async def api_telephony_agent_call(request: Request):
             details={"errors": exc.errors()},
         )
     stream_ws_url = _telephony_stream_ws_url(request)
-    if not stream_ws_url.startswith("wss://"):
+    demo_stream_url = "wss://demo.turingedge.invalid/ws/twilio-media"
+    if not stream_ws_url.startswith("wss://") and not _is_demo():
         return _error_response(
             request,
             status_code=400,
@@ -2229,50 +2357,37 @@ async def api_telephony_agent_call(request: Request):
     sink: ExcelOutcomeSink = demo["sink"]  # type: ignore[assignment]
     actor = _actor(request)
     payload = body_obj.model_dump(exclude_none=True)
-    call_result = router.place_agent_stream_call(
-        customer_phone=body_obj.phone,
-        stream_ws_url=stream_ws_url,
-        customer_name=body_obj.customer_name,
-        amount=body_obj.amount_due,
+    session_id = f"tel-agent-{uuid.uuid4().hex[:10]}"
+    if not stream_ws_url.startswith("wss://") and _is_demo():
+        call_result = _demo_voice_call_result(customer_phone=body_obj.phone, stream_ws_url=demo_stream_url)
+    else:
+        call_result = router.place_agent_stream_call(
+            customer_phone=body_obj.phone,
+            stream_ws_url=stream_ws_url,
+            customer_name=body_obj.customer_name,
+            amount=body_obj.amount_due,
+            customer_id=body_obj.customer_id,
+            campaign_id=body_obj.campaign_id,
+            language=body_obj.language,
+            tts_speaker=body_obj.tts_speaker,
+            timeout_s=int(body_obj.timeout_seconds or 25),
+        )
+        if _is_demo() and not call_result.get("delivery_ok") and _telephony_infra_error(call_result):
+            call_result = _demo_voice_call_result(customer_phone=body_obj.phone, stream_ws_url=stream_ws_url or demo_stream_url)
+    ok = _record_telephony_attempt(
+        sink=sink,
+        audit=audit,
+        session_id=session_id,
+        action_name="agent_voice_call",
+        actor=actor,
+        payload=payload,
+        call_result=call_result,
         customer_id=body_obj.customer_id,
         campaign_id=body_obj.campaign_id,
-        language=body_obj.language,
-        tts_speaker=body_obj.tts_speaker,
-        timeout_s=int(body_obj.timeout_seconds or 25),
+        start_ts=time.time(),
     )
-    ok = bool(call_result.get("delivery_ok"))
-    session_id = f"tel-agent-{uuid.uuid4().hex[:10]}"
-    with contextlib.suppress(Exception):
-        sink.log_action(session_id=session_id, action_name="agent_voice_call", payload=payload, result=call_result, ok=ok)
-    with contextlib.suppress(Exception):
-        sink.log_outbox(
-            session_id=session_id,
-            channel="voice",
-            to=str(call_result.get("normalized_to") or call_result.get("to") or body_obj.phone),
-            body=f"agent_call:{call_result.get('call_status') or call_result.get('delivery_status') or 'unknown'}",
-            link=str(call_result.get("call_sid") or ""),
-        )
-    with contextlib.suppress(Exception):
-        audit.record_event(
-            event_type="action",
-            session_id=session_id,
-            payload={
-                "name": "agent_voice_call",
-                "actor": actor,
-                "payload": payload,
-                "result": {
-                    "provider": call_result.get("provider"),
-                    "delivery_ok": call_result.get("delivery_ok"),
-                    "delivery_status": call_result.get("delivery_status"),
-                    "delivery_error": call_result.get("delivery_error"),
-                    "call_sid": call_result.get("call_sid"),
-                    "normalized_to": call_result.get("normalized_to"),
-                    "stream_ws_url": call_result.get("stream_ws_url"),
-                },
-            },
-        )
     status = 200 if ok else 502
-    return JSONResponse({"ok": ok, "result": call_result}, status_code=status)
+    return JSONResponse({"ok": ok, "session_id": session_id, "result": call_result}, status_code=status)
 
 
 @app.post("/api/tasks/bulk_update")
@@ -2503,6 +2618,8 @@ async def api_create_campaign(request: Request):
         rows=task_rows,
         actor=_actor(request),
     )
+    audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
+    _seed_dpd_baseline_snapshots(audit=audit, rows=task_rows, source="campaign_create")
     return {"ok": True, **created, "tasks_created": tasks_created}
 
 

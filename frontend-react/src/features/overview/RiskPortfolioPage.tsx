@@ -161,22 +161,31 @@ function SignalCard({ title, value, detail, tone, progress, icon }: SignalCardPr
   );
 }
 
+const LIVE_REFRESH_MS = 10_000;
+
 export function RiskPortfolioPage() {
   const [campaignId, setCampaignId] = useState("");
 
   const metrics = useQuery({
     queryKey: ["metrics", campaignId],
     queryFn: () => apiFetch<MetricsResponse>(`/api/metrics${toQuery({ campaign_id: campaignId })}`),
+    refetchInterval: LIVE_REFRESH_MS,
   });
-  const campaigns = useQuery({ queryKey: ["campaigns"], queryFn: () => apiFetch<{ rows: CampaignRow[] }>("/api/campaigns") });
+  const campaigns = useQuery({
+    queryKey: ["campaigns"],
+    queryFn: () => apiFetch<{ rows: CampaignRow[] }>("/api/campaigns"),
+    refetchInterval: LIVE_REFRESH_MS,
+  });
   const build = useQuery({ queryKey: ["build_info"], queryFn: () => apiFetch<BuildInfo>("/api/system/build_info") });
   const rollForward = useQuery({
     queryKey: ["metrics_roll_forward", campaignId],
     queryFn: () => apiFetch<RollForwardResponse>(`/api/metrics/roll-forward${toQuery({ campaign_id: campaignId, days: 30 })}`),
+    refetchInterval: LIVE_REFRESH_MS,
   });
   const recovery = useQuery({
     queryKey: ["metrics_recovery", campaignId],
     queryFn: () => apiFetch<RecoveryResponse>(`/api/metrics/recovery${toQuery({ campaign_id: campaignId, days: 30 })}`),
+    refetchInterval: LIVE_REFRESH_MS,
   });
 
   const selectedCampaign = useMemo(
