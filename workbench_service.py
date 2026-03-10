@@ -79,6 +79,41 @@ class WorkbenchService:
         finally:
             conn.close()
 
+    def _task_scope_conditions(
+        self,
+        *,
+        campaign_id: Optional[str] = None,
+        state: Optional[str] = None,
+        dpd_bucket: Optional[str] = None,
+        owner: Optional[str] = None,
+        q: Optional[str] = None,
+    ) -> tuple[List[str], List[Any]]:
+        where = ["1=1"]
+        args: List[Any] = []
+        if campaign_id:
+            where.append("campaign_id = ?")
+            args.append(campaign_id)
+        if state:
+            where.append("state = ?")
+            args.append(state)
+        if owner:
+            where.append("owner = ?")
+            args.append(owner)
+        if q:
+            where.append("(customer_id LIKE ? OR COALESCE(customer_name,'') LIKE ?)")
+            like = f"%{q.strip()}%"
+            args.extend([like, like])
+        if dpd_bucket:
+            if dpd_bucket == "1-30":
+                where.append("dpd BETWEEN 1 AND 30")
+            elif dpd_bucket == "31-60":
+                where.append("dpd BETWEEN 31 AND 60")
+            elif dpd_bucket == "61-90":
+                where.append("dpd BETWEEN 61 AND 90")
+            elif dpd_bucket == "90+":
+                where.append("dpd > 90")
+        return where, args
+
     def seed_tasks(self, *, campaign_id: str, portfolio_id: str, rows: List[Dict[str, Any]], actor: str = "system") -> int:
         conn = self._connect()
         now = time.time()
@@ -146,30 +181,13 @@ class WorkbenchService:
     ) -> Dict[str, Any]:
         conn = self._connect()
         try:
-            where = ["1=1"]
-            args: List[Any] = []
-            if campaign_id:
-                where.append("campaign_id = ?")
-                args.append(campaign_id)
-            if state:
-                where.append("state = ?")
-                args.append(state)
-            if owner:
-                where.append("owner = ?")
-                args.append(owner)
-            if q:
-                where.append("(customer_id LIKE ? OR COALESCE(customer_name,'') LIKE ?)")
-                like = f"%{q.strip()}%"
-                args.extend([like, like])
-            if dpd_bucket:
-                if dpd_bucket == "1-30":
-                    where.append("dpd BETWEEN 1 AND 30")
-                elif dpd_bucket == "31-60":
-                    where.append("dpd BETWEEN 31 AND 60")
-                elif dpd_bucket == "61-90":
-                    where.append("dpd BETWEEN 61 AND 90")
-                elif dpd_bucket == "90+":
-                    where.append("dpd > 90")
+            where, args = self._task_scope_conditions(
+                campaign_id=campaign_id,
+                state=state,
+                dpd_bucket=dpd_bucket,
+                owner=owner,
+                q=q,
+            )
 
             order_sql = {
                 "updated_desc": "updated_at DESC",
@@ -202,6 +220,28 @@ class WorkbenchService:
                 "page_size": lim,
                 "total": int(total or 0),
             }
+        finally:
+            conn.close()
+
+    def customer_ids_in_scope(
+        self,
+        *,
+        campaign_id: Optional[str] = None,
+        state: Optional[str] = None,
+        dpd_bucket: Optional[str] = None,
+    ) -> List[str]:
+        conn = self._connect()
+        try:
+            where, args = self._task_scope_conditions(
+                campaign_id=campaign_id,
+                state=state,
+                dpd_bucket=dpd_bucket,
+            )
+            rows = conn.execute(
+                f"SELECT DISTINCT customer_id FROM tasks WHERE {' AND '.join(where)}",
+                tuple(args),
+            ).fetchall()
+            return [str(r["customer_id"] or "") for r in rows if r["customer_id"]]
         finally:
             conn.close()
 
@@ -362,14 +402,21 @@ class WorkbenchService:
                 errors.append({"task_id": tid, "error": str(res.get("error") or "unknown")})
         return {"ok": True, "updated": updated, "errors": errors}
 
-    def summary_by_state(self, campaign_id: Optional[str] = None) -> Dict[str, int]:
+    def summary_by_state(
+        self,
+        campaign_id: Optional[str] = None,
+        *,
+        state: Optional[str] = None,
+        dpd_bucket: Optional[str] = None,
+    ) -> Dict[str, int]:
         conn = self._connect()
         try:
-            where = ""
-            args: List[Any] = []
-            if campaign_id:
-                where = " WHERE campaign_id = ?"
-                args.append(campaign_id)
+            where_parts, args = self._task_scope_conditions(
+                campaign_id=campaign_id,
+                state=state,
+                dpd_bucket=dpd_bucket,
+            )
+            where = f" WHERE {' AND '.join(where_parts)}"
             rows = conn.execute(
                 f"SELECT state, COUNT(*) AS n FROM tasks{where} GROUP BY state",
                 tuple(args),

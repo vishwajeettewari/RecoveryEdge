@@ -1798,7 +1798,9 @@ async def api_metrics(request: Request):
     audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
     crm: CRMAdapter = demo["crm"]  # type: ignore[assignment]
     campaign_id = (request.query_params.get("campaign_id") or "").strip() or None
-    data = audit.metrics(campaign_id=campaign_id)
+    state = (request.query_params.get("state") or "").strip() or None
+    dpd_bucket = (request.query_params.get("dpd_bucket") or "").strip() or None
+    data = audit.metrics(campaign_id=campaign_id, state=state, dpd_bucket=dpd_bucket)
     data["outbound_status"] = crm.status()
     data["followups_due_processed"] = 0
     data["outbound_tick"] = {"processed": 0, "acked": 0, "retry": 0, "dead_letter": 0}
@@ -2060,14 +2062,23 @@ async def api_sessions(request: Request):
         return deny
     demo = _get_demo_singletons()
     sessions: Dict[str, dict] = demo["sessions"]  # type: ignore[assignment]
+    workbench: WorkbenchService = demo["workbench"]  # type: ignore[assignment]
     campaign_id = (request.query_params.get("campaign_id") or "").strip()
     dpd_bucket = (request.query_params.get("bucket") or "").strip()
+    state = (request.query_params.get("state") or "").strip()
     disposition = (request.query_params.get("disposition") or "").strip()
     rows = list(sessions.values())
     if campaign_id:
         rows = [s for s in rows if str(s.get("campaign_id") or "") == campaign_id]
-    if dpd_bucket:
-        rows = [s for s in rows if str(s.get("dpd_bucket") or "") == dpd_bucket]
+    if state or dpd_bucket:
+        scoped_customer_ids = set(
+            workbench.customer_ids_in_scope(
+                campaign_id=campaign_id or None,
+                state=state or None,
+                dpd_bucket=dpd_bucket or None,
+            )
+        )
+        rows = [s for s in rows if str(s.get("customer_id") or "") in scoped_customer_ids]
     if disposition:
         rows = [s for s in rows if str(s.get("disposition") or "") == disposition]
     # Return "active" snapshots (updated by the WS session loop).
@@ -2106,7 +2117,9 @@ async def api_tasks_summary(request: Request):
     demo = _get_demo_singletons()
     workbench: WorkbenchService = demo["workbench"]  # type: ignore[assignment]
     campaign_id = (request.query_params.get("campaign_id") or "").strip() or None
-    return workbench.summary_by_state(campaign_id=campaign_id)
+    state = (request.query_params.get("state") or "").strip() or None
+    dpd_bucket = (request.query_params.get("dpd_bucket") or "").strip() or None
+    return workbench.summary_by_state(campaign_id=campaign_id, state=state, dpd_bucket=dpd_bucket)
 
 
 @app.get("/api/tasks/{task_id}")
@@ -5080,9 +5093,11 @@ async def api_metrics_roll_forward(request: Request):
     except Exception:
         days = 30
     campaign_id = (request.query_params.get("campaign_id") or "").strip() or None
+    state = (request.query_params.get("state") or "").strip() or None
+    dpd_bucket = (request.query_params.get("dpd_bucket") or "").strip() or None
     demo = _get_demo_singletons()
     audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
-    return audit.roll_forward_matrix(days=days, campaign_id=campaign_id)
+    return audit.roll_forward_matrix(days=days, campaign_id=campaign_id, state=state, dpd_bucket=dpd_bucket)
 
 
 @app.get("/api/metrics/recovery")
@@ -5095,9 +5110,11 @@ async def api_metrics_recovery(request: Request):
     except Exception:
         days = 30
     campaign_id = (request.query_params.get("campaign_id") or "").strip() or None
+    state = (request.query_params.get("state") or "").strip() or None
+    dpd_bucket = (request.query_params.get("dpd_bucket") or "").strip() or None
     demo = _get_demo_singletons()
     audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
-    return audit.realized_recovery_trend(days=days, campaign_id=campaign_id)
+    return audit.realized_recovery_trend(days=days, campaign_id=campaign_id, state=state, dpd_bucket=dpd_bucket)
 
 
 @app.get("/api/metrics/agents")
@@ -5106,9 +5123,11 @@ async def api_metrics_agents(request: Request):
     if deny:
         return deny
     campaign_id = (request.query_params.get("campaign_id") or "").strip() or None
+    state = (request.query_params.get("state") or "").strip() or None
+    dpd_bucket = (request.query_params.get("dpd_bucket") or "").strip() or None
     demo = _get_demo_singletons()
     audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
-    return {"agents": audit.agent_metrics(campaign_id=campaign_id)}
+    return {"agents": audit.agent_metrics(campaign_id=campaign_id, state=state, dpd_bucket=dpd_bucket)}
 
 
 # ---------------------------------------------------------------------------

@@ -1342,8 +1342,21 @@ a:hover {
   gap: 10px;
 }
 
+.te-calling-actions-grid--rail {
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+}
+
 .te-calling-actions-grid--rail > :last-child {
   grid-column: 1 / -1;
+}
+
+.te-calling-actions-grid--rail .mantine-Button-root {
+  min-width: 0;
+}
+
+.te-calling-actions-grid--rail .mantine-Button-label {
+  line-height: 1.2;
+  white-space: normal;
 }
 
 .te-calling-meter {
@@ -1378,8 +1391,18 @@ a:hover {
 
 .te-disposition-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 10px;
+}
+
+.te-disposition-grid .mantine-Button-root {
+  min-width: 0;
+  padding-inline: 10px;
+}
+
+.te-disposition-grid .mantine-Button-label {
+  font-size: 0.78rem;
+  line-height: 1.2;
 }
 
 .te-calling-inline-note {

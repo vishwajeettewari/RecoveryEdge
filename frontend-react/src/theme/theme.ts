@@ -72,13 +72,13 @@ export const appTheme = createTheme({
     },
     Button: {
       defaultProps: {
-        radius: "xl",
+        radius: "lg",
       },
       styles: {
         root: {
-          fontWeight: 700,
-          letterSpacing: "0.01em",
-          borderRadius: 999,
+          fontWeight: 600,
+          letterSpacing: "0.005em",
+          borderRadius: tokens.radii.lg,
           transition: "transform 160ms ease, box-shadow 180ms ease, filter 180ms ease",
         },
         label: {
@@ -86,6 +86,20 @@ export const appTheme = createTheme({
           zIndex: 2,
         },
       },
+    },
+    Stepper: {
+      styles: () => ({
+        stepLabel: {
+          fontSize: "0.84rem",
+          fontWeight: 600,
+          letterSpacing: "0.01em",
+          color: "var(--te-component-text)",
+        },
+        stepDescription: {
+          fontSize: "0.72rem",
+          color: "var(--te-copy)",
+        },
+      }),
     },
     TextInput: {
       styles: () => ({

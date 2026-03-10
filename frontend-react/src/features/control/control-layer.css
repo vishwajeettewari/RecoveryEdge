@@ -346,6 +346,9 @@
 
 .te-control-action-button {
   width: 100%;
+  height: auto;
+  min-height: 38px;
+  padding-block: 10px;
 }
 
 .te-control-action-button--primary {
@@ -378,11 +381,30 @@
 
 .te-control-prompt-button {
   justify-content: flex-start;
+  align-items: flex-start;
+  height: auto;
+  min-height: 52px;
+  padding-block: 10px;
   color: #17305d !important;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 248, 255, 0.98)) !important;
   border: 1px solid rgba(107, 129, 173, 0.18) !important;
   box-shadow: 0 10px 18px rgba(15, 24, 42, 0.06) !important;
+}
+
+.te-control-action-button .mantine-Button-label,
+.te-control-prompt-button .mantine-Button-label {
+  white-space: normal;
+  text-align: left;
+  line-height: 1.35;
+}
+
+.te-control-action-button .mantine-Button-label {
+  font-size: 0.82rem;
+}
+
+.te-control-prompt-button .mantine-Button-label {
+  font-size: 0.8rem;
 }
 
 .te-control-prompt-button:hover {

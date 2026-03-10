@@ -1,5 +1,58 @@
 # Current Task
 
+## Calling Console Action Fit And Command Center Scope Wiring
+
+- [x] Re-audit the Calling Console at narrower desktop widths, identify the remaining clipped action buttons, and fix the responsive action rail without regressing the rest of the layout.
+- [x] Trace every AI Collections Command Center filter and action against its backing endpoint, then wire any partially connected sections so the page scope is consistent end to end.
+- [x] Run focused verification for the Calling Console and AI Collections Command Center, then document the outcome in the review section below.
+
+### Calling Console Action Fit And Command Center Scope Wiring Notes
+
+- The remaining Calling Console regression is not the main `Start Call` control. The live narrower-width audit shows the right-rail quick actions clipping `Use Task Phone` and `Call Number`, which means the rail action grid still needs a more adaptive column rule.
+- The AI Collections Command Center still exposes task-state and DPD-bucket filters more broadly than the backend currently honors. The main queue and some session/task views narrow correctly, but the analytics endpoints still stay mostly campaign-wide and the export menu is still placeholder UI.
+
+## Calling Console Action Fit And Command Center Scope Wiring Review
+
+- Updated `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/styles.css` so the Calling Console rail actions now use an adaptive auto-fit grid with button labels allowed to wrap cleanly. The remaining narrower-width regressions were the rail buttons, not the main `Start Call` button.
+- Live re-verification on the authenticated Calling Console at 1280px and 1200px now shows full `Use Task Phone`, `Call Number`, and `Check Mic` labels without the previous truncation. Verified with fresh Playwright screenshots after a temporary demo-task assignment to the calling agent in the local demo DB, then reverted that runtime data tweak once the audit was complete.
+- Extended `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/audit_store.py`, `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/workbench_service.py`, and `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/web_app.py` so Command Center scope now propagates across analytics, roll-forward, recovery, agent metrics, task summaries, and live session filtering for the selected campaign, task state, and DPD bucket.
+- Updated `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/features/command-center/CommandCenterPage.tsx` so every analytics query now sends the same state and bucket scope as the task list, and the export menu now generates a real Excel-compatible CSV export plus a printable PDF-style report instead of placeholder items.
+- Added regression coverage in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/features/command-center/CommandCenterPage.test.tsx` for scoped analytics query propagation and live export actions, and in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/tests/test_ops_layers.py` for backend scope filtering across metrics, roll-forward, recovery, agent metrics, and task summaries.
+- Verified with:
+  - `python3 -m py_compile audit_store.py workbench_service.py web_app.py tests/test_ops_layers.py`
+  - `python3 -m unittest tests.test_ops_layers.OpsLayerTests.test_command_center_scope_filters_apply_across_metrics_layers`
+  - `npm test -- --run src/features/command-center/CommandCenterPage.test.tsx src/features/calling/CallingConsolePage.test.tsx`
+  - `npm run build`
+- Verification note:
+  - the production build still emits the existing Vite chunk-size warning for the main bundle, but the build completes successfully.
+
+## UI Button Typography And Label Fit
+
+- [x] Audit the full React UI for oversized button text, clipped labels, and button shapes distorted by text sizing.
+- [x] Tune shared button typography and spacing for a cleaner enterprise-grade control surface.
+- [x] Fix page-level button variants that still truncate labels or look visually loud after the shared pass.
+- [x] Run live verification plus focused frontend checks, then document findings and outcomes in the review section below.
+
+### UI Button Typography And Label Fit Notes
+
+- The current Mantine button theme uses heavy weight, fully pill-shaped radii, and tight small-button variants. That combination is likely making labels feel oversized and, on denser tables and action groups, can clip or visually crowd text.
+- The audit should cover the major authenticated routes, not just the calling console, because the same shared button styling is reused across the shell and multiple module pages.
+
+## UI Button Typography And Label Fit Review
+
+- Audited the live React shell across `/app/dashboard`, `/app/risk-portfolio`, `/app/command-center`, `/app/control`, `/app/portfolio`, `/app/workbench`, `/app/calling`, `/app/alerts`, `/app/reports`, `/app/integrations`, `/app/users`, `/app/settings`, and `/app/profile` with Playwright screenshots and button-overflow checks.
+- The two real label-fit regressions in the shipped UI were the Operations Copilot prompt buttons and the Calling Console `Capture PTP` quick action. Both were clipping live labels at desktop width before the fix.
+- Updated `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/theme/theme.ts` to calm the shared button treatment by reducing weight, removing the fully pill-shaped radius, and tightening stepper typography so button-like controls read more enterprise and less oversized.
+- Updated `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/features/control/control-layer.css` so Operations Copilot action and prompt buttons can grow vertically, use smaller copy, and wrap long labels cleanly instead of truncating strategic prompts.
+- Updated `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/styles.css` so the Calling Console disposition strip uses a more flexible grid and denser button copy, which restores the full `Capture PTP` label without distorting the rest of the action row.
+- Live re-verification after the patch showed the previous clipped controls reduced from 3 to 0 on Operations Copilot and from 1 to 0 on the Calling Console. The other audited routes remained free of clipped button labels.
+- Verified with:
+  - Live Playwright route audit plus screenshots before and after the fix
+  - `npm run test -- --run src/features/calling/CallingConsolePage.test.tsx src/features/command-center/CommandCenterPage.test.tsx src/features/auth/LoginPage.test.tsx`
+  - `npm run build`
+- Verification note:
+  - the production build still emits the existing Vite chunk-size warning for the main bundle, but the build completes successfully.
+
 ## Calling Console Transcript Visibility
 
 - [x] Inspect the current calling-console transcript layout and identify why the live transcript region is visually collapsing.

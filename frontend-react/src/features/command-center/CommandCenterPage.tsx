@@ -340,6 +340,268 @@ function clamp(value: number, min = 0, max = 100): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function csvValue(value: unknown): string {
+  const text = value == null ? "" : String(value);
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function toCsv(rows: unknown[][]): string {
+  return rows.map((row) => row.map((value) => csvValue(value)).join(",")).join("\n");
+}
+
+function downloadTextFile(filename: string, content: string, mimeType: string): void {
+  if (typeof document === "undefined" || typeof URL === "undefined") {
+    return;
+  }
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderPrintTable(title: string, headers: string[], rows: Array<Array<string | number>>): string {
+  if (!rows.length) {
+    return "";
+  }
+  return `
+    <section>
+      <h2>${escapeHtml(title)}</h2>
+      <table>
+        <thead>
+          <tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map((row) => `<tr>${row.map((value) => `<td>${escapeHtml(String(value ?? ""))}</td>`).join("")}</tr>`)
+            .join("")}
+        </tbody>
+      </table>
+    </section>
+  `;
+}
+
+function scopeSlug(parts: string[]): string {
+  return parts
+    .filter(Boolean)
+    .join("-")
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "") || "command-center";
+}
+
+function buildCommandCenterCsv({
+  buildToken,
+  campaign,
+  dateRangeLabel,
+  taskStateLabel,
+  bucketLabel,
+  metrics,
+  recovery,
+  queueRows,
+  bucketRows,
+  agents,
+  sessions,
+  tasks,
+}: {
+  buildToken?: string;
+  campaign: CampaignRow;
+  dateRangeLabel: string;
+  taskStateLabel: string;
+  bucketLabel: string;
+  metrics: MetricsResponse;
+  recovery: RecoveryResponse;
+  queueRows: Array<{ state: string; count: number }>;
+  bucketRows: BucketMetric[];
+  agents: AgentMetric[];
+  sessions: SessionSnapshot[];
+  tasks: TaskRow[];
+}): string {
+  return toCsv([
+    ["AI Collections Command Center Export"],
+    ["Generated At", new Date().toLocaleString("en-IN")],
+    ["Build", buildToken || "-"],
+    ["Campaign", campaign.name || campaign.campaign_id],
+    ["Campaign ID", campaign.campaign_id],
+    ["Date Range", dateRangeLabel],
+    ["Task State", taskStateLabel],
+    ["DPD Bucket", bucketLabel],
+    [],
+    ["Portfolio KPIs"],
+    ["Metric", "Value"],
+    ["Accounts In Scope", formatNumber(Number(metrics.accounts_assigned || campaign.total_accounts || 0))],
+    ["Accounts Contacted", formatNumber(Number(metrics.accounts_contacted || 0))],
+    ["Contact Coverage", percent(metrics.contact_rate_pct)],
+    ["Expected Recovery", rupees(Number(metrics.expected_recovery_amount || 0))],
+    ["Realized Recovery", rupees(Number(recovery.total_recovered || 0))],
+    ["SLA Breaches", formatNumber(Number(metrics.sla_breaches || 0))],
+    [],
+    ["Queue Snapshot"],
+    ["State", "Count"],
+    ...queueRows.map((row) => [stateLabel(row.state), formatNumber(row.count)]),
+    [],
+    ["Bucket Exposure"],
+    ["Bucket", "Accounts", "Share", "PTP Rate"],
+    ...bucketRows.map((row) => [row.bucket, formatNumber(row.exposure), percent(row.share), percent(row.ptpRate)]),
+    [],
+    ["Agent Recovery Conversion"],
+    ["Agent", "Calls", "Connect Rate", "PTP Conversion", "Escalations"],
+    ...agents.map((agent) => [
+      agent.display_name,
+      formatNumber(agent.total_calls),
+      percent(agent.connect_rate_pct),
+      percent(agent.ptp_conversion_pct),
+      formatNumber(agent.escalations),
+    ]),
+    [],
+    ["Live Sessions"],
+    ["Session ID", "Customer", "Bucket", "Disposition", "Current Step"],
+    ...sessions.map((session) => [
+      session.session_id,
+      session.customer_name || session.customer_id || "-",
+      session.dpd_bucket || "-",
+      session.disposition || "-",
+      session.current_step || session.step || "-",
+    ]),
+    [],
+    ["Priority Accounts"],
+    ["Task ID", "Customer", "State", "DPD", "Amount Due", "Owner"],
+    ...tasks.map((task) => [
+      task.id,
+      task.customer_name || task.customer_id,
+      stateLabel(task.state),
+      formatNumber(Number(task.dpd || 0)),
+      rupees(Number(task.amount_due || 0)),
+      task.owner || "-",
+    ]),
+  ]);
+}
+
+function buildCommandCenterPrintHtml({
+  buildToken,
+  campaign,
+  dateRangeLabel,
+  taskStateLabel,
+  bucketLabel,
+  metrics,
+  recovery,
+  queueRows,
+  bucketRows,
+  agents,
+  sessions,
+  tasks,
+}: {
+  buildToken?: string;
+  campaign: CampaignRow;
+  dateRangeLabel: string;
+  taskStateLabel: string;
+  bucketLabel: string;
+  metrics: MetricsResponse;
+  recovery: RecoveryResponse;
+  queueRows: Array<{ state: string; count: number }>;
+  bucketRows: BucketMetric[];
+  agents: AgentMetric[];
+  sessions: SessionSnapshot[];
+  tasks: TaskRow[];
+}): string {
+  const kpiRows: Array<Array<string | number>> = [
+    ["Accounts In Scope", formatNumber(Number(metrics.accounts_assigned || campaign.total_accounts || 0))],
+    ["Accounts Contacted", formatNumber(Number(metrics.accounts_contacted || 0))],
+    ["Contact Coverage", percent(metrics.contact_rate_pct)],
+    ["Expected Recovery", rupees(Number(metrics.expected_recovery_amount || 0))],
+    ["Realized Recovery", rupees(Number(recovery.total_recovered || 0))],
+    ["SLA Breaches", formatNumber(Number(metrics.sla_breaches || 0))],
+  ];
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>AI Collections Command Center Export</title>
+    <style>
+      body { font-family: "Segoe UI", Arial, sans-serif; margin: 32px; color: #0f172a; }
+      h1 { margin: 0 0 8px; font-size: 28px; }
+      h2 { margin: 28px 0 10px; font-size: 18px; }
+      p { margin: 4px 0; color: #475569; }
+      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+      th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; font-size: 13px; }
+      th { background: #e2e8f0; }
+      .meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 24px; margin-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>AI Collections Command Center</h1>
+    <p>${escapeHtml(campaign.name || campaign.campaign_id)} (${escapeHtml(campaign.campaign_id)})</p>
+    <div class="meta">
+      <p><strong>Generated:</strong> ${escapeHtml(new Date().toLocaleString("en-IN"))}</p>
+      <p><strong>Build:</strong> ${escapeHtml(buildToken || "-")}</p>
+      <p><strong>Date Range:</strong> ${escapeHtml(dateRangeLabel)}</p>
+      <p><strong>Task State:</strong> ${escapeHtml(taskStateLabel)}</p>
+      <p><strong>DPD Bucket:</strong> ${escapeHtml(bucketLabel)}</p>
+      <p><strong>Campaign Status:</strong> ${escapeHtml(campaign.status || "-")}</p>
+    </div>
+    ${renderPrintTable("Portfolio KPIs", ["Metric", "Value"], kpiRows)}
+    ${renderPrintTable(
+      "Queue Snapshot",
+      ["State", "Count"],
+      queueRows.map((row) => [stateLabel(row.state), formatNumber(row.count)]),
+    )}
+    ${renderPrintTable(
+      "Bucket Exposure",
+      ["Bucket", "Accounts", "Share", "PTP Rate"],
+      bucketRows.map((row) => [row.bucket, formatNumber(row.exposure), percent(row.share), percent(row.ptpRate)]),
+    )}
+    ${renderPrintTable(
+      "Agent Recovery Conversion",
+      ["Agent", "Calls", "Connect Rate", "PTP Conversion", "Escalations"],
+      agents.map((agent) => [
+        agent.display_name,
+        formatNumber(agent.total_calls),
+        percent(agent.connect_rate_pct),
+        percent(agent.ptp_conversion_pct),
+        formatNumber(agent.escalations),
+      ]),
+    )}
+    ${renderPrintTable(
+      "Live Sessions",
+      ["Session ID", "Customer", "Bucket", "Disposition", "Current Step"],
+      sessions.map((session) => [
+        session.session_id,
+        session.customer_name || session.customer_id || "-",
+        session.dpd_bucket || "-",
+        session.disposition || "-",
+        session.current_step || session.step || "-",
+      ]),
+    )}
+    ${renderPrintTable(
+      "Priority Accounts",
+      ["Task ID", "Customer", "State", "DPD", "Amount Due", "Owner"],
+      tasks.map((task) => [
+        task.id,
+        task.customer_name || task.customer_id,
+        stateLabel(task.state),
+        formatNumber(Number(task.dpd || 0)),
+        rupees(Number(task.amount_due || 0)),
+        task.owner || "-",
+      ]),
+    )}
+  </body>
+</html>`;
+}
+
 function pressureLabel(score: number): { label: string; color: string; detail: string } {
   if (score >= 76) {
     return {
@@ -1719,6 +1981,7 @@ export function CommandCenterPage() {
   const [bucket, setBucket] = useState("");
 
   const days = daysFromRange(dateRange);
+  const analyticsScope = { campaign_id: campaignId, state: taskState, dpd_bucket: bucket };
 
   const campaigns = useQuery({
     queryKey: ["command_center_campaigns"],
@@ -1735,9 +1998,9 @@ export function CommandCenterPage() {
   const queriesEnabled = Boolean(campaignId);
 
   const metrics = useQuery({
-    queryKey: ["command_center_metrics", campaignId],
+    queryKey: ["command_center_metrics", campaignId, taskState, bucket],
     enabled: queriesEnabled,
-    queryFn: () => apiFetch<MetricsResponse>(`/api/metrics${toQuery({ campaign_id: campaignId })}`),
+    queryFn: () => apiFetch<MetricsResponse>(`/api/metrics${toQuery(analyticsScope)}`),
     refetchInterval: LIVE_REFRESH_MS,
   });
   const build = useQuery({
@@ -1745,33 +2008,33 @@ export function CommandCenterPage() {
     queryFn: () => apiFetch<BuildInfo>("/api/system/build_info"),
   });
   const rollForward = useQuery({
-    queryKey: ["command_center_roll_forward", campaignId, days],
+    queryKey: ["command_center_roll_forward", campaignId, taskState, bucket, days],
     enabled: queriesEnabled,
-    queryFn: () => apiFetch<RollForwardResponse>(`/api/metrics/roll-forward${toQuery({ campaign_id: campaignId, days })}`),
+    queryFn: () => apiFetch<RollForwardResponse>(`/api/metrics/roll-forward${toQuery({ ...analyticsScope, days })}`),
     refetchInterval: LIVE_REFRESH_MS,
   });
   const recovery = useQuery({
-    queryKey: ["command_center_recovery", campaignId, days],
+    queryKey: ["command_center_recovery", campaignId, taskState, bucket, days],
     enabled: queriesEnabled,
-    queryFn: () => apiFetch<RecoveryResponse>(`/api/metrics/recovery${toQuery({ campaign_id: campaignId, days })}`),
+    queryFn: () => apiFetch<RecoveryResponse>(`/api/metrics/recovery${toQuery({ ...analyticsScope, days })}`),
     refetchInterval: LIVE_REFRESH_MS,
   });
   const agents = useQuery({
-    queryKey: ["command_center_agents", campaignId],
+    queryKey: ["command_center_agents", campaignId, taskState, bucket],
     enabled: queriesEnabled,
-    queryFn: () => apiFetch<{ agents: AgentMetric[] }>(`/api/metrics/agents${toQuery({ campaign_id: campaignId })}`),
+    queryFn: () => apiFetch<{ agents: AgentMetric[] }>(`/api/metrics/agents${toQuery(analyticsScope)}`),
     refetchInterval: LIVE_REFRESH_MS,
   });
   const taskSummary = useQuery({
-    queryKey: ["command_center_task_summary", campaignId],
+    queryKey: ["command_center_task_summary", campaignId, taskState, bucket],
     enabled: queriesEnabled,
-    queryFn: () => apiFetch<Record<string, number>>(`/api/tasks/summary${toQuery({ campaign_id: campaignId })}`),
+    queryFn: () => apiFetch<Record<string, number>>(`/api/tasks/summary${toQuery(analyticsScope)}`),
     refetchInterval: LIVE_REFRESH_MS,
   });
   const sessions = useQuery({
-    queryKey: ["command_center_sessions", campaignId, bucket],
+    queryKey: ["command_center_sessions", campaignId, taskState, bucket],
     enabled: queriesEnabled,
-    queryFn: () => apiFetch<{ sessions: SessionSnapshot[] }>(`/api/sessions${toQuery({ campaign_id: campaignId, bucket })}`),
+    queryFn: () => apiFetch<{ sessions: SessionSnapshot[] }>(`/api/sessions${toQuery({ campaign_id: campaignId, state: taskState, bucket })}`),
     refetchInterval: LIVE_REFRESH_MS,
   });
   const tasks = useQuery({
@@ -1902,6 +2165,9 @@ export function CommandCenterPage() {
   bucketRows.forEach((item) => {
     item.share = totalBucketExposure > 0 ? (item.exposure / totalBucketExposure) * 100 : 0;
   });
+  const dateRangeLabel = DATE_RANGE_OPTIONS.find((option) => option.value === dateRange)?.label || dateRange;
+  const taskStateLabel = TASK_STATE_OPTIONS.find((option) => option.value === taskState)?.label || "All task states";
+  const bucketLabel = DPD_BUCKET_OPTIONS.find((option) => option.value === bucket)?.label || "All buckets";
 
   const recommendationCandidates = [
     {
@@ -1972,6 +2238,65 @@ export function CommandCenterPage() {
     },
   ].filter((item) => item.count > 0);
 
+  const exportFilename = scopeSlug([
+    selectedCampaign.campaign_id,
+    taskState || "all-states",
+    bucket || "all-buckets",
+    dateRange,
+    new Date().toISOString().slice(0, 10),
+  ]);
+
+  const handleExportExcel = () => {
+    downloadTextFile(
+      `${exportFilename}.csv`,
+      buildCommandCenterCsv({
+        buildToken: build.data?.static_token,
+        campaign: selectedCampaign,
+        dateRangeLabel,
+        taskStateLabel,
+        bucketLabel,
+        metrics: m,
+        recovery: recovery.data,
+        queueRows,
+        bucketRows,
+        agents: agents.data.agents,
+        sessions: sessions.data.sessions,
+        tasks: tasks.data.rows,
+      }),
+      "text/csv;charset=utf-8",
+    );
+  };
+
+  const handleExportPdf = () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const printWindow = window.open("", "_blank", "noopener,noreferrer");
+    if (!printWindow) {
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(
+      buildCommandCenterPrintHtml({
+        buildToken: build.data?.static_token,
+        campaign: selectedCampaign,
+        dateRangeLabel,
+        taskStateLabel,
+        bucketLabel,
+        metrics: m,
+        recovery: recovery.data,
+        queueRows,
+        bucketRows,
+        agents: agents.data.agents,
+        sessions: sessions.data.sessions,
+        tasks: tasks.data.rows,
+      }),
+    );
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
   return (
     <Stack gap="md" className="te-command-center">
       <ModuleHeader
@@ -1988,8 +2313,12 @@ export function CommandCenterPage() {
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>Export Options</Menu.Label>
-                <Menu.Item leftSection={<FileSpreadsheet size={14} />}>Export to Excel</Menu.Item>
-                <Menu.Item leftSection={<Download size={14} />}>Export to PDF</Menu.Item>
+                <Menu.Item leftSection={<FileSpreadsheet size={14} />} onClick={handleExportExcel}>
+                  Export to Excel
+                </Menu.Item>
+                <Menu.Item leftSection={<Download size={14} />} onClick={handleExportPdf}>
+                  Export to PDF
+                </Menu.Item>
               </Menu.Dropdown>
             </Menu>
             <Badge variant="filled" color="green" size="lg">

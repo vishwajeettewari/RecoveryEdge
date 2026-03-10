@@ -9,6 +9,7 @@ from audit_store import SQLiteAuditStore
 from alerts_service import AlertsService
 from campaign_service import CampaignService
 from followup_service import FollowupService
+from payment_orchestration_service import PaymentOrchestrationService
 from reports_service import ReportsService
 from sync_service import SyncService
 from workbench_service import WorkbenchService
@@ -24,6 +25,7 @@ class OpsLayerTests(unittest.TestCase):
         self.campaign = CampaignService(self.db_path)
         self.workbench = WorkbenchService(self.db_path)
         self.followups = FollowupService(self.db_path)
+        self.payments = PaymentOrchestrationService(self.db_path)
         self.alerts = AlertsService(self.db_path)
         self.reports = ReportsService(self.db_path, self.data_dir)
         self.sync = SyncService(self.db_path)
@@ -196,6 +198,132 @@ class OpsLayerTests(unittest.TestCase):
         self.assertGreater(metrics["followup_discipline_rate_pct"], 0)
         self.assertGreaterEqual(metrics["ptp_miss_count"], 1)
         self.assertGreaterEqual(metrics["ptp_miss_open_alerts"], 1)
+
+    def test_command_center_scope_filters_apply_across_metrics_layers(self):
+        created = self.campaign.create_campaign(
+            name="Scoped Metrics",
+            customer_ids=["SCOPE-PTP", "OTHER-STATE", "OTHER-BUCKET"],
+            max_attempts=2,
+            retry_delay_minutes=15,
+            batch_size=25,
+        )
+        campaign_id = created["campaign_id"]
+        self.workbench.seed_tasks(
+            campaign_id=campaign_id,
+            portfolio_id="pfl-scope",
+            rows=[
+                {"customer_id": "SCOPE-PTP", "phone": "+919999999961", "amount_due": 1500, "dpd": 46, "customer_name": "Scope PTP"},
+                {"customer_id": "OTHER-STATE", "phone": "+919999999962", "amount_due": 2200, "dpd": 47, "customer_name": "Other State"},
+                {"customer_id": "OTHER-BUCKET", "phone": "+919999999963", "amount_due": 900, "dpd": 18, "customer_name": "Other Bucket"},
+            ],
+            actor="seed",
+        )
+        rows = self.workbench.list_tasks(campaign_id=campaign_id, page=1, page_size=20)["rows"]
+        task_by_customer = {row["customer_id"]: row for row in rows}
+
+        self.workbench.update_task(
+            task_id=task_by_customer["SCOPE-PTP"]["id"],
+            actor="mgr",
+            role="SUPERVISOR",
+            state="PTP",
+            ptp_date="2026-03-15",
+            disposition="ptp_captured",
+        )
+        self.workbench.update_task(
+            task_id=task_by_customer["OTHER-BUCKET"]["id"],
+            actor="mgr",
+            role="SUPERVISOR",
+            state="PTP",
+            ptp_date="2026-03-16",
+            disposition="ptp_captured",
+        )
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            now = datetime.now().timestamp()
+            for customer_id in ("SCOPE-PTP", "OTHER-STATE", "OTHER-BUCKET"):
+                conn.execute(
+                    "INSERT INTO campaign_runs (campaign_id, customer_id, ts, attempt_no, outcome) VALUES (?, ?, ?, 1, 'completed')",
+                    (campaign_id, customer_id, now),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        self.audit.upsert_outcome(
+            session_id="sess-scope-1",
+            start_ts=1.0,
+            end_ts=5.0,
+            customer_id="SCOPE-PTP",
+            campaign_id=campaign_id,
+            dpd_bucket="31-60",
+            disposition="ptp_captured",
+            ptp_date="2026-03-15",
+        )
+        self.audit.upsert_outcome(
+            session_id="sess-scope-2",
+            start_ts=2.0,
+            end_ts=7.0,
+            customer_id="OTHER-STATE",
+            campaign_id=campaign_id,
+            dpd_bucket="31-60",
+            disposition="contacted",
+        )
+        self.audit.upsert_outcome(
+            session_id="sess-scope-3",
+            start_ts=3.0,
+            end_ts=8.0,
+            customer_id="OTHER-BUCKET",
+            campaign_id=campaign_id,
+            dpd_bucket="1-30",
+            disposition="ptp_captured",
+            ptp_date="2026-03-16",
+        )
+        self.audit.update_outcome_agent(session_id="sess-scope-1", agent_id="agent-scope")
+        self.audit.update_outcome_agent(session_id="sess-scope-2", agent_id="agent-other-state")
+        self.audit.update_outcome_agent(session_id="sess-scope-3", agent_id="agent-other-bucket")
+
+        self.audit.record_dpd_snapshot(customer_id="SCOPE-PTP", dpd_bucket="1-30", dpd_value=18, source="test")
+        self.audit.record_dpd_snapshot(customer_id="SCOPE-PTP", dpd_bucket="31-60", dpd_value=46, source="test")
+        self.audit.record_dpd_snapshot(customer_id="OTHER-STATE", dpd_bucket="1-30", dpd_value=18, source="test")
+        self.audit.record_dpd_snapshot(customer_id="OTHER-STATE", dpd_bucket="31-60", dpd_value=47, source="test")
+        self.audit.record_dpd_snapshot(customer_id="OTHER-BUCKET", dpd_bucket="0", dpd_value=0, source="test")
+        self.audit.record_dpd_snapshot(customer_id="OTHER-BUCKET", dpd_bucket="1-30", dpd_value=18, source="test")
+
+        self.payments.create_intent(
+            tenant_id="tenant-1",
+            actor="tester",
+            request_id="req-scope-1",
+            payload={"customer_id": "SCOPE-PTP", "amount": 1500, "currency": "INR", "rail": "upi", "status": "SUCCEEDED"},
+        )
+        self.payments.create_intent(
+            tenant_id="tenant-1",
+            actor="tester",
+            request_id="req-scope-2",
+            payload={"customer_id": "OTHER-STATE", "amount": 2200, "currency": "INR", "rail": "upi", "status": "SUCCEEDED"},
+        )
+
+        metrics = self.audit.metrics(campaign_id=campaign_id, state="PTP", dpd_bucket="31-60")
+        roll_forward = self.audit.roll_forward_matrix(days=30, campaign_id=campaign_id, state="PTP", dpd_bucket="31-60")
+        recovery = self.audit.realized_recovery_trend(days=30, campaign_id=campaign_id, state="PTP", dpd_bucket="31-60")
+        agents = self.audit.agent_metrics(campaign_id=campaign_id, state="PTP", dpd_bucket="31-60")
+        summary = self.workbench.summary_by_state(campaign_id=campaign_id, state="PTP", dpd_bucket="31-60")
+
+        self.assertEqual(metrics["accounts_assigned"], 1)
+        self.assertEqual(metrics["accounts_contacted"], 1)
+        self.assertEqual(metrics["bucket_heatmap"]["31-60"], 1)
+        self.assertEqual(metrics["bucket_heatmap"]["1-30"], 0)
+        self.assertEqual(metrics["queue_snapshot"]["PTP"], 1)
+        self.assertEqual(metrics["ptp_count"], 1)
+        self.assertEqual(metrics["expected_recovery_amount"], 1500.0)
+        self.assertEqual(roll_forward["total_transitions"], 1)
+        self.assertEqual(roll_forward["matrix"]["1-30"]["31-60"], 1)
+        self.assertEqual(recovery["total_recovered"], 1500.0)
+        self.assertEqual(recovery["portfolio_value"], 1500.0)
+        self.assertEqual(len(agents), 1)
+        self.assertEqual(agents[0]["agent_id"], "agent-scope")
+        self.assertEqual(summary["PTP"], 1)
+        self.assertEqual(sum(summary.values()), 1)
 
     def test_compliance_block_requires_override(self):
         task_id = self._seed_task(campaign_id="cmp-comp", customer_id="C-COMP")

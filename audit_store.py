@@ -26,6 +26,51 @@ class SQLiteAuditStore:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def _task_scope_filters(
+        self,
+        *,
+        alias: str = "t",
+        campaign_id: Optional[str] = None,
+        state: Optional[str] = None,
+        dpd_bucket: Optional[str] = None,
+    ) -> tuple[List[str], List[Any]]:
+        prefix = f"{alias}." if alias else ""
+        filters: List[str] = []
+        args: List[Any] = []
+        if campaign_id:
+            filters.append(f"{prefix}campaign_id = ?")
+            args.append(campaign_id)
+        if state:
+            filters.append(f"{prefix}state = ?")
+            args.append(state)
+        if dpd_bucket == "1-30":
+            filters.append(f"{prefix}dpd BETWEEN 1 AND 30")
+        elif dpd_bucket == "31-60":
+            filters.append(f"{prefix}dpd BETWEEN 31 AND 60")
+        elif dpd_bucket == "61-90":
+            filters.append(f"{prefix}dpd BETWEEN 61 AND 90")
+        elif dpd_bucket == "90+":
+            filters.append(f"{prefix}dpd > 90")
+        return filters, args
+
+    def _task_scope_exists(
+        self,
+        *,
+        customer_column: str,
+        campaign_id: Optional[str] = None,
+        state: Optional[str] = None,
+        dpd_bucket: Optional[str] = None,
+    ) -> tuple[str, List[Any]]:
+        filters = [f"t.customer_id = {customer_column}"]
+        scope_filters, scope_args = self._task_scope_filters(
+            alias="t",
+            campaign_id=campaign_id,
+            state=state,
+            dpd_bucket=dpd_bucket,
+        )
+        filters.extend(scope_filters)
+        return f"EXISTS (SELECT 1 FROM tasks t WHERE {' AND '.join(filters)})", scope_args
+
     def _init_db(self) -> None:
         conn = self._connect()
         try:
@@ -582,7 +627,13 @@ class SQLiteAuditStore:
         finally:
             conn.close()
 
-    def metrics(self, *, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+    def metrics(
+        self,
+        *,
+        campaign_id: Optional[str] = None,
+        state: Optional[str] = None,
+        dpd_bucket: Optional[str] = None,
+    ) -> Dict[str, Any]:
         try:
             tz = ZoneInfo(self.metrics_tz)
         except ZoneInfoNotFoundError:
@@ -591,13 +642,55 @@ class SQLiteAuditStore:
         day_start = datetime(now.year, now.month, now.day, tzinfo=tz).timestamp()
         day_end = day_start + 86400
         now_ts = time.time()
+        scope_active = bool(campaign_id or state or dpd_bucket)
         conn = self._connect()
         try:
-            where = ""
-            args: List[Any] = []
-            if campaign_id:
-                where = " WHERE campaign_id = ?"
-                args = [campaign_id]
+            if scope_active:
+                outcome_scope, outcome_args = self._task_scope_exists(
+                    customer_column="outcomes.customer_id",
+                    campaign_id=campaign_id,
+                    state=state,
+                    dpd_bucket=dpd_bucket,
+                )
+                outcome_where = f" WHERE {outcome_scope}"
+            else:
+                outcome_where = ""
+                outcome_args = []
+
+            task_filters, task_args = self._task_scope_filters(
+                alias="",
+                campaign_id=campaign_id,
+                state=state,
+                dpd_bucket=dpd_bucket,
+            )
+            task_where = f" WHERE {' AND '.join(['1=1', *task_filters])}"
+
+            if scope_active:
+                account_scope, account_scope_args = self._task_scope_exists(
+                    customer_column="campaign_accounts.customer_id",
+                    campaign_id=campaign_id,
+                    state=state,
+                    dpd_bucket=dpd_bucket,
+                )
+                run_scope, run_scope_args = self._task_scope_exists(
+                    customer_column="campaign_runs.customer_id",
+                    campaign_id=campaign_id,
+                    state=state,
+                    dpd_bucket=dpd_bucket,
+                )
+                event_scope, event_scope_args = self._task_scope_exists(
+                    customer_column="o.customer_id",
+                    campaign_id=campaign_id,
+                    state=state,
+                    dpd_bucket=dpd_bucket,
+                )
+            else:
+                account_scope = ""
+                account_scope_args = []
+                run_scope = ""
+                run_scope_args = []
+                event_scope = ""
+                event_scope_args = []
 
             def safe_row(sql: str, params: tuple[Any, ...] = ()) -> Optional[sqlite3.Row]:
                 try:
@@ -629,15 +722,16 @@ class SQLiteAuditStore:
                 except Exception:
                     return default
 
-            if campaign_id:
+            if scope_active:
                 sessions_today = safe_number(
                     """
                     SELECT COUNT(DISTINCT e.session_id) AS n
                     FROM events e
                     JOIN outcomes o ON o.session_id = e.session_id
-                    WHERE e.ts >= ? AND o.campaign_id = ?
-                    """,
-                    (day_start, campaign_id),
+                    WHERE e.ts >= ?
+                      AND """
+                    + event_scope,
+                    tuple([day_start] + event_scope_args),
                 )
             else:
                 sessions_today = safe_number(
@@ -646,46 +740,48 @@ class SQLiteAuditStore:
                 )
 
             ptp_count = safe_number(
-                f"SELECT COUNT(*) AS n FROM outcomes{where + (' AND' if where else ' WHERE')} ptp_date IS NOT NULL AND ptp_date != ''",
-                tuple(args),
+                f"SELECT COUNT(*) AS n FROM outcomes{outcome_where + (' AND' if outcome_where else ' WHERE')} ptp_date IS NOT NULL AND ptp_date != ''",
+                tuple(outcome_args),
             )
             callback_count = safe_number(
-                f"SELECT COUNT(*) AS n FROM outcomes{where + (' AND' if where else ' WHERE')} callback_time IS NOT NULL AND callback_time != ''",
-                tuple(args),
+                f"SELECT COUNT(*) AS n FROM outcomes{outcome_where + (' AND' if outcome_where else ' WHERE')} callback_time IS NOT NULL AND callback_time != ''",
+                tuple(outcome_args),
             )
             escalations = safe_number(
-                f"SELECT COALESCE(SUM(escalations), 0) AS n FROM outcomes{where}",
-                tuple(args),
+                f"SELECT COALESCE(SUM(escalations), 0) AS n FROM outcomes{outcome_where}",
+                tuple(outcome_args),
             )
             ended = safe_number(
-                f"SELECT COUNT(*) AS n FROM outcomes{where + (' AND' if where else ' WHERE')} end_ts IS NOT NULL",
-                tuple(args),
+                f"SELECT COUNT(*) AS n FROM outcomes{outcome_where + (' AND' if outcome_where else ' WHERE')} end_ts IS NOT NULL",
+                tuple(outcome_args),
             )
             avg_handle_s = safe_number(
-                f"SELECT AVG(end_ts - start_ts) AS v FROM outcomes{where + (' AND' if where else ' WHERE')} start_ts IS NOT NULL AND end_ts IS NOT NULL",
-                tuple(args),
+                f"SELECT AVG(end_ts - start_ts) AS v FROM outcomes{outcome_where + (' AND' if outcome_where else ' WHERE')} start_ts IS NOT NULL AND end_ts IS NOT NULL",
+                tuple(outcome_args),
                 key="v",
                 default=0.0,
             )
 
-            assigned = safe_number(
-                "SELECT COUNT(*) AS n FROM campaign_accounts" + (" WHERE campaign_id = ?" if campaign_id else ""),
-                tuple([campaign_id] if campaign_id else []),
-            )
-            contacted = safe_number(
-                "SELECT COUNT(DISTINCT customer_id) AS n FROM campaign_runs" + (" WHERE campaign_id = ?" if campaign_id else ""),
-                tuple([campaign_id] if campaign_id else []),
-            )
-            retries_pending = safe_number(
-                "SELECT COUNT(*) AS n FROM campaign_accounts WHERE state = 'retry_scheduled'" + (" AND campaign_id = ?" if campaign_id else ""),
-                tuple([campaign_id] if campaign_id else []),
-            )
-
-            task_where = " WHERE 1=1"
-            task_args: List[Any] = []
-            if campaign_id:
-                task_where += " AND campaign_id = ?"
-                task_args.append(campaign_id)
+            if scope_active:
+                assigned = safe_number(
+                    "SELECT COUNT(*) AS n FROM campaign_accounts WHERE " + account_scope,
+                    tuple(account_scope_args),
+                )
+                contacted = safe_number(
+                    "SELECT COUNT(DISTINCT customer_id) AS n FROM campaign_runs WHERE " + run_scope,
+                    tuple(run_scope_args),
+                )
+                retries_pending = safe_number(
+                    "SELECT COUNT(*) AS n FROM campaign_accounts WHERE state = 'retry_scheduled' AND " + account_scope,
+                    tuple(account_scope_args),
+                )
+            else:
+                assigned = safe_number("SELECT COUNT(*) AS n FROM campaign_accounts", ())
+                contacted = safe_number("SELECT COUNT(DISTINCT customer_id) AS n FROM campaign_runs", ())
+                retries_pending = safe_number(
+                    "SELECT COUNT(*) AS n FROM campaign_accounts WHERE state = 'retry_scheduled'",
+                    (),
+                )
 
             bucket_row = safe_row(
                 """
@@ -713,16 +809,16 @@ class SQLiteAuditStore:
             )
             sla_breaches = safe_number(
                 "SELECT COUNT(*) AS n FROM tasks" + task_where + " AND state != 'CLOSED' AND COALESCE(sla_due_at, 0) > 0 AND sla_due_at < ?",
-                tuple(task_args + [now_ts]) if campaign_id else (now_ts,),
+                tuple(task_args + [now_ts]),
             )
 
             queue_rows = safe_rows(
                 "SELECT state, COUNT(*) AS n FROM tasks" + task_where + " GROUP BY state",
                 tuple(task_args),
             )
-            queue_snapshot = {state: 0 for state in ("NEW", "IN_PROGRESS", "PTP", "CALLBACK", "ESCALATED", "CLOSED")}
-            for r in queue_rows:
-                queue_snapshot[str(r["state"] or "NEW")] = int(r["n"] or 0)
+            queue_snapshot = {task_state: 0 for task_state in ("NEW", "IN_PROGRESS", "PTP", "CALLBACK", "ESCALATED", "CLOSED")}
+            for row in queue_rows:
+                queue_snapshot[str(row["state"] or "NEW")] = int(row["n"] or 0)
 
             by_bucket_rows = safe_rows(
                 """
@@ -731,42 +827,54 @@ class SQLiteAuditStore:
                        SUM(CASE WHEN ptp_date IS NOT NULL AND ptp_date != '' THEN 1 ELSE 0 END) AS ptp
                 FROM outcomes
                 """
-                + where
+                + outcome_where
                 + """
                 GROUP BY COALESCE(dpd_bucket, 'unknown')
                 """,
-                tuple(args),
+                tuple(outcome_args),
             )
             ptp_rate_by_bucket = {
-                str(r["bucket"] or "unknown"): {
-                    "total": int(r["total"] or 0),
-                    "ptp": int(r["ptp"] or 0),
-                    "rate": round((int(r["ptp"] or 0) / int(r["total"] or 1)) * 100.0, 2),
+                str(row["bucket"] or "unknown"): {
+                    "total": int(row["total"] or 0),
+                    "ptp": int(row["ptp"] or 0),
+                    "rate": round((int(row["ptp"] or 0) / int(row["total"] or 1)) * 100.0, 2),
                 }
-                for r in by_bucket_rows
+                for row in by_bucket_rows
             }
 
-            conversion_rows = safe_rows(
-                """
-                SELECT campaign_id,
-                       COUNT(*) AS total,
-                       SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END) AS completed
-                FROM campaign_accounts
-                """
-                + (" WHERE campaign_id = ?" if campaign_id else "")
-                + """
-                GROUP BY campaign_id
-                """,
-                tuple([campaign_id] if campaign_id else []),
-            )
+            if scope_active:
+                conversion_rows = safe_rows(
+                    """
+                    SELECT campaign_id,
+                           COUNT(*) AS total,
+                           SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END) AS completed
+                    FROM campaign_accounts
+                    WHERE """
+                    + account_scope
+                    + """
+                    GROUP BY campaign_id
+                    """,
+                    tuple(account_scope_args),
+                )
+            else:
+                conversion_rows = safe_rows(
+                    """
+                    SELECT campaign_id,
+                           COUNT(*) AS total,
+                           SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END) AS completed
+                    FROM campaign_accounts
+                    GROUP BY campaign_id
+                    """,
+                    (),
+                )
             conversion_by_campaign = {
-                str(r["campaign_id"] or ""): {
-                    "total": int(r["total"] or 0),
-                    "completed": int(r["completed"] or 0),
-                    "rate": round((int(r["completed"] or 0) / int(r["total"] or 1)) * 100.0, 2),
+                str(row["campaign_id"] or ""): {
+                    "total": int(row["total"] or 0),
+                    "completed": int(row["completed"] or 0),
+                    "rate": round((int(row["completed"] or 0) / int(row["total"] or 1)) * 100.0, 2),
                 }
-                for r in conversion_rows
-                if r["campaign_id"]
+                for row in conversion_rows
+                if row["campaign_id"]
             }
 
             escalation_rows = safe_rows(
@@ -777,21 +885,21 @@ class SQLiteAuditStore:
                 WHERE e.event_type = 'action'
                   AND json_extract(e.payload_json, '$.name') = 'escalate_ticket'
                 """
-                + (" AND o.campaign_id = ?" if campaign_id else "")
+                + (f" AND {event_scope}" if event_scope else "")
                 + """
                 GROUP BY json_extract(e.payload_json, '$.reason')
                 """,
-                tuple([campaign_id] if campaign_id else []),
+                tuple(event_scope_args),
             )
-            escalations_by_reason = {str(r["reason"] or "unknown"): int(r["n"] or 0) for r in escalation_rows}
+            escalations_by_reason = {str(row["reason"] or "unknown"): int(row["n"] or 0) for row in escalation_rows}
 
             followup_from = "FROM followups f"
             followup_filters: List[str] = []
             followup_args: List[Any] = []
-            if campaign_id:
+            if scope_active:
                 followup_from += " JOIN outcomes o ON o.session_id = f.session_id"
-                followup_filters.append("o.campaign_id = ?")
-                followup_args.append(campaign_id)
+                followup_filters.append(event_scope)
+                followup_args.extend(event_scope_args)
 
             def followup_count(*, extra_filters: List[str], extra_args: List[Any]) -> int:
                 filters = followup_filters + extra_filters
@@ -821,7 +929,7 @@ class SQLiteAuditStore:
                 extra_args=[],
             )
 
-            if campaign_id:
+            if scope_active:
                 ptp_miss_open_alerts = int(
                     safe_number(
                         """
@@ -831,9 +939,22 @@ class SQLiteAuditStore:
                         JOIN outcomes o ON o.session_id = f.session_id
                         WHERE a.type = 'PTP_MISS'
                           AND a.status != 'RESOLVED'
-                          AND o.campaign_id = ?
-                        """,
-                        (campaign_id,),
+                          AND """
+                        + event_scope,
+                        tuple(event_scope_args),
+                    )
+                    or 0
+                )
+                profanity_incidents = int(
+                    safe_number(
+                        """
+                        SELECT COUNT(*) AS n
+                        FROM violations v
+                        JOIN outcomes o ON o.session_id = v.session_id
+                        WHERE v.kind = 'profanity'
+                          AND """
+                        + event_scope,
+                        tuple(event_scope_args),
                     )
                     or 0
                 )
@@ -845,22 +966,6 @@ class SQLiteAuditStore:
                     )
                     or 0
                 )
-
-            if campaign_id:
-                profanity_incidents = int(
-                    safe_number(
-                        """
-                        SELECT COUNT(*) AS n
-                        FROM violations v
-                        JOIN outcomes o ON o.session_id = v.session_id
-                        WHERE v.kind = 'profanity'
-                          AND o.campaign_id = ?
-                        """,
-                        (campaign_id,),
-                    )
-                    or 0
-                )
-            else:
                 profanity_incidents = int(
                     safe_number(
                         "SELECT COUNT(*) AS n FROM violations WHERE kind = 'profanity'",
@@ -902,6 +1007,9 @@ class SQLiteAuditStore:
                 "ptp_miss_count": ptp_miss_count,
                 "ptp_miss_open_alerts": ptp_miss_open_alerts,
                 "profanity_incidents": profanity_incidents,
+                "campaign_id": campaign_id,
+                "state": state,
+                "dpd_bucket": dpd_bucket,
             }
         finally:
             conn.close()
@@ -1767,28 +1875,38 @@ class SQLiteAuditStore:
         finally:
             conn.close()
 
-    def roll_forward_matrix(self, days: int = 30, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+    def roll_forward_matrix(
+        self,
+        days: int = 30,
+        campaign_id: Optional[str] = None,
+        state: Optional[str] = None,
+        dpd_bucket: Optional[str] = None,
+    ) -> Dict[str, Any]:
         from collections import defaultdict
         cutoff = time.time() - (max(1, int(days)) * 86400)
         BUCKETS = ["0", "1-30", "31-60", "61-90", "90+"]
         bucket_order = {b: i for i, b in enumerate(BUCKETS)}
+        scope_active = bool(campaign_id or state or dpd_bucket)
         conn = self._connect()
         try:
-            if campaign_id:
+            if scope_active:
+                snapshot_scope, snapshot_scope_args = self._task_scope_exists(
+                    customer_column="ds.customer_id",
+                    campaign_id=campaign_id,
+                    state=state,
+                    dpd_bucket=dpd_bucket,
+                )
                 rows = conn.execute(
                     """
                     SELECT ds.customer_id, ds.dpd_bucket, ds.snapshot_ts
                     FROM dpd_snapshots ds
                     WHERE ds.snapshot_ts >= ?
-                      AND EXISTS (
-                          SELECT 1
-                          FROM tasks t
-                          WHERE t.customer_id = ds.customer_id
-                            AND t.campaign_id = ?
-                      )
+                      AND """
+                    + snapshot_scope
+                    + """
                     ORDER BY ds.customer_id, ds.snapshot_ts ASC
                     """,
-                    (cutoff, campaign_id),
+                    tuple([cutoff] + snapshot_scope_args),
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -1842,6 +1960,8 @@ class SQLiteAuditStore:
             "cure_rate_pct": round((cure_count / max(1, total_transitions)) * 100.0, 2),
             "window_days": int(days),
             "campaign_id": campaign_id,
+            "state": state,
+            "dpd_bucket": dpd_bucket,
         }
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1870,11 +1990,24 @@ class SQLiteAuditStore:
         finally:
             conn.close()
 
-    def agent_metrics(self, *, campaign_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def agent_metrics(
+        self,
+        *,
+        campaign_id: Optional[str] = None,
+        state: Optional[str] = None,
+        dpd_bucket: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         conn = self._connect()
         try:
-            campaign_where = " AND o.campaign_id = ?" if campaign_id else ""
-            campaign_args = (campaign_id,) if campaign_id else ()
+            scope_where = ""
+            scope_args: List[Any] = []
+            if campaign_id or state or dpd_bucket:
+                scope_where, scope_args = self._task_scope_exists(
+                    customer_column="o.customer_id",
+                    campaign_id=campaign_id,
+                    state=state,
+                    dpd_bucket=dpd_bucket,
+                )
             rows = conn.execute(
                 """
                 SELECT
@@ -1890,12 +2023,12 @@ class SQLiteAuditStore:
                 LEFT JOIN users u ON u.id = o.agent_id OR u.username = o.agent_id
                 WHERE o.agent_id IS NOT NULL
                 """
-                + campaign_where
+                + (f" AND {scope_where}" if scope_where else "")
                 + """
                 GROUP BY COALESCE(o.agent_id, 'unknown')
                 ORDER BY ptp_count DESC
                 """,
-                campaign_args,
+                tuple(scope_args),
             ).fetchall()
             viol_rows = conn.execute(
                 """
@@ -1904,11 +2037,11 @@ class SQLiteAuditStore:
                 JOIN outcomes o ON cv.session_id = o.session_id
                 WHERE o.agent_id IS NOT NULL
                 """
-                + campaign_where
+                + (f" AND {scope_where}" if scope_where else "")
                 + """
                 GROUP BY o.agent_id
                 """,
-                campaign_args,
+                tuple(scope_args),
             ).fetchall()
             viol_by_agent = {r["agent_id"]: int(r["n"] or 0) for r in viol_rows}
             out = []
@@ -1946,8 +2079,15 @@ class SQLiteAuditStore:
         except Exception:
             return []
 
-    def realized_recovery_trend(self, days: int = 30, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+    def realized_recovery_trend(
+        self,
+        days: int = 30,
+        campaign_id: Optional[str] = None,
+        state: Optional[str] = None,
+        dpd_bucket: Optional[str] = None,
+    ) -> Dict[str, Any]:
         cutoff = time.time() - (max(1, int(days)) * 86400)
+        scope_active = bool(campaign_id or state or dpd_bucket)
         conn = self._connect()
         try:
             payment_filter = """
@@ -1955,16 +2095,17 @@ class SQLiteAuditStore:
                   AND COALESCE(updated_at, created_at) >= ?
             """
             payment_args: List[Any] = [cutoff]
-            if campaign_id:
+            if scope_active:
+                payment_scope, payment_scope_args = self._task_scope_exists(
+                    customer_column="payment_intents.customer_id",
+                    campaign_id=campaign_id,
+                    state=state,
+                    dpd_bucket=dpd_bucket,
+                )
                 payment_filter += """
-                  AND EXISTS (
-                      SELECT 1
-                      FROM outcomes o
-                      WHERE o.customer_id = payment_intents.customer_id
-                        AND o.campaign_id = ?
-                  )
-                """
-                payment_args.append(campaign_id)
+                  AND """
+                payment_filter += payment_scope
+                payment_args.extend(payment_scope_args)
 
             daily_rows = self._safe_query(
                 conn,
@@ -1998,29 +2139,47 @@ class SQLiteAuditStore:
                 """
                 + (
                     """
-                  AND EXISTS (
-                      SELECT 1
-                      FROM outcomes ox
-                      WHERE ox.customer_id = pi.customer_id
-                        AND ox.campaign_id = ?
-                  )
-                    """
-                    if campaign_id
+                  AND """
+                    + self._task_scope_exists(
+                        customer_column="pi.customer_id",
+                        campaign_id=campaign_id,
+                        state=state,
+                        dpd_bucket=dpd_bucket,
+                    )[0]
+                    if scope_active
                     else ""
                 )
                 + """
                 ORDER BY ts DESC
                 LIMIT 100
                 """,
-                tuple([cutoff, campaign_id] if campaign_id else [cutoff]),
+                tuple(
+                    [cutoff]
+                    + (
+                        self._task_scope_exists(
+                            customer_column="pi.customer_id",
+                            campaign_id=campaign_id,
+                            state=state,
+                            dpd_bucket=dpd_bucket,
+                        )[1]
+                        if scope_active
+                        else []
+                    )
+                ),
             )
             # Portfolio value: sum of all outstanding principal from loan_accounts.
             portfolio_value = 0.0
-            if campaign_id:
+            if scope_active:
+                task_filters, task_filter_args = self._task_scope_filters(
+                    alias="",
+                    campaign_id=campaign_id,
+                    state=state,
+                    dpd_bucket=dpd_bucket,
+                )
                 pv_rows = self._safe_query(
                     conn,
-                    "SELECT SUM(COALESCE(amount_due, 0)) AS total FROM tasks WHERE campaign_id = ?",
-                    (campaign_id,),
+                    "SELECT SUM(COALESCE(amount_due, 0)) AS total FROM tasks WHERE " + " AND ".join(["1=1", *task_filters]),
+                    tuple(task_filter_args),
                 )
             else:
                 pv_rows = self._safe_query(
@@ -2045,6 +2204,8 @@ class SQLiteAuditStore:
                 "window_days": int(days),
                 "reconciliation": [dict(r) for r in reconciliation],
                 "campaign_id": campaign_id,
+                "state": state,
+                "dpd_bucket": dpd_bucket,
             }
         finally:
             conn.close()
