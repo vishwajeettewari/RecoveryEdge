@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 _DATE_ISO_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 _DATE_DMY_RE = re.compile(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b")
+_ORDINAL_DAY_RE = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b", re.IGNORECASE)
+_DAY_OF_MONTH_RE = re.compile(r"\b(?:on\s+)?(\d{1,2})\s*(?:tarikh|tarih|तारीख|तारिख)\b", re.IGNORECASE)
 _TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.IGNORECASE)
 _NUMBER_WORDS = {
     "zero": 0,
@@ -136,6 +138,21 @@ def _word_to_int(raw: str) -> Optional[int]:
     return None
 
 
+def _next_valid_day_of_month(*, day: int, today: date) -> Optional[date]:
+    if day < 1 or day > 31:
+        return None
+    for month_offset in range(0, 13):
+        year = today.year + ((today.month - 1 + month_offset) // 12)
+        month = ((today.month - 1 + month_offset) % 12) + 1
+        try:
+            candidate = date(year, month, day)
+        except ValueError:
+            continue
+        if candidate >= today:
+            return candidate
+    return None
+
+
 def parse_date_from_text(text: str, *, tz: str, now: Optional[datetime] = None) -> Optional[str]:
     t = _normalize_text(text)
     if not t:
@@ -191,6 +208,14 @@ def parse_date_from_text(text: str, *, tz: str, now: Optional[datetime] = None) 
             idx = _WEEKDAYS[tok]
             days_ahead = (idx - today.weekday()) % 7
             return (today + timedelta(days=days_ahead)).isoformat()
+
+    for pattern in (_ORDINAL_DAY_RE, _DAY_OF_MONTH_RE):
+        m = pattern.search(t)
+        if not m:
+            continue
+        candidate = _next_valid_day_of_month(day=int(m.group(1)), today=today)
+        if candidate:
+            return candidate.isoformat()
 
     m = _DATE_ISO_RE.search(t)
     if m:

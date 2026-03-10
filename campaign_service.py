@@ -181,6 +181,73 @@ class CampaignService:
         finally:
             conn.close()
 
+    def record_contact(self, *, campaign_id: str, customer_id: str, outcome: str = "completed") -> Dict[str, Any]:
+        normalized_outcome = str(outcome or "completed").strip().lower() or "completed"
+        if normalized_outcome not in {"completed", "escalated", "failed", "retry_scheduled"}:
+            normalized_outcome = "completed"
+        conn = self._connect()
+        now = time.time()
+        try:
+            campaign = conn.execute("SELECT * FROM campaigns WHERE campaign_id = ?", (campaign_id,)).fetchone()
+            account = conn.execute(
+                "SELECT * FROM campaign_accounts WHERE campaign_id = ? AND customer_id = ?",
+                (campaign_id, customer_id),
+            ).fetchone()
+            if not campaign or not account:
+                return {"ok": False, "error": "campaign_account_not_found"}
+
+            attempts = max(1, int(account["attempts"] or 0) + 1)
+            if normalized_outcome == "retry_scheduled":
+                retry_delay = max(1, int(campaign["retry_delay_minutes"] or 30)) * 60
+                conn.execute(
+                    """
+                    UPDATE campaign_accounts
+                    SET state = 'retry_scheduled',
+                        attempts = ?,
+                        next_retry_ts = ?,
+                        updated_ts = ?
+                    WHERE campaign_id = ? AND customer_id = ?
+                    """,
+                    (attempts, now + retry_delay, now, campaign_id, customer_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE campaign_accounts
+                    SET state = ?,
+                        attempts = ?,
+                        next_retry_ts = NULL,
+                        updated_ts = ?
+                    WHERE campaign_id = ? AND customer_id = ?
+                    """,
+                    (normalized_outcome, attempts, now, campaign_id, customer_id),
+                )
+
+            conn.execute(
+                """
+                INSERT INTO campaign_runs (campaign_id, customer_id, ts, attempt_no, outcome)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (campaign_id, customer_id, now, attempts, normalized_outcome),
+            )
+
+            remaining = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM campaign_accounts
+                WHERE campaign_id = ? AND state IN ('pending', 'retry_scheduled')
+                """,
+                (campaign_id,),
+            ).fetchone()["n"]
+            next_status = "completed" if int(remaining or 0) == 0 else "active"
+            conn.execute(
+                "UPDATE campaigns SET status = ?, updated_ts = ? WHERE campaign_id = ?",
+                (next_status, now, campaign_id),
+            )
+            conn.commit()
+            return {"ok": True, "attempt_no": attempts, "outcome": normalized_outcome, "campaign_status": next_status}
+        finally:
+            conn.close()
+
     def list_campaigns(self, limit: int = 20) -> List[Dict[str, Any]]:
         conn = self._connect()
         try:

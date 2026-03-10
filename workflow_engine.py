@@ -108,6 +108,32 @@ def _has_callback_intent_text(t_norm: str) -> bool:
     return any(marker in t_norm for marker in markers)
 
 
+def _has_relative_day_without_callback_context(t_norm: str) -> bool:
+    if not _RELATIVE_DAY_PHRASE_RE.search(t_norm):
+        return False
+    return not _has_callback_intent_text(t_norm)
+
+
+def _has_explicit_clock_time_context_text(t_norm: str) -> bool:
+    if not t_norm:
+        return False
+    markers = (
+        ":",
+        " am",
+        " pm",
+        " at ",
+        "between",
+        "around",
+        "time",
+        "baje",
+        "baj",
+        " बजे",
+        " ਵਜੇ",
+        " बजे तक",
+    )
+    return any(marker in f" {t_norm}" for marker in markers)
+
+
 def _is_name_reconfirmation_text(t_norm: str) -> bool:
     if not t_norm:
         return False
@@ -338,6 +364,8 @@ class WorkflowState:
     callback_time: Optional[str] = None
     reference_number: Optional[str] = None
     callback_requested: bool = False
+    ptp_confirmed: bool = False
+    ptp_confirmation_required: bool = False
 
     # hardship / difficulty
     hardship_detected: bool = False
@@ -390,6 +418,7 @@ class WorkflowEngine:
         "ask_payment_made",
         "ask_reference_number",
         "ask_ptp_or_callback",
+        "confirm_ptp",
         "closing",
     )
 
@@ -605,6 +634,18 @@ class WorkflowEngine:
             "cleared the payment",
             "payment cleared",
             "settled payment",
+            "payment kar diya",
+            "payment ho gaya",
+            "bhugtan kar diya",
+            "bhugtan ho gaya",
+            "पेमेंट कर दिया",
+            "पेमेंट हो गया",
+            "पेमेंट हो गयी",
+            "भुगतान कर दिया",
+            "भुगतान हो गया",
+            "भुगतान हो गयी",
+            "पेमेंट किया है",
+            "भुगतान किया है",
         )
         if not any(p in t_norm for p in paid_phrases):
             return False
@@ -616,7 +657,7 @@ class WorkflowEngine:
         raw = (text or "").lower()
         t_norm = _norm(text)
         # Do not reinterpret date commitments like "in 10 days" as callback clock-time.
-        if _RELATIVE_DAY_PHRASE_RE.search(t_norm):
+        if _has_relative_day_without_callback_context(t_norm):
             return None
         # Avoid reading date literals (e.g. 01/02/2026) as callback times unless the
         # user also gives explicit time context.
@@ -641,9 +682,11 @@ class WorkflowEngine:
         parsed = parse_time_from_text(text, allow_implicit=True)
         if not parsed:
             return None
+        has_explicit_meridiem = " am" in f" {t_norm}" or " pm" in f" {t_norm}"
+        if not has_explicit_meridiem and not _has_callback_intent_text(t_norm) and not _has_explicit_clock_time_context_text(t_norm):
+            return None
 
         # If explicit meridiem exists, honor it as-is.
-        has_explicit_meridiem = " am" in f" {t_norm}" or " pm" in f" {t_norm}"
         if validate_callback_time(
             parsed,
             start_hour=self._callback_hours_start,
@@ -671,6 +714,95 @@ class WorkflowEngine:
             ):
                 return pm_candidate
         return None
+
+    def _has_future_payment_commitment_text(self, t_norm: str) -> bool:
+        if not t_norm:
+            return False
+        markers = (
+            "will pay",
+            "i will pay",
+            "i ll pay",
+            "pay by",
+            "pay tomorrow",
+            "pay today",
+            "kar dunga",
+            "kar dungi",
+            "kar denge",
+            "kar paunga",
+            "kar paungi",
+            "कर दूंगा",
+            "कर दूँगा",
+            "कर दूंगी",
+            "कर दूँगी",
+            "कर देंगे",
+            "कर पाऊंगा",
+            "कर पाऊँगा",
+            "कर पाऊंगी",
+            "कर पाएंगे",
+            "कर पाएँगे",
+            "भुगतान करूंगा",
+            "भुगतान करूँगा",
+            "भुगतान करूंगी",
+            "भुगतान करूँगी",
+            "पेमेंट करूंगा",
+            "पेमेंट करूँगा",
+            "पेमेंट करूंगी",
+            "पेमेंट करूँगी",
+            "ਕਰ ਦੇਵਾਂਗਾ",
+            "ਕਰ ਦੇਵਾਂਗੀ",
+            "ਕਰ ਦਿਆਂਗਾ",
+            "ਕਰ ਦਿਆਂਗੀ",
+            "ਭੁਗਤਾਨ ਕਰਾਂਗਾ",
+            "ਭੁਗਤਾਨ ਕਰਾਂਗੀ",
+            "ਪੇਮੈਂਟ ਕਰਾਂਗਾ",
+            "ਪੇਮੈਂਟ ਕਰਾਂਗੀ",
+        )
+        if any(marker in t_norm for marker in markers):
+            return True
+        if _has_relative_day_without_callback_context(t_norm):
+            return _has_payment_commitment_text(t_norm) or bool(re.search(r"\b(?:by|on)\b", t_norm))
+        return False
+
+    def _ptp_commitment_requires_confirmation(self, t_norm: str) -> bool:
+        if not t_norm:
+            return False
+        relative_markers = (
+            "tomorrow",
+            "today",
+            "day after tomorrow",
+            "next week",
+            "next month",
+            "kal",
+            "parso",
+            "आज",
+            "कल",
+            "परसों",
+            "ਅੱਜ",
+            "ਕੱਲ",
+            "ਪਰਸੋਂ",
+        )
+        if any(marker in t_norm for marker in relative_markers):
+            return True
+        if _has_relative_day_without_callback_context(t_norm):
+            return True
+        return False
+
+    def _set_ptp_commitment(self, state: WorkflowState, ptp_date: str, *, user_text_norm: str) -> None:
+        normalized_date = str(ptp_date or "").strip()
+        if not normalized_date:
+            return
+        needs_confirmation = self._ptp_commitment_requires_confirmation(user_text_norm)
+        state.ptp_date = normalized_date
+        state.callback_time = None
+        state.callback_requested = False
+        state.ptp_confirmation_required = needs_confirmation
+        state.ptp_confirmed = not needs_confirmation
+        state.disposition = "ptp_captured" if state.ptp_confirmed else "ptp_pending_confirmation"
+
+    def _clear_ptp_commitment(self, state: WorkflowState) -> None:
+        state.ptp_date = None
+        state.ptp_confirmed = False
+        state.ptp_confirmation_required = False
 
     def compute_next_step(self, state: WorkflowState) -> str:
         if self._enable_advanced:
@@ -736,6 +868,12 @@ class WorkflowEngine:
                 state.last_transition_reason = "retry_exceeded"
                 return "closing"
             return "ask_ptp_or_callback"
+        if state.ptp_date and state.ptp_confirmation_required and not state.ptp_confirmed:
+            if self._retry_exceeded(state, "confirm_ptp"):
+                state.disposition = "ptp_unconfirmed"
+                state.last_transition_reason = "retry_exceeded"
+                return "closing"
+            return "confirm_ptp"
         return "closing"
 
     def update_from_assistant(self, text: str, state: WorkflowState) -> None:
@@ -796,6 +934,8 @@ class WorkflowEngine:
         extracted = extracted or {}
         if extracted.get("reference_number") and not state.reference_number:
             state.reference_number = str(extracted["reference_number"])
+        if extracted.get("payment_status") is not None:
+            state.payment_made = bool(extracted["payment_status"])
         if self._enable_advanced:
             if extracted.get("ptp_date") and not state.ptp_date:
                 parsed = parse_date_from_text(str(extracted["ptp_date"]), tz=self._tz, now=self._now())
@@ -826,7 +966,7 @@ class WorkflowEngine:
                 state.callback_time = str(extracted["callback_time"])
 
         t_norm = _norm(t)
-        if step in {"confirm_awareness", "ask_payment_made", "ask_ptp_or_callback"}:
+        if step in {"confirm_awareness", "ask_payment_made", "ask_reference_number", "ask_ptp_or_callback", "confirm_ptp"}:
             if _is_name_reconfirmation_text(t_norm) or (
                 state.last_transition_reason == "identity_reconfirm_requested"
                 and _is_yes_no_challenge_text(t_norm)
@@ -835,7 +975,7 @@ class WorkflowEngine:
                 state.current_step = step
                 return
 
-        payment_step = step in {"ask_payment_made", "ask_ptp_or_callback"}
+        payment_step = step in {"ask_payment_made", "ask_reference_number", "ask_ptp_or_callback"}
         negative_cls = self._classify_payment_negative(t) if payment_step else None
         if payment_step and negative_cls:
             strength, reason = negative_cls
@@ -855,12 +995,40 @@ class WorkflowEngine:
                 "job loss",
                 "fired",
                 "salary delayed",
+                "salary late",
+                "salary not credited",
+                "salary issue",
+                "salary late hai",
+                "job chali gayi",
+                "job chala gaya",
+                "paisa nahi hai",
+                "paise nahi hai",
+                "paise nahi hain",
+                "ghar me emergency",
+                "ghar mein emergency",
+                "hospital me",
+                "hospital mein",
                 "salary not",
                 "salary issue",
                 "hospital",
                 "medical",
                 "sick",
                 "emergency",
+                "नौकरी चली गई",
+                "नौकरी चला गया",
+                "जॉब चली गई",
+                "जॉब चला गया",
+                "पैसे नहीं हैं",
+                "पैसे नहीं है",
+                "पैसा नहीं है",
+                "सैलरी लेट है",
+                "सैलरी नहीं आई",
+                "अस्पताल में",
+                "हॉस्पिटल में",
+                "बीमार",
+                "इलाज",
+                "घर में इमरजेंसी",
+                "घर में आपातकाल",
             )
             if any(p in t_norm for p in hardship_phrases):
                 state.hardship_detected = True
@@ -911,6 +1079,15 @@ class WorkflowEngine:
                     "not the person",
                     "no such person",
                     "not this person",
+                    "गलत नंबर",
+                    "गलत नम्बर",
+                    "गलत व्यक्ति",
+                    "गलत आदमी",
+                    "मैं वो व्यक्ति नहीं हूँ",
+                    "मैं वह व्यक्ति नहीं हूँ",
+                    "मैं वो आदमी नहीं हूँ",
+                    "यह गलत नंबर है",
+                    "ये गलत नंबर है",
                 )
             ):
                 state.wrong_party = True
@@ -1049,10 +1226,14 @@ class WorkflowEngine:
             mentioned_known_name = bool(
                 name_was_known and extracted_name and _norm(extracted_name) in t_norm
             )
-            if len(extracted_name) >= 2 and not name_was_known:
-                state.identity_confirmed = True
+            if len(extracted_name) >= 2 and not name_was_known and prompt_mode != "confirm_known_name":
+                state.identity_confirmed = False
+                state.identity_prompt_mode = "confirm_known_name"
+                state.last_transition_reason = "identity_name_captured"
             elif (name_was_known or prompt_mode == "confirm_known_name") and (_is_yes(t) or mentioned_known_name):
                 state.identity_confirmed = True
+                state.identity_prompt_mode = "confirm_known_name"
+                state.last_transition_reason = None
             elif self._enable_advanced and _is_no(t):
                 state.identity_denied = True
                 state.wrong_party = True
@@ -1145,8 +1326,42 @@ class WorkflowEngine:
             if _is_awareness_denial_text(t_norm):
                 state.last_transition_reason = "awareness_denied_context"
 
+        if step == "confirm_ptp":
+            if _is_yes(t):
+                state.ptp_confirmed = True
+                state.ptp_confirmation_required = False
+                state.disposition = "ptp_captured"
+                state.last_transition_reason = "ptp_confirmed"
+                state.current_step = self.compute_next_step(state)
+                return
+            if _is_no(t):
+                self._clear_ptp_commitment(state)
+                state.last_transition_reason = "ptp_rejected"
+                state.current_step = "ask_ptp_or_callback"
+                return
+
+        if step in {"ask_payment_made", "ask_reference_number", "ask_ptp_or_callback"} and state.ptp_date and not explicit_paid:
+            self._set_ptp_commitment(state, str(state.ptp_date), user_text_norm=t_norm)
+
+        should_capture_commitment = step == "ask_ptp_or_callback"
+        if (
+            not should_capture_commitment
+            and step in {"ask_payment_made", "ask_reference_number", "confirm_ptp"}
+            and not explicit_paid
+            and not state.reference_number
+            and (
+                bool(state.ptp_date)
+                or bool(state.callback_time)
+                or _has_callback_intent_text(t_norm)
+                or _has_relative_day_without_callback_context(t_norm)
+                or self._has_future_payment_commitment_text(t_norm)
+                or bool(parse_date_from_text(t, tz=self._tz, now=self._now()))
+            )
+        ):
+            should_capture_commitment = True
+
         # PTP/callback capture
-        if step == "ask_ptp_or_callback":
+        if should_capture_commitment:
             if self._enable_advanced:
                 now = self._now()
                 previous_transition_reason = state.last_transition_reason
@@ -1238,7 +1453,7 @@ class WorkflowEngine:
                             min_days=self._ptp_min_days,
                             max_days=self._ptp_max_days,
                         ):
-                            state.ptp_date = parsed_date
+                            self._set_ptp_commitment(state, parsed_date, user_text_norm=t_norm)
                         else:
                             invalid_reason = "invalid_ptp_date"
                 if not state.callback_time and not state.ptp_date and not date_attempted and not callback_checked:
@@ -1246,7 +1461,8 @@ class WorkflowEngine:
                     if parsed_time:
                         state.callback_time = parsed_time
                         state.callback_requested = True
-                    elif parse_time_from_text(t, allow_implicit=True):
+                        self._clear_ptp_commitment(state)
+                    elif _has_explicit_clock_time_context_text(t_norm) and parse_time_from_text(t, allow_implicit=True):
                         invalid_reason = "invalid_callback_time"
                 if invalid_reason:
                     state.last_transition_reason = invalid_reason
@@ -1261,7 +1477,10 @@ class WorkflowEngine:
                 if not state.ptp_date:
                     tn = _norm(t)
                     if any(x in tn for x in ["tomorrow", "next week", "next monday", "today evening", "salary"]):
-                        state.ptp_date = t.strip()
+                        self._set_ptp_commitment(state, t.strip(), user_text_norm=t_norm)
+
+        if step in {"ask_payment_made", "ask_reference_number"} and (state.ptp_date or state.callback_time):
+            state.payment_made = False
 
         # Recompute step
         state.current_step = self.compute_next_step(state)

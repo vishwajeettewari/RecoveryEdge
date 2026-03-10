@@ -110,6 +110,93 @@ class OpsLayerTests(unittest.TestCase):
         out = self.workbench.list_tasks(campaign_id="cmp-sla", page=1, page_size=20)
         self.assertTrue(out["rows"][0]["sla_breach"])
 
+    def test_metrics_surface_buyer_demo_fields(self):
+        created = self.campaign.create_campaign(name="Buyer Demo", customer_ids=["MD1", "MD2"], max_attempts=2, retry_delay_minutes=15, batch_size=25)
+        campaign_id = created["campaign_id"]
+        self.workbench.seed_tasks(
+            campaign_id=campaign_id,
+            portfolio_id="pfl-demo",
+            rows=[
+                {"customer_id": "MD1", "phone": "+919999999971", "amount_due": 1800, "dpd": 14, "customer_name": "Metric One"},
+                {"customer_id": "MD2", "phone": "+919999999972", "amount_due": 2600, "dpd": 42, "customer_name": "Metric Two"},
+            ],
+            actor="seed",
+        )
+        rows = self.workbench.list_tasks(campaign_id=campaign_id, page=1, page_size=20)["rows"]
+        task_by_customer = {row["customer_id"]: row for row in rows}
+        self.workbench.update_task(
+            task_id=task_by_customer["MD1"]["id"],
+            actor="mgr",
+            role="SUPERVISOR",
+            state="PTP",
+            ptp_date="2026-02-10",
+            disposition="ptp_captured",
+        )
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            now = datetime.now().timestamp()
+            conn.execute(
+                "INSERT INTO campaign_runs (campaign_id, customer_id, ts, attempt_no, outcome) VALUES (?, ?, ?, 1, 'completed')",
+                (campaign_id, "MD1", now),
+            )
+            conn.execute(
+                "INSERT INTO campaign_runs (campaign_id, customer_id, ts, attempt_no, outcome) VALUES (?, ?, ?, 1, 'completed')",
+                (campaign_id, "MD2", now),
+            )
+            conn.execute(
+                "UPDATE tasks SET sla_due_at = strftime('%s','now') - 30 WHERE id = ?",
+                (task_by_customer["MD2"]["id"],),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        ptp_date = (datetime.now() - timedelta(days=1)).date().isoformat()
+        rows = self.followups.schedule_ptp_followups(
+            session_id="sess-metrics-demo",
+            customer_id="MD1",
+            ptp_date=ptp_date,
+            phone="+919999999971",
+            channel="whatsapp",
+        )
+        miss = [r for r in rows if r["reminder_type"] == "ptp_t_plus_1_miss"][0]
+        self.followups.mark_status(miss["idempotency_key"], status="missed")
+
+        self.audit.upsert_outcome(
+            session_id="sess-metrics-demo",
+            customer_id="MD1",
+            campaign_id=campaign_id,
+            dpd_bucket="1-30",
+            disposition="ptp_captured",
+            ptp_date=ptp_date,
+        )
+        self.audit.upsert_outcome(
+            session_id="sess-metrics-demo-2",
+            customer_id="MD2",
+            campaign_id=campaign_id,
+            dpd_bucket="31-60",
+            disposition="callback_scheduled",
+            callback_time="15:00",
+        )
+
+        self.alerts.evaluate()
+        metrics = self.audit.metrics(campaign_id=campaign_id)
+
+        self.assertEqual(metrics["accounts_assigned"], 2)
+        self.assertEqual(metrics["accounts_contacted"], 2)
+        self.assertGreater(metrics["contact_rate_pct"], 0)
+        self.assertEqual(metrics["bucket_heatmap"]["1-30"], 1)
+        self.assertEqual(metrics["bucket_heatmap"]["31-60"], 1)
+        self.assertEqual(metrics["queue_snapshot"]["PTP"], 1)
+        self.assertGreater(metrics["expected_recovery_amount"], 0)
+        self.assertGreaterEqual(metrics["sla_breaches"], 1)
+        self.assertGreaterEqual(metrics["followups_due_today"], 1)
+        self.assertGreaterEqual(metrics["followups_completed_today"], 1)
+        self.assertGreater(metrics["followup_discipline_rate_pct"], 0)
+        self.assertGreaterEqual(metrics["ptp_miss_count"], 1)
+        self.assertGreaterEqual(metrics["ptp_miss_open_alerts"], 1)
+
     def test_compliance_block_requires_override(self):
         task_id = self._seed_task(campaign_id="cmp-comp", customer_id="C-COMP")
         out = self.workbench.apply_session_gate_status(

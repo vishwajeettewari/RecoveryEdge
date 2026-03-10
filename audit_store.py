@@ -49,6 +49,8 @@ class SQLiteAuditStore:
                     customer_id TEXT,
                     campaign_id TEXT,
                     dpd_bucket TEXT,
+                    strategy_mode TEXT,
+                    tone_profile TEXT,
                     disposition TEXT,
                     ptp_date TEXT,
                     callback_time TEXT,
@@ -307,6 +309,10 @@ class SQLiteAuditStore:
                 conn.execute("ALTER TABLE outcomes ADD COLUMN campaign_id TEXT")
             if "dpd_bucket" not in cols:
                 conn.execute("ALTER TABLE outcomes ADD COLUMN dpd_bucket TEXT")
+            if "strategy_mode" not in cols:
+                conn.execute("ALTER TABLE outcomes ADD COLUMN strategy_mode TEXT")
+            if "tone_profile" not in cols:
+                conn.execute("ALTER TABLE outcomes ADD COLUMN tone_profile TEXT")
             if "agent_id" not in cols:
                 conn.execute("ALTER TABLE outcomes ADD COLUMN agent_id TEXT")
             if "connect_duration_s" not in cols:
@@ -448,6 +454,8 @@ class SQLiteAuditStore:
         customer_id: Optional[str] = None,
         campaign_id: Optional[str] = None,
         dpd_bucket: Optional[str] = None,
+        strategy_mode: Optional[str] = None,
+        tone_profile: Optional[str] = None,
         disposition: Optional[str] = None,
         ptp_date: Optional[str] = None,
         callback_time: Optional[str] = None,
@@ -459,8 +467,11 @@ class SQLiteAuditStore:
             if row is None:
                 conn.execute(
                     """
-                    INSERT INTO outcomes (session_id, start_ts, end_ts, customer_id, campaign_id, dpd_bucket, disposition, ptp_date, callback_time, escalations)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO outcomes (
+                        session_id, start_ts, end_ts, customer_id, campaign_id, dpd_bucket,
+                        strategy_mode, tone_profile, disposition, ptp_date, callback_time, escalations
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session_id,
@@ -469,6 +480,8 @@ class SQLiteAuditStore:
                         customer_id,
                         campaign_id,
                         dpd_bucket,
+                        strategy_mode,
+                        tone_profile,
                         disposition,
                         ptp_date,
                         callback_time,
@@ -485,6 +498,8 @@ class SQLiteAuditStore:
                         customer_id = COALESCE(?, customer_id),
                         campaign_id = COALESCE(?, campaign_id),
                         dpd_bucket = COALESCE(?, dpd_bucket),
+                        strategy_mode = COALESCE(?, strategy_mode),
+                        tone_profile = COALESCE(?, tone_profile),
                         disposition = COALESCE(?, disposition),
                         ptp_date = COALESCE(?, ptp_date),
                         callback_time = COALESCE(?, callback_time),
@@ -497,6 +512,8 @@ class SQLiteAuditStore:
                         customer_id,
                         campaign_id,
                         dpd_bucket,
+                        strategy_mode,
+                        tone_profile,
                         disposition,
                         ptp_date,
                         callback_time,
@@ -572,6 +589,8 @@ class SQLiteAuditStore:
             tz = ZoneInfo("UTC")
         now = datetime.now(tz)
         day_start = datetime(now.year, now.month, now.day, tzinfo=tz).timestamp()
+        day_end = day_start + 86400
+        now_ts = time.time()
         conn = self._connect()
         try:
             where = ""
@@ -580,56 +599,146 @@ class SQLiteAuditStore:
                 where = " WHERE campaign_id = ?"
                 args = [campaign_id]
 
-            sessions_today = conn.execute(
-                f"SELECT COUNT(DISTINCT session_id) AS n FROM events WHERE ts >= ?",
-                (day_start,),
-            ).fetchone()["n"]
+            def safe_row(sql: str, params: tuple[Any, ...] = ()) -> Optional[sqlite3.Row]:
+                try:
+                    return conn.execute(sql, params).fetchone()
+                except Exception:
+                    return None
 
-            ptp_count = conn.execute(
-                f"SELECT COUNT(*) AS n FROM outcomes{where + (' AND' if where else ' WHERE') if True else ''} ptp_date IS NOT NULL AND ptp_date != ''",
+            def safe_rows(sql: str, params: tuple[Any, ...] = ()) -> List[sqlite3.Row]:
+                try:
+                    return conn.execute(sql, params).fetchall()
+                except Exception:
+                    return []
+
+            def safe_number(sql: str, params: tuple[Any, ...] = (), key: str = "n", default: float = 0.0) -> float:
+                row = safe_row(sql, params)
+                if not row:
+                    return default
+                try:
+                    value = row[key]
+                except Exception:
+                    try:
+                        value = row[0]
+                    except Exception:
+                        return default
+                if value is None:
+                    return default
+                try:
+                    return float(value)
+                except Exception:
+                    return default
+
+            if campaign_id:
+                sessions_today = safe_number(
+                    """
+                    SELECT COUNT(DISTINCT e.session_id) AS n
+                    FROM events e
+                    JOIN outcomes o ON o.session_id = e.session_id
+                    WHERE e.ts >= ? AND o.campaign_id = ?
+                    """,
+                    (day_start, campaign_id),
+                )
+            else:
+                sessions_today = safe_number(
+                    "SELECT COUNT(DISTINCT session_id) AS n FROM events WHERE ts >= ?",
+                    (day_start,),
+                )
+
+            ptp_count = safe_number(
+                f"SELECT COUNT(*) AS n FROM outcomes{where + (' AND' if where else ' WHERE')} ptp_date IS NOT NULL AND ptp_date != ''",
                 tuple(args),
-            ).fetchone()["n"]
-            callback_count = conn.execute(
-                f"SELECT COUNT(*) AS n FROM outcomes{where + (' AND' if where else ' WHERE') if True else ''} callback_time IS NOT NULL AND callback_time != ''",
+            )
+            callback_count = safe_number(
+                f"SELECT COUNT(*) AS n FROM outcomes{where + (' AND' if where else ' WHERE')} callback_time IS NOT NULL AND callback_time != ''",
                 tuple(args),
-            ).fetchone()["n"]
-            escalations = conn.execute(
+            )
+            escalations = safe_number(
                 f"SELECT COALESCE(SUM(escalations), 0) AS n FROM outcomes{where}",
                 tuple(args),
-            ).fetchone()["n"]
-            ended = conn.execute(
-                f"SELECT COUNT(*) AS n FROM outcomes{where + (' AND' if where else ' WHERE') if True else ''} end_ts IS NOT NULL",
+            )
+            ended = safe_number(
+                f"SELECT COUNT(*) AS n FROM outcomes{where + (' AND' if where else ' WHERE')} end_ts IS NOT NULL",
                 tuple(args),
-            ).fetchone()["n"]
-            avg_handle_s = conn.execute(
-                f"SELECT AVG(end_ts - start_ts) AS v FROM outcomes{where + (' AND' if where else ' WHERE') if True else ''} start_ts IS NOT NULL AND end_ts IS NOT NULL",
+            )
+            avg_handle_s = safe_number(
+                f"SELECT AVG(end_ts - start_ts) AS v FROM outcomes{where + (' AND' if where else ' WHERE')} start_ts IS NOT NULL AND end_ts IS NOT NULL",
                 tuple(args),
-            ).fetchone()["v"]
+                key="v",
+                default=0.0,
+            )
 
-            assigned = conn.execute(
+            assigned = safe_number(
                 "SELECT COUNT(*) AS n FROM campaign_accounts" + (" WHERE campaign_id = ?" if campaign_id else ""),
                 tuple([campaign_id] if campaign_id else []),
-            ).fetchone()["n"]
-            contacted = conn.execute(
+            )
+            contacted = safe_number(
                 "SELECT COUNT(DISTINCT customer_id) AS n FROM campaign_runs" + (" WHERE campaign_id = ?" if campaign_id else ""),
                 tuple([campaign_id] if campaign_id else []),
-            ).fetchone()["n"]
-            retries_pending = conn.execute(
+            )
+            retries_pending = safe_number(
                 "SELECT COUNT(*) AS n FROM campaign_accounts WHERE state = 'retry_scheduled'" + (" AND campaign_id = ?" if campaign_id else ""),
                 tuple([campaign_id] if campaign_id else []),
-            ).fetchone()["n"]
+            )
 
-            by_bucket_rows = conn.execute(
+            task_where = " WHERE 1=1"
+            task_args: List[Any] = []
+            if campaign_id:
+                task_where += " AND campaign_id = ?"
+                task_args.append(campaign_id)
+
+            bucket_row = safe_row(
+                """
+                SELECT
+                    SUM(CASE WHEN dpd BETWEEN 1 AND 30 THEN 1 ELSE 0 END) AS b1,
+                    SUM(CASE WHEN dpd BETWEEN 31 AND 60 THEN 1 ELSE 0 END) AS b2,
+                    SUM(CASE WHEN dpd BETWEEN 61 AND 90 THEN 1 ELSE 0 END) AS b3,
+                    SUM(CASE WHEN dpd > 90 THEN 1 ELSE 0 END) AS b4
+                FROM tasks
+                """
+                + task_where,
+                tuple(task_args),
+            )
+            bucket_heatmap = {
+                "1-30": int((bucket_row["b1"] if bucket_row else 0) or 0),
+                "31-60": int((bucket_row["b2"] if bucket_row else 0) or 0),
+                "61-90": int((bucket_row["b3"] if bucket_row else 0) or 0),
+                "90+": int((bucket_row["b4"] if bucket_row else 0) or 0),
+            }
+
+            expected_recovery_amount = safe_number(
+                "SELECT COALESCE(SUM(amount_due), 0) AS v FROM tasks" + task_where + " AND state = 'PTP'",
+                tuple(task_args),
+                key="v",
+            )
+            sla_breaches = safe_number(
+                "SELECT COUNT(*) AS n FROM tasks" + task_where + " AND state != 'CLOSED' AND COALESCE(sla_due_at, 0) > 0 AND sla_due_at < ?",
+                tuple(task_args + [now_ts]) if campaign_id else (now_ts,),
+            )
+
+            queue_rows = safe_rows(
+                "SELECT state, COUNT(*) AS n FROM tasks" + task_where + " GROUP BY state",
+                tuple(task_args),
+            )
+            queue_snapshot = {state: 0 for state in ("NEW", "IN_PROGRESS", "PTP", "CALLBACK", "ESCALATED", "CLOSED")}
+            for r in queue_rows:
+                queue_snapshot[str(r["state"] or "NEW")] = int(r["n"] or 0)
+
+            by_bucket_rows = safe_rows(
                 """
                 SELECT COALESCE(dpd_bucket, 'unknown') AS bucket,
                        COUNT(*) AS total,
                        SUM(CASE WHEN ptp_date IS NOT NULL AND ptp_date != '' THEN 1 ELSE 0 END) AS ptp
                 FROM outcomes
-                GROUP BY COALESCE(dpd_bucket, 'unknown')
                 """
-            ).fetchall()
+                + where
+                + """
+                GROUP BY COALESCE(dpd_bucket, 'unknown')
+                """,
+                tuple(args),
+            )
             ptp_rate_by_bucket = {
-                r["bucket"]: {
+                str(r["bucket"] or "unknown"): {
                     "total": int(r["total"] or 0),
                     "ptp": int(r["ptp"] or 0),
                     "rate": round((int(r["ptp"] or 0) / int(r["total"] or 1)) * 100.0, 2),
@@ -637,34 +746,133 @@ class SQLiteAuditStore:
                 for r in by_bucket_rows
             }
 
-            conversion_rows = conn.execute(
+            conversion_rows = safe_rows(
                 """
                 SELECT campaign_id,
                        COUNT(*) AS total,
                        SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END) AS completed
                 FROM campaign_accounts
-                GROUP BY campaign_id
                 """
-            ).fetchall()
+                + (" WHERE campaign_id = ?" if campaign_id else "")
+                + """
+                GROUP BY campaign_id
+                """,
+                tuple([campaign_id] if campaign_id else []),
+            )
             conversion_by_campaign = {
-                r["campaign_id"]: {
+                str(r["campaign_id"] or ""): {
                     "total": int(r["total"] or 0),
                     "completed": int(r["completed"] or 0),
                     "rate": round((int(r["completed"] or 0) / int(r["total"] or 1)) * 100.0, 2),
                 }
                 for r in conversion_rows
+                if r["campaign_id"]
             }
 
-            escalation_rows = conn.execute(
+            escalation_rows = safe_rows(
                 """
-                SELECT json_extract(payload_json, '$.reason') AS reason, COUNT(*) AS n
-                FROM events
-                WHERE event_type = 'action'
-                  AND json_extract(payload_json, '$.name') = 'escalate_ticket'
-                GROUP BY json_extract(payload_json, '$.reason')
+                SELECT json_extract(e.payload_json, '$.reason') AS reason, COUNT(*) AS n
+                FROM events e
+                JOIN outcomes o ON o.session_id = e.session_id
+                WHERE e.event_type = 'action'
+                  AND json_extract(e.payload_json, '$.name') = 'escalate_ticket'
                 """
-            ).fetchall()
+                + (" AND o.campaign_id = ?" if campaign_id else "")
+                + """
+                GROUP BY json_extract(e.payload_json, '$.reason')
+                """,
+                tuple([campaign_id] if campaign_id else []),
+            )
             escalations_by_reason = {str(r["reason"] or "unknown"): int(r["n"] or 0) for r in escalation_rows}
+
+            followup_from = "FROM followups f"
+            followup_filters: List[str] = []
+            followup_args: List[Any] = []
+            if campaign_id:
+                followup_from += " JOIN outcomes o ON o.session_id = f.session_id"
+                followup_filters.append("o.campaign_id = ?")
+                followup_args.append(campaign_id)
+
+            def followup_count(*, extra_filters: List[str], extra_args: List[Any]) -> int:
+                filters = followup_filters + extra_filters
+                where_sql = f" WHERE {' AND '.join(filters)}" if filters else ""
+                return int(
+                    safe_number(
+                        f"SELECT COUNT(*) AS n {followup_from}{where_sql}",
+                        tuple(followup_args + extra_args),
+                    )
+                    or 0
+                )
+
+            followups_scheduled_total = followup_count(extra_filters=[], extra_args=[])
+            followups_pending_total = followup_count(extra_filters=["f.status = 'scheduled'"], extra_args=[])
+            followups_sent_total = followup_count(extra_filters=["f.status = 'sent'"], extra_args=[])
+            followups_missed_total = followup_count(extra_filters=["f.status = 'missed'"], extra_args=[])
+            followups_due_today = followup_count(
+                extra_filters=["f.scheduled_ts >= ?", "f.scheduled_ts < ?"],
+                extra_args=[day_start, day_end],
+            )
+            followups_completed_today = followup_count(
+                extra_filters=["f.scheduled_ts >= ?", "f.scheduled_ts < ?", "f.status IN ('sent', 'missed')"],
+                extra_args=[day_start, day_end],
+            )
+            ptp_miss_count = followup_count(
+                extra_filters=["f.reminder_type = 'ptp_t_plus_1_miss'", "f.status IN ('sent', 'missed')"],
+                extra_args=[],
+            )
+
+            if campaign_id:
+                ptp_miss_open_alerts = int(
+                    safe_number(
+                        """
+                        SELECT COUNT(*) AS n
+                        FROM alerts a
+                        JOIN followups f ON f.idempotency_key = a.entity_id
+                        JOIN outcomes o ON o.session_id = f.session_id
+                        WHERE a.type = 'PTP_MISS'
+                          AND a.status != 'RESOLVED'
+                          AND o.campaign_id = ?
+                        """,
+                        (campaign_id,),
+                    )
+                    or 0
+                )
+            else:
+                ptp_miss_open_alerts = int(
+                    safe_number(
+                        "SELECT COUNT(*) AS n FROM alerts WHERE type = 'PTP_MISS' AND status != 'RESOLVED'",
+                        (),
+                    )
+                    or 0
+                )
+
+            if campaign_id:
+                profanity_incidents = int(
+                    safe_number(
+                        """
+                        SELECT COUNT(*) AS n
+                        FROM violations v
+                        JOIN outcomes o ON o.session_id = v.session_id
+                        WHERE v.kind = 'profanity'
+                          AND o.campaign_id = ?
+                        """,
+                        (campaign_id,),
+                    )
+                    or 0
+                )
+            else:
+                profanity_incidents = int(
+                    safe_number(
+                        "SELECT COUNT(*) AS n FROM violations WHERE kind = 'profanity'",
+                        (),
+                    )
+                    or 0
+                )
+
+            contact_rate_pct = round((float(contacted or 0) / max(1.0, float(assigned or 0))) * 100.0, 2) if assigned else 0.0
+            followup_discipline_rate_pct = (
+                round((followups_completed_today / max(1, followups_due_today)) * 100.0, 2) if followups_due_today else 0.0
+            )
 
             return {
                 "sessions_today": int(sessions_today or 0),
@@ -672,13 +880,28 @@ class SQLiteAuditStore:
                 "callback_count": int(callback_count or 0),
                 "escalations": int(escalations or 0),
                 "ended_sessions": int(ended or 0),
-                "avg_handle_seconds": float(avg_handle_s) if avg_handle_s is not None else None,
+                "avg_handle_seconds": float(avg_handle_s) if avg_handle_s else None,
                 "accounts_assigned": int(assigned or 0),
                 "accounts_contacted": int(contacted or 0),
+                "contact_rate_pct": contact_rate_pct,
                 "retries_pending": int(retries_pending or 0),
+                "bucket_heatmap": bucket_heatmap,
+                "expected_recovery_amount": float(expected_recovery_amount or 0.0),
+                "sla_breaches": int(sla_breaches or 0),
+                "queue_snapshot": queue_snapshot,
                 "ptp_rate_by_bucket": ptp_rate_by_bucket,
                 "conversion_by_campaign": conversion_by_campaign,
                 "escalations_by_reason": escalations_by_reason,
+                "followups_scheduled_total": followups_scheduled_total,
+                "followups_pending_total": followups_pending_total,
+                "followups_sent_total": followups_sent_total,
+                "followups_missed_total": followups_missed_total,
+                "followups_due_today": followups_due_today,
+                "followups_completed_today": followups_completed_today,
+                "followup_discipline_rate_pct": followup_discipline_rate_pct,
+                "ptp_miss_count": ptp_miss_count,
+                "ptp_miss_open_alerts": ptp_miss_open_alerts,
+                "profanity_incidents": profanity_incidents,
             }
         finally:
             conn.close()
@@ -1544,21 +1767,40 @@ class SQLiteAuditStore:
         finally:
             conn.close()
 
-    def roll_forward_matrix(self, days: int = 30) -> Dict[str, Any]:
+    def roll_forward_matrix(self, days: int = 30, campaign_id: Optional[str] = None) -> Dict[str, Any]:
         from collections import defaultdict
         cutoff = time.time() - (max(1, int(days)) * 86400)
         BUCKETS = ["0", "1-30", "31-60", "61-90", "90+"]
         bucket_order = {b: i for i, b in enumerate(BUCKETS)}
         conn = self._connect()
         try:
-            rows = conn.execute(
-                """
-                SELECT customer_id, dpd_bucket, snapshot_ts
-                FROM dpd_snapshots WHERE snapshot_ts >= ?
-                ORDER BY customer_id, snapshot_ts ASC
-                """,
-                (cutoff,),
-            ).fetchall()
+            if campaign_id:
+                rows = conn.execute(
+                    """
+                    SELECT ds.customer_id, ds.dpd_bucket, ds.snapshot_ts
+                    FROM dpd_snapshots ds
+                    WHERE ds.snapshot_ts >= ?
+                      AND EXISTS (
+                          SELECT 1
+                          FROM tasks t
+                          WHERE t.customer_id = ds.customer_id
+                            AND t.campaign_id = ?
+                      )
+                    ORDER BY ds.customer_id, ds.snapshot_ts ASC
+                    """,
+                    (cutoff, campaign_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT customer_id, dpd_bucket, snapshot_ts
+                    FROM dpd_snapshots WHERE snapshot_ts >= ?
+                    ORDER BY customer_id, snapshot_ts ASC
+                    """,
+                    (cutoff,),
+                ).fetchall()
+        except Exception:
+            rows = []
         finally:
             conn.close()
 
@@ -1569,6 +1811,8 @@ class SQLiteAuditStore:
         matrix: Dict[str, Dict[str, int]] = {b: {b2: 0 for b2 in BUCKETS} for b in BUCKETS}
         total_transitions = 0
         roll_forward_count = 0
+        rollback_count = 0
+        cure_count = 0
         for snaps in cust_snaps.values():
             if len(snaps) < 2:
                 continue
@@ -1581,6 +1825,10 @@ class SQLiteAuditStore:
             total_transitions += 1
             if bucket_order.get(to_b, 0) > bucket_order.get(from_b, 0):
                 roll_forward_count += 1
+            elif bucket_order.get(to_b, 0) < bucket_order.get(from_b, 0):
+                rollback_count += 1
+            if from_b != "0" and to_b == "0":
+                cure_count += 1
 
         return {
             "buckets": BUCKETS,
@@ -1588,7 +1836,12 @@ class SQLiteAuditStore:
             "total_transitions": total_transitions,
             "roll_forward_count": roll_forward_count,
             "roll_forward_pct": round((roll_forward_count / max(1, total_transitions)) * 100.0, 2),
+            "rollback_count": rollback_count,
+            "rollback_pct": round((rollback_count / max(1, total_transitions)) * 100.0, 2),
+            "cure_count": cure_count,
+            "cure_rate_pct": round((cure_count / max(1, total_transitions)) * 100.0, 2),
             "window_days": int(days),
+            "campaign_id": campaign_id,
         }
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1617,9 +1870,11 @@ class SQLiteAuditStore:
         finally:
             conn.close()
 
-    def agent_metrics(self) -> List[Dict[str, Any]]:
+    def agent_metrics(self, *, campaign_id: Optional[str] = None) -> List[Dict[str, Any]]:
         conn = self._connect()
         try:
+            campaign_where = " AND o.campaign_id = ?" if campaign_id else ""
+            campaign_args = (campaign_id,) if campaign_id else ()
             rows = conn.execute(
                 """
                 SELECT
@@ -1634,9 +1889,13 @@ class SQLiteAuditStore:
                 FROM outcomes o
                 LEFT JOIN users u ON u.id = o.agent_id OR u.username = o.agent_id
                 WHERE o.agent_id IS NOT NULL
+                """
+                + campaign_where
+                + """
                 GROUP BY COALESCE(o.agent_id, 'unknown')
                 ORDER BY ptp_count DESC
-                """
+                """,
+                campaign_args,
             ).fetchall()
             viol_rows = conn.execute(
                 """
@@ -1644,8 +1903,12 @@ class SQLiteAuditStore:
                 FROM compliance_violations cv
                 JOIN outcomes o ON cv.session_id = o.session_id
                 WHERE o.agent_id IS NOT NULL
-                GROUP BY o.agent_id
                 """
+                + campaign_where
+                + """
+                GROUP BY o.agent_id
+                """,
+                campaign_args,
             ).fetchall()
             viol_by_agent = {r["agent_id"]: int(r["n"] or 0) for r in viol_rows}
             out = []
@@ -1683,10 +1946,26 @@ class SQLiteAuditStore:
         except Exception:
             return []
 
-    def realized_recovery_trend(self, days: int = 30) -> Dict[str, Any]:
+    def realized_recovery_trend(self, days: int = 30, campaign_id: Optional[str] = None) -> Dict[str, Any]:
         cutoff = time.time() - (max(1, int(days)) * 86400)
         conn = self._connect()
         try:
+            payment_filter = """
+                WHERE status = 'SUCCEEDED'
+                  AND COALESCE(updated_at, created_at) >= ?
+            """
+            payment_args: List[Any] = [cutoff]
+            if campaign_id:
+                payment_filter += """
+                  AND EXISTS (
+                      SELECT 1
+                      FROM outcomes o
+                      WHERE o.customer_id = payment_intents.customer_id
+                        AND o.campaign_id = ?
+                  )
+                """
+                payment_args.append(campaign_id)
+
             daily_rows = self._safe_query(
                 conn,
                 """
@@ -1695,12 +1974,13 @@ class SQLiteAuditStore:
                     SUM(amount) AS day_amount,
                     COUNT(*) AS day_count
                 FROM payment_intents
-                WHERE status = 'SUCCEEDED'
-                  AND COALESCE(updated_at, created_at) >= ?
+                """
+                + payment_filter
+                + """
                 GROUP BY day
                 ORDER BY day ASC
                 """,
-                (cutoff,),
+                tuple(payment_args),
             )
             total_recovered = sum(float(r["day_amount"] or 0) for r in daily_rows)
             reconciliation = self._safe_query(
@@ -1715,18 +1995,39 @@ class SQLiteAuditStore:
                 LEFT JOIN outcomes o ON o.customer_id = pi.customer_id
                 WHERE pi.status = 'SUCCEEDED'
                   AND COALESCE(pi.updated_at, pi.created_at) >= ?
+                """
+                + (
+                    """
+                  AND EXISTS (
+                      SELECT 1
+                      FROM outcomes ox
+                      WHERE ox.customer_id = pi.customer_id
+                        AND ox.campaign_id = ?
+                  )
+                    """
+                    if campaign_id
+                    else ""
+                )
+                + """
                 ORDER BY ts DESC
                 LIMIT 100
                 """,
-                (cutoff,),
+                tuple([cutoff, campaign_id] if campaign_id else [cutoff]),
             )
             # Portfolio value: sum of all outstanding principal from loan_accounts.
             portfolio_value = 0.0
-            pv_rows = self._safe_query(
-                conn,
-                "SELECT SUM(COALESCE(principal_outstanding, 0)) AS total FROM loan_accounts",
-                (),
-            )
+            if campaign_id:
+                pv_rows = self._safe_query(
+                    conn,
+                    "SELECT SUM(COALESCE(amount_due, 0)) AS total FROM tasks WHERE campaign_id = ?",
+                    (campaign_id,),
+                )
+            else:
+                pv_rows = self._safe_query(
+                    conn,
+                    "SELECT SUM(COALESCE(principal_outstanding, 0)) AS total FROM loan_accounts",
+                    (),
+                )
             if pv_rows:
                 portfolio_value = float(pv_rows[0]["total"] or 0)
             recovery_rate_pct = (
@@ -1743,6 +2044,7 @@ class SQLiteAuditStore:
                 "recovery_rate_pct": recovery_rate_pct,
                 "window_days": int(days),
                 "reconciliation": [dict(r) for r in reconciliation],
+                "campaign_id": campaign_id,
             }
         finally:
             conn.close()

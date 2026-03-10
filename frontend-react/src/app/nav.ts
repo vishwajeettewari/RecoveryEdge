@@ -1,5 +1,6 @@
 import {
   Bell,
+  Bot,
   BriefcaseBusiness,
   ChartColumnBig,
   CircleUserRound,
@@ -8,6 +9,7 @@ import {
   LifeBuoy,
   PhoneCall,
   Plug,
+  Radar,
   Settings,
   Users,
 } from "lucide-react";
@@ -25,7 +27,9 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { to: "/app/dashboard", label: "Home / Overview", icon: Gauge, permission: PERMS.VIEW_DASHBOARD },
+  { to: "/app/dashboard", label: "Operations Overview", icon: Gauge, permission: PERMS.VIEW_DASHBOARD },
+  { to: "/app/risk-portfolio", label: "Risk & Portfolio", icon: Radar, permission: PERMS.VIEW_DASHBOARD },
+  { to: "/app/control", label: "Operations Copilot", icon: Bot, permission: PERMS.VIEW_DASHBOARD },
   { to: "/app/portfolio", label: "Portfolios & Campaigns", icon: FileUp, permission: PERMS.PORTFOLIO_MANAGE },
   { to: "/app/workbench", label: "Workbench (Supervisor)", icon: BriefcaseBusiness, permission: PERMS.WORKBENCH_VIEW },
   { to: "/app/calling", label: "Calling Console (Agent)", icon: PhoneCall, permission: PERMS.WORKBENCH_VIEW },
@@ -57,7 +61,7 @@ export function canShowNavItem(opts: {
   if (item.permission && !permissions.includes(item.permission)) {
     return false;
   }
-  if ((role || "").toUpperCase() === ROLES.CALLING_AGENT && item.to === "/app/dashboard") {
+  if ((role || "").toUpperCase() === ROLES.CALLING_AGENT && (item.to === "/app/dashboard" || item.to === "/app/risk-portfolio")) {
     return false;
   }
   return true;

@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NBFC Recovery OS</title>
+    <script>
+      (() => {
+        const stored = window.localStorage.getItem("te-color-scheme");
+        const resolved =
+          stored === "light" || stored === "dark"
+            ? stored
+            : window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        document.documentElement.setAttribute("data-mantine-color-scheme", resolved);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -274,8 +274,12 @@ export function CallingConsolePage() {
   const [testCallBusy, setTestCallBusy] = useState(false);
   const [testCallSid, setTestCallSid] = useState("");
   const [testCallStatus, setTestCallStatus] = useState("");
+  const [telephonySessionId, setTelephonySessionId] = useState("");
   const [selectedLanguage, setSelectedLanguage] = useState("hi-IN");
   const [selectedVoice, setSelectedVoice] = useState("shubh");
+  const [ptpDateDraft, setPtpDateDraft] = useState("");
+  const [callbackDateDraft, setCallbackDateDraft] = useState(dayjs().format("YYYY-MM-DD"));
+  const [callbackTimeDraft, setCallbackTimeDraft] = useState("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -325,6 +329,12 @@ export function CallingConsolePage() {
     }
   }, [tasksQuery.data, selectedTaskId]);
 
+  useEffect(() => {
+    setTelephonySessionId("");
+    setTestCallSid("");
+    setTestCallStatus("");
+  }, [selectedTaskId]);
+
   const assignedQueue = useMemo(() => {
     const rows = tasksQuery.data?.rows || [];
     let out = rows;
@@ -358,10 +368,22 @@ export function CallingConsolePage() {
   }, [sessionByCustomer, task?.customer_id]);
 
   useEffect(() => {
-    if (linkedSession?.step) {
-      setWorkflowStep(String(linkedSession.step));
+    const nextStep = linkedSession?.current_step || linkedSession?.step;
+    if (nextStep) {
+      setWorkflowStep(String(nextStep));
     }
-  }, [linkedSession?.step]);
+  }, [linkedSession?.current_step, linkedSession?.step]);
+
+  useEffect(() => {
+    setPtpDateDraft(String(task?.ptp_date || linkedSession?.ptp_date || ""));
+    if (task?.callback_at) {
+      setCallbackDateDraft(dayjs.unix(Number(task.callback_at)).format("YYYY-MM-DD"));
+      setCallbackTimeDraft(dayjs.unix(Number(task.callback_at)).format("HH:mm"));
+      return;
+    }
+    setCallbackDateDraft(dayjs().format("YYYY-MM-DD"));
+    setCallbackTimeDraft(String(linkedSession?.callback_time || ""));
+  }, [task?.id, task?.ptp_date, task?.callback_at, linkedSession?.ptp_date, linkedSession?.callback_time]);
 
   const timelineQuery = useQuery({
     queryKey: ["calling_timeline", linkedSession?.session_id],
@@ -933,6 +955,7 @@ export function CallingConsolePage() {
     try {
       const out = await apiFetch<{
         ok: boolean;
+        session_id?: string;
         result?: { call_sid?: string; call_status?: string; delivery_status?: string; normalized_to?: string };
       }>("/api/telephony/agent_call", {
         method: "POST",
@@ -950,6 +973,7 @@ export function CallingConsolePage() {
       });
       const sid = String(out.result?.call_sid || "");
       const status = String(out.result?.call_status || out.result?.delivery_status || "queued");
+      setTelephonySessionId(String(out.session_id || ""));
       setTestCallSid(sid);
       setTestCallStatus(status);
       notifications.show({
@@ -973,20 +997,45 @@ export function CallingConsolePage() {
           ? "callback_scheduled"
           : action === "PAID"
             ? "paid"
-            : action === "ESCALATE"
+          : action === "ESCALATE"
               ? "escalated"
               : "closed";
     try {
-      await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/update`, {
+      const body: Record<string, unknown> = { state, disposition, notes: `action:${action}` };
+      const outcomeSessionId = linkedSession?.session_id || telephonySessionId;
+      if (outcomeSessionId) {
+        body.session_id = outcomeSessionId;
+      }
+      if (action === "PTP") {
+        const ptpDate = (ptpDateDraft || linkedSession?.ptp_date || task.ptp_date || "").trim();
+        if (!ptpDate) {
+          notifications.show({ color: "orange", message: "Enter or confirm a PTP date before saving the commitment." });
+          return;
+        }
+        body.ptp_date = ptpDate;
+      }
+      if (action === "CALLBACK") {
+        const callbackTime = (callbackTimeDraft || linkedSession?.callback_time || "").trim();
+        if (!callbackTime) {
+          notifications.show({ color: "orange", message: "Enter a callback time before saving the follow-up." });
+          return;
+        }
+        body.callback_at = `${callbackDateDraft || dayjs().format("YYYY-MM-DD")}T${callbackTime}`;
+      }
+      const out = await apiFetch<{ followups?: Array<unknown> }>(`/api/tasks/${encodeURIComponent(task.id)}/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ state, disposition, notes: `action:${action}` }),
+        body: JSON.stringify(body),
       });
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "set_disposition", disposition }));
       }
-      notifications.show({ color: "green", message: `Task marked ${action}` });
+      const scheduled = Array.isArray(out.followups) ? out.followups.length : 0;
+      notifications.show({
+        color: "green",
+        message: action === "PTP" && scheduled ? `Task marked ${action}. ${scheduled} follow-ups scheduled.` : `Task marked ${action}`,
+      });
       await refresh();
     } catch (err) {
       notifications.show({ color: "red", message: String(err) });
@@ -999,7 +1048,7 @@ export function CallingConsolePage() {
   const complianceScore = complianceEntries.length
     ? Math.round((complianceEntries.filter(([, ok]) => ok).length / complianceEntries.length) * 100)
     : 100;
-  const currentStep = workflowStep || linkedSession?.step || "consent";
+  const currentStep = workflowStep || linkedSession?.current_step || linkedSession?.step || "consent";
   const currentFlowIndex = flowIndexForStep(currentStep);
   const strategyCues = callCues(strategy, currentStep, task?.compliance_block);
   const selectedQueueIndex = selectedTaskId ? assignedQueue.findIndex((row) => row.id === selectedTaskId) + 1 : 0;
@@ -1008,6 +1057,12 @@ export function CallingConsolePage() {
   const activeSessionCount = (sessionsQuery.data?.sessions || []).filter((session) => session.customer_id && sessionByCustomer.has(String(session.customer_id))).length;
   const currentStageMeta = CALL_FLOW[Math.min(currentFlowIndex, CALL_FLOW.length - 1)] || CALL_FLOW[0];
   const selectedBorrowerLabel = task?.customer_name || task?.customer_id || "No borrower selected";
+  const trackedPtpDate = ptpDateDraft || task?.ptp_date || linkedSession?.ptp_date || "";
+  const trackedCallbackTime =
+    callbackTimeDraft ||
+    (task?.callback_at ? dayjs.unix(Number(task.callback_at)).format("HH:mm") : "") ||
+    linkedSession?.callback_time ||
+    "";
   const timelineItems = useMemo(() => {
     const liveTimeline =
       (timelineQuery.data?.timeline || [])
@@ -1020,6 +1075,18 @@ export function CallingConsolePage() {
         })) || [];
     return liveTimeline.length ? liveTimeline : timelineFromTaskEvents(task?.events);
   }, [task?.events, timelineQuery.data]);
+  const ui = {
+    heading: "var(--te-calling-heading)",
+    body: "var(--te-calling-body)",
+    soft: "var(--te-calling-soft)",
+    muted: "var(--te-calling-muted)",
+    label: "var(--te-calling-label)",
+    icon: "var(--te-calling-icon)",
+    success: "var(--te-calling-success)",
+    danger: "var(--te-calling-danger)",
+    warning: "var(--te-calling-warning)",
+    warningText: "var(--te-calling-warning-text)",
+  } as const;
 
   const toolbar = (
     <Paper className="te-calling-toolbar" p="lg" radius="xl" withBorder>
@@ -1052,7 +1119,7 @@ export function CallingConsolePage() {
 
           <Group className="te-calling-toolbar-actions" wrap="wrap">
             <Paper className="te-calling-toggle">
-              <Text size="sm" fw={600} c="#d8e4ff">
+              <Text size="sm" fw={600} c={ui.body}>
                 Auto refresh
               </Text>
               <Switch checked={autoRefresh} onChange={(e) => setAutoRefresh(e.currentTarget.checked)} color="teal" />
@@ -1103,7 +1170,7 @@ export function CallingConsolePage() {
               <Group justify="space-between" wrap="wrap">
                 <div>
                   <Text className="te-calling-section-label">Phone Agent Call</Text>
-                  <Title order={4} c="#f5f9ff">
+                  <Title order={4} c={ui.heading}>
                     Direct phone bridge
                   </Title>
                 </div>
@@ -1111,7 +1178,7 @@ export function CallingConsolePage() {
                   Twilio + Sarvam Live
                 </Badge>
               </Group>
-              <Text c="#c7d7f2" size="sm">
+              <Text c={ui.body} size="sm">
                 Keep outbound testing available even before task assignment.
               </Text>
               <TextInput
@@ -1131,7 +1198,7 @@ export function CallingConsolePage() {
               {testCallSid ? (
                 <Paper className="te-calling-inline-note" p="sm" radius="lg">
                   <Group justify="space-between" wrap="wrap">
-                    <Text size="sm" c="#e8f2ff">
+                    <Text size="sm" c={ui.heading}>
                       Last call SID: {testCallSid}
                     </Text>
                     <Badge color="teal" variant="light">
@@ -1156,7 +1223,7 @@ export function CallingConsolePage() {
                   "Use the phone bridge only for supervised outbound checks.",
                 ].map((item) => (
                   <Paper key={item} className="te-calling-brief-card" p="md" radius="xl">
-                    <Text size="sm" c="#d8e4ff">
+                    <Text size="sm" c={ui.body}>
                       {item}
                     </Text>
                   </Paper>
@@ -1179,7 +1246,7 @@ export function CallingConsolePage() {
             <Group justify="space-between" wrap="wrap">
               <div>
                 <Text className="te-calling-section-label">Assigned Queue</Text>
-                <Title order={4} c="#f5f9ff">
+                <Title order={4} c={ui.heading}>
                   Ready to dial
                 </Title>
               </div>
@@ -1200,7 +1267,7 @@ export function CallingConsolePage() {
 
             <Group justify="space-between" wrap="wrap">
               <Switch checked={slaOnly} onChange={(e) => setSlaOnly(e.currentTarget.checked)} label="Only SLA breaches" color="red" />
-              <Text size="xs" c="#8ea8cc">
+              <Text size="xs" c={ui.muted}>
                 {assignedQueue.length} borrower{assignedQueue.length === 1 ? "" : "s"}
               </Text>
             </Group>
@@ -1221,10 +1288,10 @@ export function CallingConsolePage() {
                     >
                       <Group justify="space-between" align="flex-start" wrap="nowrap">
                         <Stack gap={2}>
-                          <Text fw={700} c="#f5f9ff">
+                          <Text fw={700} c={ui.heading}>
                             {row.customer_name || row.customer_id}
                           </Text>
-                          <Text size="xs" c="#8ea8cc">
+                          <Text size="xs" c={ui.muted}>
                             {row.customer_id}
                           </Text>
                         </Stack>
@@ -1240,34 +1307,34 @@ export function CallingConsolePage() {
 
                       <div className="te-calling-queue-meta">
                         <div>
-                          <Text size="10px" tt="uppercase" c="#6f8db9" fw={700}>
+                          <Text size="10px" tt="uppercase" c={ui.label} fw={700}>
                             Amount
                           </Text>
-                          <Text size="sm" fw={700} c="#f5f9ff">
+                          <Text size="sm" fw={700} c={ui.heading}>
                             {fmtAmount(row.amount_due)}
                           </Text>
                         </div>
                         <div>
-                          <Text size="10px" tt="uppercase" c="#6f8db9" fw={700}>
+                          <Text size="10px" tt="uppercase" c={ui.label} fw={700}>
                             DPD
                           </Text>
-                          <Text size="sm" fw={700} c="#f5f9ff">
+                          <Text size="sm" fw={700} c={ui.heading}>
                             {row.dpd ?? "-"}
                           </Text>
                         </div>
                         <div>
-                          <Text size="10px" tt="uppercase" c="#6f8db9" fw={700}>
+                          <Text size="10px" tt="uppercase" c={ui.label} fw={700}>
                             Owner
                           </Text>
-                          <Text size="sm" c="#d9e5fb">
+                          <Text size="sm" c={ui.body}>
                             {row.owner || "Unassigned"}
                           </Text>
                         </div>
                         <div>
-                          <Text size="10px" tt="uppercase" c="#6f8db9" fw={700}>
+                          <Text size="10px" tt="uppercase" c={ui.label} fw={700}>
                             Last action
                           </Text>
-                          <Text size="sm" c="#d9e5fb">
+                          <Text size="sm" c={ui.body}>
                             {row.last_action_at ? dayjs.unix(row.last_action_at).format("DD MMM HH:mm") : "Fresh"}
                           </Text>
                         </div>
@@ -1291,7 +1358,7 @@ export function CallingConsolePage() {
 
                 {!assignedQueue.length ? (
                   <Paper className="te-calling-inline-note" p="md" radius="xl">
-                    <Text size="sm" c="#d8e4ff">
+                    <Text size="sm" c={ui.body}>
                       No rows match the current filter set.
                     </Text>
                   </Paper>
@@ -1306,7 +1373,7 @@ export function CallingConsolePage() {
             <Group justify="space-between" wrap="wrap">
               <div>
                 <Text className="te-calling-section-label">Live Call Engine</Text>
-                <Title order={4} c="#f5f9ff">
+                <Title order={4} c={ui.heading}>
                   Voice orchestration deck
                 </Title>
               </div>
@@ -1322,7 +1389,7 @@ export function CallingConsolePage() {
                   <Group justify="space-between" wrap="wrap">
                     <div>
                       <Text className="te-calling-section-label">Call Journey</Text>
-                      <Text size="sm" fw={700} c="#f5f9ff">
+                      <Text size="sm" fw={700} c={ui.heading}>
                         Stage {currentFlowIndex + 1} of {CALL_FLOW.length} • {currentStageMeta.label}
                       </Text>
                     </div>
@@ -1347,47 +1414,66 @@ export function CallingConsolePage() {
 
                 <div className="te-calling-summary-grid">
                   <Paper className="te-calling-brief-card" p="md" radius="xl">
-                    <Text size="10px" tt="uppercase" fw={700} c="#6f8db9">
+                    <Text size="10px" tt="uppercase" fw={700} c={ui.label}>
                       Borrower
                     </Text>
-                    <Text fw={700} c="#f5f9ff">
+                    <Text fw={700} c={ui.heading}>
                       {selectedBorrowerLabel}
                     </Text>
-                    <Text size="sm" c="#b2c7e7">
+                    <Text size="sm" c={ui.body}>
                       {task.phone || "No phone recorded"}
                     </Text>
                   </Paper>
                   <Paper className="te-calling-brief-card" p="md" radius="xl">
-                    <Text size="10px" tt="uppercase" fw={700} c="#6f8db9">
+                    <Text size="10px" tt="uppercase" fw={700} c={ui.label}>
                       Exposure
                     </Text>
-                    <Text fw={700} c="#f5f9ff">
+                    <Text fw={700} c={ui.heading}>
                       {fmtAmount(task.amount_due)}
                     </Text>
-                    <Text size="sm" c="#b2c7e7">
+                    <Text size="sm" c={ui.body}>
                       DPD {task.dpd ?? "-"} • {humanizeSlug(task.state)}
                     </Text>
                   </Paper>
                   <Paper className="te-calling-brief-card" p="md" radius="xl">
-                    <Text size="10px" tt="uppercase" fw={700} c="#6f8db9">
+                    <Text size="10px" tt="uppercase" fw={700} c={ui.label}>
                       Campaign
                     </Text>
-                    <Text fw={700} c="#f5f9ff">
+                    <Text fw={700} c={ui.heading}>
                       {task.campaign_id || "-"}
                     </Text>
-                    <Text size="sm" c="#b2c7e7">
+                    <Text size="sm" c={ui.body}>
                       Owner {task.owner || "Unassigned"}
                     </Text>
                   </Paper>
                   <Paper className="te-calling-brief-card" p="md" radius="xl">
-                    <Text size="10px" tt="uppercase" fw={700} c="#6f8db9">
+                    <Text size="10px" tt="uppercase" fw={700} c={ui.label}>
                       Session
                     </Text>
-                    <Text fw={700} c="#f5f9ff">
+                    <Text fw={700} c={ui.heading}>
                       {linkedSession?.session_id ? linkedSession.session_id.slice(-10) : "Awaiting connection"}
                     </Text>
-                    <Text size="sm" c="#b2c7e7">
+                    <Text size="sm" c={ui.body}>
                       {voiceHeadline(voiceStatus)}
+                    </Text>
+                  </Paper>
+                  <Paper className="te-calling-brief-card" p="md" radius="xl">
+                    <Text size="10px" tt="uppercase" fw={700} c={ui.label}>
+                      Commitment
+                    </Text>
+                    <Text fw={700} c={ui.heading}>
+                      {trackedPtpDate
+                        ? dayjs(trackedPtpDate).format("DD MMM YYYY")
+                        : trackedCallbackTime
+                          ? `Callback ${trackedCallbackTime}`
+                          : "Awaiting commitment"}
+                    </Text>
+                    <Text size="sm" c={ui.body}>
+                      {trackedPtpDate
+                        ? "PTP tracked for follow-up scheduling"
+                        : trackedCallbackTime
+                          ? `Next touch on ${callbackDateDraft || dayjs().format("YYYY-MM-DD")}`
+                          : "Capture PTP date or callback to lock next action"}
                     </Text>
                   </Paper>
                 </div>
@@ -1437,11 +1523,11 @@ export function CallingConsolePage() {
                   <Paper className="te-calling-meter te-calling-meter--compact" p="md" radius="xl">
                     <Stack gap={8}>
                       <Text className="te-calling-section-label">Mic Level</Text>
-                      <Text size="sm" c="#d8e4ff">
+                      <Text size="sm" c={ui.body}>
                         {Math.round(meterLevel * 100)}% input power
                       </Text>
                       <Group gap="xs" wrap="nowrap">
-                        <Waves size={16} color="#8dd8cc" />
+                        <Waves size={16} color={ui.success} />
                         <Progress value={Math.round(meterLevel * 100)} color="teal" radius="xl" style={{ flex: 1 }} />
                       </Group>
                     </Stack>
@@ -1453,7 +1539,7 @@ export function CallingConsolePage() {
                     <Group justify="space-between" wrap="wrap">
                       <div>
                         <Text className="te-calling-section-label">Conversation Log</Text>
-                        <Title order={5} c="#f5f9ff">
+                        <Title order={5} c={ui.heading}>
                           Live transcript
                         </Title>
                       </div>
@@ -1466,7 +1552,7 @@ export function CallingConsolePage() {
                       <Stack gap="sm">
                         {!liveLog.length ? (
                           <Paper className="te-calling-inline-note" p="md" radius="xl">
-                            <Text size="sm" c="#d8e4ff">
+                            <Text size="sm" c={ui.body}>
                               Start call to begin live transcript capture.
                             </Text>
                           </Paper>
@@ -1474,28 +1560,28 @@ export function CallingConsolePage() {
                         {liveLog.map((message) => (
                           <Paper key={message.id} className="te-transcript-bubble" data-who={message.who} p="md" radius="xl">
                             <Group justify="space-between" wrap="wrap">
-                              <Text size="xs" fw={700} c="#d9e5fb">
+                              <Text size="xs" fw={700} c={ui.body}>
                                 {message.who === "agent" ? "Agent" : message.who === "user" ? "Borrower" : "System"}
                               </Text>
-                              <Text size="10px" c="#8aa4cb">
+                              <Text size="10px" c={ui.muted}>
                                 {dayjs(message.ts).format("HH:mm:ss")}
                               </Text>
                             </Group>
-                            <Text size="sm" c="#f5f9ff" mt={6}>
+                            <Text size="sm" c={ui.heading} mt={6}>
                               {message.text}
                             </Text>
                           </Paper>
                         ))}
                         {userPartial ? (
                           <Paper className="te-transcript-partial" data-who="user" p="sm" radius="xl">
-                            <Text size="sm" c="#c7f5de">
+                            <Text size="sm" c={ui.success}>
                               Borrower (partial): {userPartial}
                             </Text>
                           </Paper>
                         ) : null}
                         {agentPartial ? (
                           <Paper className="te-transcript-partial" data-who="agent" p="sm" radius="xl">
-                            <Text size="sm" c="#d5e6ff">
+                            <Text size="sm" c={ui.body}>
                               Agent (partial): {agentPartial}
                             </Text>
                           </Paper>
@@ -1515,6 +1601,48 @@ export function CallingConsolePage() {
                         Add Note
                       </Button>
                     </Group>
+                  </Stack>
+                </Paper>
+
+                <Paper className="te-calling-inline-note" p="md" radius="xl">
+                  <Stack gap="sm">
+                    <Group justify="space-between" wrap="wrap">
+                      <div>
+                        <Text className="te-calling-section-label">Commitment Capture</Text>
+                        <Title order={5} c={ui.heading}>
+                          Save the promise or callback from the desk
+                        </Title>
+                      </div>
+                      <Badge variant="outline" color="blue">
+                        Ops Proof
+                      </Badge>
+                    </Group>
+                    <SimpleGrid cols={{ base: 1, md: 3 }}>
+                      <TextInput
+                        label="PTP date"
+                        type="date"
+                        value={ptpDateDraft}
+                        onChange={(e) => setPtpDateDraft(e.currentTarget.value)}
+                        description="Required before using Capture PTP."
+                      />
+                      <TextInput
+                        label="Callback date"
+                        type="date"
+                        value={callbackDateDraft}
+                        onChange={(e) => setCallbackDateDraft(e.currentTarget.value)}
+                        description="Used when a borrower asks for a follow-up."
+                      />
+                      <TextInput
+                        label="Callback time"
+                        type="time"
+                        value={callbackTimeDraft}
+                        onChange={(e) => setCallbackTimeDraft(e.currentTarget.value)}
+                        description="Required before using Callback."
+                      />
+                    </SimpleGrid>
+                    <Text size="xs" c={ui.muted}>
+                      Saving a PTP from here creates the commitment trail the dashboard, alerts, and follow-up metrics depend on.
+                    </Text>
                   </Stack>
                 </Paper>
 
@@ -1540,7 +1668,7 @@ export function CallingConsolePage() {
               </>
             ) : (
               <Paper className="te-calling-inline-note" p="md" radius="xl">
-                <Text size="sm" c="#d8e4ff">
+                <Text size="sm" c={ui.body}>
                   Select a task from the queue to load the borrower brief and voice controls.
                 </Text>
               </Paper>
@@ -1554,7 +1682,7 @@ export function CallingConsolePage() {
               <Group justify="space-between" wrap="wrap">
                 <div>
                   <Text className="te-calling-section-label">Phone Agent Call</Text>
-                  <Title order={4} c="#f5f9ff">
+                  <Title order={4} c={ui.heading}>
                     Supervised outbound bridge
                   </Title>
                 </div>
@@ -1582,21 +1710,21 @@ export function CallingConsolePage() {
                 </Button>
               </div>
 
-              <Text size="xs" c="#bdd0eb">
+              <Text size="xs" c={ui.body}>
                 This connects the phone call to your live Sarvam collections agent (two-way voice streaming).
               </Text>
 
               {testCallSid ? (
                 <Paper className="te-calling-inline-note" p="sm" radius="lg">
                   <Group justify="space-between" wrap="wrap">
-                    <Text size="sm" c="#f5f9ff">
+                    <Text size="sm" c={ui.heading}>
                       Last call SID
                     </Text>
                     <Badge color="teal" variant="light">
                       {humanizeSlug(testCallStatus || "queued")}
                     </Badge>
                   </Group>
-                  <Text size="xs" c="#dde9ff" mt={6}>
+                  <Text size="xs" c={ui.body} mt={6}>
                     {testCallSid}
                   </Text>
                 </Paper>
@@ -1609,7 +1737,7 @@ export function CallingConsolePage() {
               <Group justify="space-between" wrap="wrap">
                 <div>
                   <Text className="te-calling-section-label">Guidance & Compliance</Text>
-                  <Title order={4} c="#f5f9ff">
+                  <Title order={4} c={ui.heading}>
                     Borrower brief
                   </Title>
                 </div>
@@ -1621,17 +1749,17 @@ export function CallingConsolePage() {
               <Paper className="te-calling-brief-card" p="md" radius="xl">
                 <Group justify="space-between" wrap="nowrap">
                   <div>
-                    <Text size="10px" tt="uppercase" fw={700} c="#6f8db9">
+                    <Text size="10px" tt="uppercase" fw={700} c={ui.label}>
                       Strategy
                     </Text>
-                    <Text fw={700} c="#f5f9ff">
+                    <Text fw={700} c={ui.heading}>
                       {humanizeSlug(strategy.mode)}
                     </Text>
-                    <Text size="sm" c="#d9e5fb" mt={4}>
+                    <Text size="sm" c={ui.body} mt={4}>
                       {strategy.tone}
                     </Text>
                   </div>
-                  <ArrowRight size={16} color="#8aa4cb" />
+                  <ArrowRight size={16} color={ui.icon} />
                 </Group>
               </Paper>
 
@@ -1642,7 +1770,7 @@ export function CallingConsolePage() {
                       <Badge color="blue" variant="light">
                         {idx + 1}
                       </Badge>
-                      <Text size="sm" c="#d8e4ff">
+                      <Text size="sm" c={ui.body}>
                         {cue}
                       </Text>
                     </Group>
@@ -1653,10 +1781,10 @@ export function CallingConsolePage() {
               <Paper className="te-calling-meter te-calling-meter--compact" p="md" radius="xl">
                 <Stack gap={8}>
                   <Group justify="space-between">
-                    <Text size="sm" fw={700} c="#f5f9ff">
+                    <Text size="sm" fw={700} c={ui.heading}>
                       Compliance score
                     </Text>
-                    <Text size="sm" c="#8fd9cc">
+                    <Text size="sm" c={ui.success}>
                       {complianceScore}%
                     </Text>
                   </Group>
@@ -1669,8 +1797,8 @@ export function CallingConsolePage() {
                   <Paper key={key} className="te-compliance-row" p="sm" radius="xl">
                     <Group justify="space-between" wrap="nowrap">
                       <Group gap={8} wrap="nowrap">
-                        {ok ? <CheckCheck size={15} color="#2dd4bf" /> : <AlertTriangle size={15} color="#f9738f" />}
-                        <Text size="sm" c="#f5f9ff">
+                        {ok ? <CheckCheck size={15} color={ui.success} /> : <AlertTriangle size={15} color={ui.danger} />}
+                        <Text size="sm" c={ui.heading}>
                           {humanizeSlug(key)}
                         </Text>
                       </Group>
@@ -1685,8 +1813,8 @@ export function CallingConsolePage() {
               {task?.compliance_block ? (
                 <Paper className="te-calling-alert" p="md" radius="xl">
                   <Group align="flex-start" wrap="nowrap">
-                    <Shield size={16} color="#ffcc66" />
-                    <Text size="sm" c="#ffe7a8">
+                    <Shield size={16} color={ui.warning} />
+                    <Text size="sm" c={ui.warningText}>
                       Compliance block active. Supervisor override is required before moving beyond the approved script.
                     </Text>
                   </Group>
@@ -1700,27 +1828,27 @@ export function CallingConsolePage() {
               <Group justify="space-between" wrap="wrap">
                 <div>
                   <Text className="te-calling-section-label">Timeline</Text>
-                  <Title order={4} c="#f5f9ff">
+                  <Title order={4} c={ui.heading}>
                     Session activity
                   </Title>
                 </div>
-                <Timer size={16} color="#8aa4cb" />
+                <Timer size={16} color={ui.icon} />
               </Group>
 
               <SimpleGrid cols={2} spacing="sm">
                 <Paper className="te-calling-inline-note" p="md" radius="xl">
-                  <Text size="10px" tt="uppercase" fw={700} c="#6f8db9">
+                  <Text size="10px" tt="uppercase" fw={700} c={ui.label}>
                     SLA
                   </Text>
-                  <Text fw={700} c="#f5f9ff">
+                  <Text fw={700} c={ui.heading}>
                     {task?.sla_breach ? "Breached" : "Within SLA"}
                   </Text>
                 </Paper>
                 <Paper className="te-calling-inline-note" p="md" radius="xl">
-                  <Text size="10px" tt="uppercase" fw={700} c="#6f8db9">
+                  <Text size="10px" tt="uppercase" fw={700} c={ui.label}>
                     Last action
                   </Text>
-                  <Text fw={700} c="#f5f9ff">
+                  <Text fw={700} c={ui.heading}>
                     {task?.last_action_at ? dayjs.unix(task.last_action_at).format("DD MMM HH:mm") : "No recent action"}
                   </Text>
                 </Paper>
@@ -1733,14 +1861,14 @@ export function CallingConsolePage() {
                       <Paper key={`${event.ts}-${event.type}-${idx}`} className="te-timeline-row" p="md" radius="xl">
                         <Group justify="space-between" align="flex-start" wrap="nowrap">
                           <Stack gap={4}>
-                            <Text fw={700} c="#f5f9ff">
+                            <Text fw={700} c={ui.heading}>
                               {humanizeSlug(event.type)}
                             </Text>
-                            <Text size="sm" c="#a8bfdf">
+                            <Text size="sm" c={ui.body}>
                               {event.note && event.note !== "Not Set" ? event.note : "Workflow event recorded"}
                             </Text>
                           </Stack>
-                          <Text size="xs" c="#8aa4cb" ta="right">
+                          <Text size="xs" c={ui.muted} ta="right">
                             {event.ts ? dayjs.unix(event.ts).format("DD MMM HH:mm:ss") : "-"}
                           </Text>
                         </Group>
@@ -1748,7 +1876,7 @@ export function CallingConsolePage() {
                     ))
                   ) : (
                     <Paper className="te-calling-inline-note" p="md" radius="xl">
-                      <Text size="sm" c="#d8e4ff">
+                      <Text size="sm" c={ui.body}>
                         No session timeline yet. Start the call to stream workflow activity here.
                       </Text>
                     </Paper>

@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TuringEdge Recovery OS | Figma Demo Storyboard</title>
+    <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+    <style>
+      :root {
+        --bg: #06101c;
+        --bg-soft: #0d1b2d;
+        --panel: rgba(11, 24, 40, 0.82);
+        --panel-strong: rgba(7, 16, 29, 0.92);
+        --stroke: rgba(153, 188, 255, 0.2);
+        --stroke-strong: rgba(153, 188, 255, 0.35);
+        --text: #eef4ff;
+        --muted: #a8bbd6;
+        --accent: #72a7ff;
+        --accent-2: #67efd2;
+        --accent-3: #ffbf7d;
+        --shadow: 0 28px 90px rgba(0, 0, 0, 0.4);
+        --radius-xl: 40px;
+        --radius-lg: 28px;
+        --radius-md: 20px;
+        --page-width: 1760px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "SF Pro Display", "Segoe UI", "Helvetica Neue", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 15% 15%, rgba(114, 167, 255, 0.28), transparent 30%),
+          radial-gradient(circle at 85% 12%, rgba(103, 239, 210, 0.18), transparent 24%),
+          radial-gradient(circle at 80% 78%, rgba(255, 191, 125, 0.14), transparent 24%),
+          linear-gradient(180deg, #07111d 0%, #08131f 36%, #091521 68%, #040b14 100%);
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+        background-size: 56px 56px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.42), rgba(0, 0, 0, 0));
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .page {
+        width: min(calc(100vw - 64px), var(--page-width));
+        margin: 0 auto;
+        padding: 40px 0 120px;
+      }
+
+      .masthead {
+        position: sticky;
+        top: 18px;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 34px;
+        padding: 18px 24px;
+        border: 1px solid var(--stroke);
+        border-radius: 999px;
+        background: rgba(6, 14, 24, 0.74);
+        backdrop-filter: blur(18px) saturate(145%);
+        box-shadow: 0 16px 46px rgba(0, 0, 0, 0.22);
+      }
+
+      .brand {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .brand strong {
+        font-size: 17px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .brand span,
+      .masthead-note,
+      .scene-note,
+      .voiceover,
+      .motion {
+        color: var(--muted);
+      }
+
+      .timeline {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(120px, 1fr));
+        gap: 8px;
+        width: min(100%, 760px);
+      }
+
+      .timeline div {
+        padding: 10px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.04);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .timeline strong {
+        display: block;
+        margin-top: 6px;
+        color: var(--text);
+        font-size: 13px;
+        letter-spacing: 0.02em;
+        text-transform: none;
+      }
+
+      .section-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        border-radius: 999px;
+        border: 1px solid rgba(114, 167, 255, 0.26);
+        background: rgba(114, 167, 255, 0.09);
+        color: #dbe8ff;
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+
+      .section-label::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--accent-2), var(--accent));
+        box-shadow: 0 0 18px rgba(103, 239, 210, 0.75);
+      }
+
+      .hero-copy {
+        margin: 22px 0 0;
+        max-width: 920px;
+      }
+
+      .hero-copy h1,
+      .scene-copy h2,
+      .library-copy h2 {
+        margin: 0;
+        line-height: 0.92;
+        font-weight: 800;
+        letter-spacing: -0.045em;
+      }
+
+      .hero-copy h1 {
+        font-size: clamp(62px, 8vw, 118px);
+      }
+
+      .hero-copy p,
+      .scene-copy p,
+      .library-copy p {
+        margin: 20px 0 0;
+        max-width: 760px;
+        color: var(--muted);
+        font-size: 22px;
+        line-height: 1.5;
+      }
+
+      .scene-list {
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+        margin-top: 30px;
+      }
+
+      .scene {
+        position: relative;
+        display: grid;
+        grid-template-columns: 420px minmax(0, 1fr);
+        gap: 28px;
+        min-height: 1020px;
+        padding: 34px;
+        border-radius: var(--radius-xl);
+        border: 1px solid var(--stroke);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)),
+          var(--panel);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .scene::after {
+        content: "";
+        position: absolute;
+        inset: auto -140px -220px auto;
+        width: 520px;
+        height: 520px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(103, 239, 210, 0.22), transparent 68%);
+        pointer-events: none;
+      }
+
+      .scene-copy {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .scene-copy h2,
+      .library-copy h2 {
+        font-size: clamp(44px, 4vw, 72px);
+      }
+
+      .scene-meta {
+        display: grid;
+        gap: 14px;
+        margin-top: auto;
+      }
+
+      .meta-card {
+        padding: 18px 20px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--radius-md);
+        background: rgba(255, 255, 255, 0.045);
+      }
+
+      .meta-card strong {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--text);
+        font-size: 13px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .meta-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.55;
+      }
+
+      .shot-stage {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        gap: 18px;
+      }
+
+      .shot-stage--single {
+        grid-template-rows: 1fr auto;
+      }
+
+      .shot-stage--split {
+        grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+        align-items: start;
+      }
+
+      .shot-stage--mosaic {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-auto-rows: 1fr;
+      }
+
+      .panel {
+        position: relative;
+        overflow: hidden;
+        border-radius: 30px;
+        border: 1px solid var(--stroke-strong);
+        background: rgba(255, 255, 255, 0.04);
+        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
+      }
+
+      .panel img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .panel-label {
+        position: absolute;
+        top: 18px;
+        left: 18px;
+        padding: 9px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(4, 10, 18, 0.72);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .panel-callout {
+        position: absolute;
+        right: 22px;
+        bottom: 22px;
+        max-width: 300px;
+        padding: 18px 20px;
+        border-radius: 22px;
+        background: rgba(4, 11, 20, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        backdrop-filter: blur(14px);
+      }
+
+      .panel-callout strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 12px;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        color: var(--accent-2);
+      }
+
+      .panel-callout p {
+        margin: 0;
+        font-size: 16px;
+        line-height: 1.45;
+        color: var(--text);
+      }
+
+      .tall {
+        min-height: 760px;
+      }
+
+      .wide {
+        min-height: 760px;
+      }
+
+      .inset-stack {
+        display: grid;
+        gap: 18px;
+      }
+
+      .bullet-strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .bullet-card {
+        padding: 22px 24px;
+        border-radius: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.045);
+      }
+
+      .bullet-card strong {
+        display: block;
+        margin-bottom: 10px;
+        color: var(--accent-3);
+        font-size: 13px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .bullet-card p {
+        margin: 0;
+        color: var(--text);
+        font-size: 17px;
+        line-height: 1.5;
+      }
+
+      .library {
+        margin-top: 40px;
+        padding: 38px;
+        border-radius: var(--radius-xl);
+        border: 1px solid var(--stroke);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015)),
+          var(--panel-strong);
+        box-shadow: var(--shadow);
+      }
+
+      .library-copy {
+        max-width: 960px;
+      }
+
+      .library-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 28px;
+      }
+
+      .library-item {
+        overflow: hidden;
+        border-radius: 26px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .library-item img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        object-fit: cover;
+      }
+
+      .library-item div {
+        padding: 18px 18px 20px;
+      }
+
+      .library-item strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 18px;
+      }
+
+      .library-item span {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.45;
+      }
+
+      .footer {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 22px;
+        margin-top: 28px;
+      }
+
+      .footer .meta-card {
+        min-height: 180px;
+      }
+
+      @media (max-width: 1280px) {
+        .page {
+          width: min(calc(100vw - 32px), var(--page-width));
+          padding-top: 24px;
+        }
+
+        .masthead {
+          position: static;
+          border-radius: 28px;
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .timeline {
+          width: 100%;
+        }
+
+        .scene {
+          grid-template-columns: 1fr;
+          min-height: auto;
+        }
+
+        .shot-stage--split,
+        .shot-stage--mosaic,
+        .library-grid,
+        .bullet-strip,
+        .footer {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="masthead">
+        <div class="brand">
+          <strong>TuringEdge Recovery OS</strong>
+          <span>Figma-ready product marketing storyboard and design library</span>
+        </div>
+        <div class="timeline">
+          <div>0:00-0:10<strong>Control-layer hook</strong></div>
+          <div>0:10-0:22<strong>Portfolio launch</strong></div>
+          <div>0:22-0:36<strong>Commitment capture</strong></div>
+          <div>0:36-0:51<strong>Follow-through proof</strong></div>
+          <div>0:51-1:08<strong>Copilot guidance</strong></div>
+          <div>1:08-1:20<strong>Governed close</strong></div>
+        </div>
+      </section>
+
+      <div class="section-label">Client Video Sequence</div>
+      <div class="hero-copy">
+        <h1>Turn a collections demo into a client-ready story that feels like a product film.</h1>
+        <p>
+          This storyboard uses the verified TuringEdge screenshot pack to create a 60-90 second
+          marketing sequence. Each scene is already framed for a 16:9 video edit, with headline
+          copy, motion cues, and voiceover guidance baked in.
+        </p>
+      </div>
+
+      <section class="scene-list">
+        <article class="scene">
+          <div class="scene-copy">
+            <div class="section-label">Scene 01 · Product Hook</div>
+            <h2>Give collections leaders a control layer, not another dashboard.</h2>
+            <p>
+              Open on the Operations Copilot to establish a sharper category position immediately.
+              The product is framed as a decision system for early-bucket collections, grounded in
+              evidence and ready for governed execution.
+            </p>
+            <div class="scene-meta">
+              <div class="meta-card">
+                <strong>Voiceover</strong>
+                <p class="voiceover">
+                  "TuringEdge Recovery OS gives collections teams one control layer from portfolio
+                  upload to disciplined follow-through, containment, and governed action."
+                </p>
+              </div>
+              <div class="meta-card">
+                <strong>Motion Cue</strong>
+                <p class="motion">
+                  Slow push into the hero screen, then drift the dashboard inset upward as the
+                  category line lands.
+                </p>
+              </div>
+              <div class="meta-card">
+                <strong>On-screen copy</strong>
+                <p>Agentic operations copilot for early-bucket collections.</p>
+              </div>
+            </div>
+          </div>
+          <div class="shot-stage shot-stage--split">
+            <div class="panel wide">
+              <span class="panel-label">Hero Surface</span>
+              <img src="./screenshots/03-ops-copilot-hero.png" alt="Operations Copilot hero screen" />
+              <div class="panel-callout">
+                <strong>Positioning</strong>
+                <p>Turn collections metrics into decisions the team can actually run.</p>
+              </div>
+            </div>
+            <div class="inset-stack">
+              <div class="panel tall">
+                <span class="panel-label">Control Room Inset</span>
+                <img src="./screenshots/02-overview-control-room.png" alt="Overview control room" />
+              </div>
+              <div class="bullet-strip">
+                <div class="bullet-card">
+                  <strong>Different</strong>
+                  <p>Grounded recommendations, not a generic AI chat shell.</p>
+                </div>
+                <div class="bullet-card">
+                  <strong>Operational</strong>
+                  <p>Built around follow-through discipline after the promise.</p>
+                </div>
+                <div class="bullet-card">
+                  <strong>Governed</strong>
+                  <p>Ready for action, approvals, and enterprise control.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="scene">
+          <div class="scene-copy">
+            <div class="section-label">Scene 02 · Portfolio Intake</div>
+            <h2>A spreadsheet becomes a live operating campaign in minutes.</h2>
+            <p>
+              This scene compresses the ingest story so the buyer understands there is no fragile
+              handoff between uploaded data and an actionable campaign.
+            </p>
+            <div class="scene-meta">
+              <div class="meta-card">
+                <strong>Voiceover</strong>
+                <p class="voiceover">
+                  "A portfolio sheet comes in, fields are mapped, validated, and launched into an
+                  operational campaign with retry and throttle controls already in place."
+                </p>
+              </div>
+              <div class="meta-card">
+                <strong>Motion Cue</strong>
+                <p class="motion">
+                  Start on the upload flow, then animate callout labels for field mapping, preview,
+                  and launch settings.
+                </p>
+              </div>
+              <div class="meta-card">
+                <strong>On-screen copy</strong>
+                <p>Upload. Validate. Launch. Start the queue with confidence.</p>
+              </div>
+            </div>
+          </div>
+          <div class="shot-stage shot-stage--single">
+            <div class="panel wide">
+              <span class="panel-label">Portfolio Operationalization</span>
+              <img src="./screenshots/05-portfolio-launch.png" alt="Portfolio upload and launch" />
+              <div class="panel-callout">
+                <strong>Why it matters</strong>
+                <p>The lender’s sheet becomes a governed campaign instead of a manual ops project.</p>
+              </div>
+            </div>
+            <div class="bullet-strip">
+              <div class="bullet-card">
+                <strong>Input</strong>
+                <p>CSV or XLSX upload with required field mapping and exclusions.</p>
+              </div>
+              <div class="bullet-card">
+                <strong>Readiness</strong>
+                <p>Preview, validation, and launch controls tighten setup quality before execution.</p>
+              </div>
+              <div class="bullet-card">
+                <strong>Result</strong>
+                <p>The queue is operationalized without switching tools or rebuilding data context.</p>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="scene">
+          <div class="scene-copy">
+            <div class="section-label">Scene 03 · Promise Capture</div>
+            <h2>Capture the promise where the work actually happens.</h2>
+            <p>
+              The calling experience is the bridge between agent execution and management control.
+              Keep the live console prominent and use the commitment capture panel as the emotional
+              proof point for disciplined follow-up.
+            </p>
+            <div class="scene-meta">
+              <div class="meta-card">
+                <strong>Voiceover</strong>
+                <p class="voiceover">
+                  "Agents capture PTPs and callbacks directly from the desk, creating a reliable
+                  commitment trail the rest of the system can enforce."
+                </p>
+              </div>
+              <div class="meta-card">
+                <strong>Motion Cue</strong>
+                <p class="motion">
+                  Pan across the live desk, then punch in on the commitment inset to land the PTP
+                  and callback controls.
+                </p>
+              </div>
+              <div class="meta-card">
+                <strong>On-screen copy</strong>
+                <p>Borrower brief. Live desk. PTP date. Callback timing. Disposition capture.</p>
+              </div>
+            </div>
+          </div>
+          <div class="shot-stage shot-stage--split">
+            <div class="panel wide">
+              <span class="panel-label">Calling Console</span>
+              <img src="./screenshots/07-calling-console-live.png" alt="Calling console live view" />
+            </div>
+            <div class="inset-stack">
+              <div class="panel tall">
+                <span class="panel-label">Commitment Capture</span>
+                <img
+                  src="./screenshots/08-calling-console-commitment.png"
+                  alt="Calling console commitment capture"
+                />
+                <div class="panel-callout">
+                  <strong>Buyer angle</strong>
+                  <p>Consistency after the promise is where early-bucket outcomes are won or lost.</p>
+                </div>
+              </div>
+              <div class="bullet-strip">
+                <div class="bullet-card">
+                  <strong>Agent UX</strong>
+                  <p>The context needed for the call and the close sits in one workspace.</p>
+                </div>
+                <div class="bullet-card">
+                  <strong>Data Trail</strong>
+                  <p>Every PTP and callback becomes structured operational evidence.</p>
+                </div>
+                <div class="bullet-card">
+                  <strong>Follow-up</strong>
+                  <p>The downstream alerts and control room metrics have a clean signal to watch.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="scene">
+          <div class="scene-copy">
+            <div class="section-label">Scene 04 · Follow-through Proof</div>
+            <h2>Prove discipline after the promise, not just call volume before it.</h2>
+            <p>
+              Use the Early Bucket Control Room as the supervisory proof layer. This is where the
+              client sees missed-PTP pressure, containment risk, and recovery potential in one
+              screen instead of across multiple tools and spreadsheets.
+            </p>
+            <div class="scene-meta">
+              <div class="meta-card">
+                <strong>Voiceover</strong>
+                <p class="voiceover">
+                  "Supervisors see discipline, missed-PTP pressure, roll-forward risk, and recovery
+                  potential in one operating surface."
+                </p>
+              </div>
+              <div class="meta-card">
+                <strong>Motion Cue</strong>
+                <p class="motion">
+                  Zoom to the KPI band first, then slide into the discipline and bucket-pressure
+                  regions to show this is a control screen, not a static dashboard.
+                </p>
+              </div>
+              <div class="meta-card">
+                <strong>On-screen copy</strong>
+                <p>Upload portfolio. Capture commitment. Prove follow-through discipline.</p>
+              </div>
+            </div>
+          </div>
+          <div class="shot-stage shot-stage--single">
+            <div class="panel wide">
+              <span class="panel-label">Early Bucket Control Room</span>
+              <img src="./screenshots/02-overview-control-room.png" alt="Early bucket control room" />
+              <div class="panel-callout">
+                <strong>Operational proof</strong>
+                <p>Show discipline, containment, and recovery pressure before buckets roll forward.</p>
+              </div>
+            </div>
+            <div class="bullet-strip">
+              <div class="bullet-card">
+                <strong>Leader View</strong>
+                <p>Contact coverage, PTP capture, follow-up discipline, containment, and recovery.</p>
+              </div>
+              <div class="bullet-card">
+                <strong>Buyer Hook</strong>
+                <p>The real control point is the period immediately after a missed commitment.</p>
+              </div>
+              <div class="bullet-card">
+                <strong>Demo Note</strong>
+                <p>Keep the branded shell visible so the scene still feels like the real product.</p>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="scene">
+          <div class="scene-copy">
+            <div class="section-label">Scene 05 · Copilot Guidance</div>
+            <h2>Ask what is working. Ask why. Ask what to change next.</h2>
+            <p>
+              The copilot response view is the centerpiece for differentiation. The answer panel,
+              evidence blocks, confidence, and recommended actions should feel like an executive
+              control surface rather than a support chatbot.
+            </p>
+            <div class="scene-meta">
+              <div class="meta-card">
+                <strong>Voiceover</strong>
+                <p class="voiceover">
+                  "The agentic copilot explains what is working by campaign, bucket, agent, or
+                  account, then proposes governed changes with evidence and expected impact."
+                </p>
+              </div>
+              <div class="meta-card">
+                <strong>Motion Cue</strong>
+                <p class="motion">
+                  Hold longer here. Animate a slow horizontal drift over the evidence blocks and the
+                  action tile so the buyer sees the reasoning depth.
+                </p>
+              </div>
+              <div class="meta-card">
+                <strong>On-screen copy</strong>
+                <p>Compare lanes. Diagnose leakage. Simulate impact. Queue approvals.</p>
+              </div>
+            </div>
+          </div>
+          <div class="shot-stage shot-stage--split">
+            <div class="panel wide">
+              <span class="panel-label">Grounded Recommendation</span>
+              <img src="./screenshots/04-ops-copilot-response.png" alt="Copilot response with evidence" />
+            </div>
+            <div class="inset-stack">
+              <div class="panel tall">
+                <span class="panel-label">Category Reinforcement</span>
+                <img src="./screenshots/03-ops-copilot-hero.png" alt="Copilot hero secondary" />
+              </div>
+              <div class="bullet-strip">
+                <div class="bullet-card">
+                  <strong>Evidence</strong>
+                  <p>Ground the recommendation in campaign, bucket, agent, and customer metrics.</p>
+                </div>
+                <div class="bullet-card">
+                  <strong>Confidence</strong>
+                  <p>Make the buyer feel this AI is inspectable, not mysterious.</p>
+                </div>
+                <div class="bullet-card">
+                  <strong>Action</strong>
+                  <p>Show that strategy changes can move directly into governed execution.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="scene">
+          <div class="scene-copy">
+            <div class="section-label">Scene 06 · Enterprise Close</div>
+            <h2>Execution, compliance, reporting, and reconciliation stay in the same operating system.</h2>
+            <p>
+              Close by proving enterprise readiness. The product does not fragment the workflow into
+              separate tools for supervisors, compliance, finance, and admins.
+            </p>
+            <div class="scene-meta">
+              <div class="meta-card">
+                <strong>Voiceover</strong>
+                <p class="voiceover">
+                  "Compliance, reporting, reconciliation, and role-based governance stay connected
+                  to the same system, so the operation closes the loop instead of stitching tools
+                  together."
+                </p>
+              </div>
+              <div class="meta-card">
+                <strong>Motion Cue</strong>
+                <p class="motion">
+                  Use quick cuts or staggered reveals through the governance mosaic, then end on the
+                  closing CTA card.
+                </p>
+              </div>
+              <div class="meta-card">
+                <strong>On-screen copy</strong>
+                <p>One product. Multiple control layers. Cleaner enterprise adoption path.</p>
+              </div>
+            </div>
+          </div>
+          <div class="shot-stage shot-stage--mosaic">
+            <div class="panel">
+              <span class="panel-label">Supervisor Workbench</span>
+              <img src="./screenshots/06-workbench-queue.png" alt="Workbench queue" />
+            </div>
+            <div class="panel">
+              <span class="panel-label">Alerts &amp; Compliance</span>
+              <img src="./screenshots/09-alerts-compliance.png" alt="Alerts and compliance" />
+            </div>
+            <div class="panel">
+              <span class="panel-label">Reports &amp; Download Center</span>
+              <img src="./screenshots/10-reports-download-center.png" alt="Reports download center" />
+            </div>
+            <div class="panel">
+              <span class="panel-label">Integrations &amp; Reconciliation</span>
+              <img
+                src="./screenshots/11-integrations-reconciliation.png"
+                alt="Integrations and reconciliation"
+              />
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="library">
+        <div class="library-copy">
+          <div class="section-label">Design Library</div>
+          <h2>All verified product surfaces in one Figma-ready contact sheet.</h2>
+          <p>
+            This grid is the raw design handoff. Use it to duplicate or rearrange surfaces into a
+            different deck, trailer cut, or role-specific client video without recapturing product
+            screens.
+          </p>
+        </div>
+
+        <div class="library-grid">
+          <div class="library-item">
+            <img src="./screenshots/01-login-hero.png" alt="Login hero" />
+            <div><strong>Login / Shell</strong><span>Branded entry point for the demo sequence.</span></div>
+          </div>
+          <div class="library-item">
+            <img src="./screenshots/02-overview-control-room.png" alt="Overview" />
+            <div><strong>Control Room</strong><span>Supervisory proof layer for discipline and containment.</span></div>
+          </div>
+          <div class="library-item">
+            <img src="./screenshots/03-ops-copilot-hero.png" alt="Copilot hero" />
+            <div><strong>Operations Copilot Hero</strong><span>Category-setting opener for the product story.</span></div>
+          </div>
+          <div class="library-item">
+            <img src="./screenshots/04-ops-copilot-response.png" alt="Copilot response" />
+            <div><strong>Copilot Response</strong><span>Evidence-backed answer, confidence, and next-best actions.</span></div>
+          </div>
+          <div class="library-item">
+            <img src="./screenshots/05-portfolio-launch.png" alt="Portfolio launch" />
+            <div><strong>Portfolio Launch</strong><span>Upload, mapping, validation, and campaign launch controls.</span></div>
+          </div>
+          <div class="library-item">
+            <img src="./screenshots/06-workbench-queue.png" alt="Workbench" />
+            <div><strong>Supervisor Workbench</strong><span>Queue control and intervention workspace.</span></div>
+          </div>
+          <div class="library-item">
+            <img src="./screenshots/07-calling-console-live.png" alt="Calling console" />
+            <div><strong>Calling Console</strong><span>Live desk, borrower brief, and active call journey.</span></div>
+          </div>
+          <div class="library-item">
+            <img src="./screenshots/08-calling-console-commitment.png" alt="Commitment" />
+            <div><strong>Commitment Capture</strong><span>PTP and callback controls tied to operational follow-up.</span></div>
+          </div>
+          <div class="library-item">
+            <img src="./screenshots/09-alerts-compliance.png" alt="Alerts compliance" />
+            <div><strong>Alerts &amp; Compliance</strong><span>Exception handling and triage surface.</span></div>
+          </div>
+          <div class="library-item">
+            <img src="./screenshots/10-reports-download-center.png" alt="Reports" />
+            <div><strong>Reports</strong><span>Scheduled exports and executive auditability.</span></div>
+          </div>
+          <div class="library-item">
+            <img src="./screenshots/11-integrations-reconciliation.png" alt="Integrations" />
+            <div><strong>Integrations</strong><span>Conflict resolution and systems-fit proof.</span></div>
+          </div>
+          <div class="library-item">
+            <img src="./screenshots/12-users-access.png" alt="Users access" />
+            <div><strong>Users &amp; Access</strong><span>Role-based governance for enterprise adoption.</span></div>
+          </div>
+        </div>
+
+        <div class="footer">
+          <div class="meta-card">
+            <strong>Suggested export flow</strong>
+            <p>
+              In Figma, duplicate each scene into its own 1920×1080 frame, apply slow zoom or slide
+              transitions, record the voiceover track externally, and stitch it into a 75-90 second
+              client cut. Keep the Operations Copilot and Calling Console scenes longest.
+            </p>
+          </div>
+          <div class="meta-card">
+            <strong>Client close</strong>
+            <p>
+              "Give your collections team a control layer, not another dashboard. Start with one
+              early-bucket portfolio and prove follow-through discipline fast."
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -5,6 +5,7 @@ import unittest
 from contextlib import suppress
 
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 import web_app
 
@@ -13,6 +14,7 @@ class AuthRBACTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp.name, "demo.db")
+        self.output_path = os.path.join(self.tmp.name, "demo_output.xlsx")
 
     def tearDown(self):
         self._reset_app_state()
@@ -28,9 +30,11 @@ class AuthRBACTests(unittest.TestCase):
 
     def _client(self, *, pilot_mode: bool = False) -> TestClient:
         os.environ["DEMO_DB_PATH"] = self.db_path
+        os.environ["DEMO_OUTPUT_XLSX_PATH"] = self.output_path
         os.environ["APP_ENV"] = "demo"
         os.environ["DEMO_MODE"] = "1"
         os.environ["PILOT_MODE"] = "1" if pilot_mode else "0"
+        os.environ["OPS_COPILOT_LLM_ENABLED"] = "0"
         os.environ["JWT_SECRET"] = "test-secret"
         os.environ["COOKIE_SECURE"] = "0"
         self._reset_app_state()
@@ -217,6 +221,39 @@ class AuthRBACTests(unittest.TestCase):
                     os.environ.pop("TELEPHONY_STREAM_WSS_URL", None)
                 else:
                     os.environ["TELEPHONY_STREAM_WSS_URL"] = prev_stream_ws
+
+    def test_telephony_agent_call_demo_fallback_without_public_wss(self):
+        with self._client() as client:
+            agent_token = self._login(client, "agent", "agent123")
+            prev_stream_ws = os.environ.pop("TELEPHONY_STREAM_WSS_URL", None)
+            prev_public_base = os.environ.pop("TELEPHONY_PUBLIC_BASE_URL", None)
+            try:
+                out = client.post(
+                    "/api/telephony/agent_call",
+                    json={"phone": "+91-9950022999", "customer_name": "Test User", "amount_due": "1200"},
+                    headers={"Authorization": f"Bearer {agent_token}"},
+                )
+                self.assertEqual(out.status_code, 200, out.text)
+                payload = out.json()
+                self.assertTrue(payload.get("ok"))
+                self.assertTrue(payload.get("session_id"))
+                self.assertEqual(((payload.get("result") or {}).get("provider")), "demo")
+
+                wb = load_workbook(self.output_path)
+                try:
+                    calls = wb["Calls"]
+                    headers = [cell.value for cell in calls[1]]
+                    call_rows = [dict(zip(headers, row)) for row in calls.iter_rows(min_row=2, values_only=True)]
+                finally:
+                    wb.close()
+                matching = [row for row in call_rows if row.get("session_id") == payload["session_id"]]
+                self.assertGreaterEqual(len(matching), 1)
+                self.assertTrue(matching[0].get("start_ts"))
+            finally:
+                if prev_stream_ws is not None:
+                    os.environ["TELEPHONY_STREAM_WSS_URL"] = prev_stream_ws
+                if prev_public_base is not None:
+                    os.environ["TELEPHONY_PUBLIC_BASE_URL"] = prev_public_base
 
     def test_lockout_and_unlock_after_ttl(self):
         with self._client() as client:

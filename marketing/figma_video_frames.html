@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TuringEdge Recovery OS | Animated Demo Frames</title>
+    <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+    <style>
+      :root {
+        --page-bg: #040b13;
+        --text: #eff5ff;
+        --muted: #a9bdd8;
+        --stroke: rgba(156, 190, 255, 0.22);
+        --shadow: 0 34px 90px rgba(0, 0, 0, 0.32);
+        --radius-xl: 36px;
+        --radius-lg: 28px;
+        --radius-md: 20px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 10% 10%, rgba(83, 137, 255, 0.2), transparent 20%),
+          radial-gradient(circle at 90% 18%, rgba(79, 232, 198, 0.18), transparent 18%),
+          linear-gradient(180deg, #07111c 0%, #081019 48%, #040b13 100%);
+        color: var(--text);
+        font-family: "Avenir Next", "SF Pro Display", "Segoe UI", sans-serif;
+      }
+
+      .reel {
+        display: grid;
+        gap: 120px;
+        width: max-content;
+        padding: 72px 72px 140px;
+      }
+
+      .video-frame {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        border-radius: 54px;
+        border: 1px solid var(--stroke);
+        background:
+          radial-gradient(circle at 12% 18%, rgba(96, 142, 255, 0.22), transparent 32%),
+          radial-gradient(circle at 88% 14%, rgba(79, 232, 198, 0.16), transparent 24%),
+          linear-gradient(135deg, rgba(8, 18, 30, 0.98), rgba(5, 13, 23, 0.96));
+        box-shadow: var(--shadow);
+      }
+
+      .video-frame::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        background-size: 72px 72px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0));
+      }
+
+      .frame-aura {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(12px);
+        opacity: 0.85;
+      }
+
+      .frame-aura--one {
+        top: -60px;
+        left: -120px;
+        width: 420px;
+        height: 420px;
+        background: radial-gradient(circle, rgba(88, 132, 255, 0.4), transparent 72%);
+      }
+
+      .frame-aura--two {
+        right: -100px;
+        bottom: -140px;
+        width: 440px;
+        height: 440px;
+        background: radial-gradient(circle, rgba(84, 239, 206, 0.24), transparent 72%);
+      }
+
+      .frame-grid {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: 560px 1fr;
+        gap: 36px;
+        width: 100%;
+        height: 100%;
+        padding: 56px;
+      }
+
+      .frame-copy {
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        width: fit-content;
+        padding: 11px 16px;
+        border-radius: 999px;
+        border: 1px solid rgba(134, 176, 255, 0.26);
+        background: rgba(114, 167, 255, 0.08);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #5df2cd, #78a8ff);
+      }
+
+      .frame-title {
+        margin: 0;
+        font-size: 90px;
+        line-height: 0.92;
+        letter-spacing: -0.055em;
+      }
+
+      .frame-body {
+        margin: 0;
+        color: var(--muted);
+        font-size: 26px;
+        line-height: 1.46;
+      }
+
+      .tag-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .tag {
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.045);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .note-grid {
+        display: grid;
+        gap: 14px;
+        margin-top: auto;
+      }
+
+      .note-card {
+        padding: 18px 20px;
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .note-card strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .note-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1.5;
+      }
+
+      .frame-stage {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 320px;
+        gap: 18px;
+        align-items: stretch;
+      }
+
+      .frame-stage--single {
+        grid-template-columns: 1fr;
+      }
+
+      .frame-stage--mosaic {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-auto-rows: minmax(0, 1fr);
+      }
+
+      .panel {
+        position: relative;
+        overflow: hidden;
+        min-height: 0;
+        border-radius: var(--radius-lg);
+        border: 1px solid rgba(160, 196, 255, 0.22);
+        background: rgba(255, 255, 255, 0.04);
+        box-shadow: 0 20px 44px rgba(0, 0, 0, 0.24);
+      }
+
+      .panel img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .panel-label {
+        position: absolute;
+        top: 18px;
+        left: 18px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(6, 12, 21, 0.76);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .panel-callout {
+        position: absolute;
+        right: 20px;
+        bottom: 20px;
+        max-width: 320px;
+        padding: 18px 20px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(5, 11, 20, 0.8);
+        backdrop-filter: blur(16px);
+      }
+
+      .panel-callout strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #74efd3;
+      }
+
+      .panel-callout p {
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.45;
+      }
+
+      .metrics {
+        display: grid;
+        gap: 14px;
+      }
+
+      .metric {
+        padding: 18px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.045);
+      }
+
+      .metric strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #ffc78d;
+      }
+
+      .metric p {
+        margin: 0;
+        font-size: 16px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      .frame-footer {
+        position: absolute;
+        right: 34px;
+        bottom: 28px;
+        display: flex;
+        gap: 14px;
+        z-index: 2;
+      }
+
+      .frame-footer span {
+        padding: 10px 14px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .video-frame.theme-dashboard {
+        background:
+          radial-gradient(circle at 10% 20%, rgba(113, 173, 255, 0.22), transparent 30%),
+          radial-gradient(circle at 90% 80%, rgba(255, 194, 125, 0.15), transparent 28%),
+          linear-gradient(135deg, rgba(13, 20, 34, 0.98), rgba(6, 10, 17, 0.98));
+      }
+
+      .video-frame.theme-calling {
+        background:
+          radial-gradient(circle at 90% 14%, rgba(76, 235, 201, 0.2), transparent 24%),
+          radial-gradient(circle at 14% 82%, rgba(120, 168, 255, 0.22), transparent 28%),
+          linear-gradient(135deg, rgba(6, 15, 27, 0.98), rgba(5, 10, 18, 0.98));
+      }
+
+      .video-frame.theme-close {
+        background:
+          radial-gradient(circle at 16% 18%, rgba(114, 167, 255, 0.24), transparent 28%),
+          radial-gradient(circle at 84% 18%, rgba(93, 242, 205, 0.22), transparent 24%),
+          linear-gradient(135deg, rgba(5, 12, 21, 0.98), rgba(3, 8, 15, 1));
+      }
+    </style>
+  </head>
+  <body>
+    <main class="reel">
+      <section class="video-frame">
+        <div class="frame-aura frame-aura--one"></div>
+        <div class="frame-aura frame-aura--two"></div>
+        <div class="frame-grid">
+          <div class="frame-copy">
+            <div class="eyebrow">Frame 01 · Control Layer</div>
+            <h2 class="frame-title">Turn collections metrics into actions.</h2>
+            <p class="frame-body">
+              Lead with the Operations Copilot so the product is positioned as a decision system for
+              early-bucket collections, not a generic dashboard or dialer.
+            </p>
+            <div class="tag-row">
+              <span class="tag">Agentic Control</span>
+              <span class="tag">Grounded Evidence</span>
+              <span class="tag">Enterprise Ready</span>
+            </div>
+            <div class="note-grid">
+              <div class="note-card">
+                <strong>Voiceover</strong>
+                <p>TuringEdge Recovery OS gives collections leaders one control layer from portfolio upload to governed action.</p>
+              </div>
+              <div class="note-card">
+                <strong>Motion</strong>
+                <p>Slow push into the hero image; keep the dashboard inset drifting upward for the opening transition.</p>
+              </div>
+            </div>
+          </div>
+          <div class="frame-stage">
+            <div class="panel">
+              <span class="panel-label">Operations Copilot</span>
+              <img src="./screenshots/03-ops-copilot-hero.png" alt="Operations Copilot hero" />
+              <div class="panel-callout">
+                <strong>Story hook</strong>
+                <p>From live operating metrics to explainable next-best action.</p>
+              </div>
+            </div>
+            <div class="metrics">
+              <div class="panel">
+                <span class="panel-label">Control Room Inset</span>
+                <img src="./screenshots/02-overview-control-room.png" alt="Control room inset" />
+              </div>
+              <div class="metric">
+                <strong>Use in Figma</strong>
+                <p>Start the prototype here and Smart Animate into Frame 02 with a 700 ms easing transition.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-footer">
+          <span>00:00-00:10</span>
+          <span>Hero Push</span>
+        </div>
+      </section>
+
+      <section class="video-frame">
+        <div class="frame-aura frame-aura--one"></div>
+        <div class="frame-aura frame-aura--two"></div>
+        <div class="frame-grid">
+          <div class="frame-copy">
+            <div class="eyebrow">Frame 02 · Portfolio Launch</div>
+            <h2 class="frame-title">Operationalize the sheet in minutes.</h2>
+            <p class="frame-body">
+              Move from positioning into proof: a lender spreadsheet becomes a validated campaign
+              with launch controls and no brittle handoff between setup and execution.
+            </p>
+            <div class="tag-row">
+              <span class="tag">CSV/XLSX</span>
+              <span class="tag">Field Mapping</span>
+              <span class="tag">Validation</span>
+            </div>
+            <div class="note-grid">
+              <div class="note-card">
+                <strong>Voiceover</strong>
+                <p>A portfolio sheet comes in, fields are mapped, validated, and launched into a live operating campaign.</p>
+              </div>
+              <div class="note-card">
+                <strong>Motion</strong>
+                <p>Slide the large image left to right in the edit so the launch controls feel active rather than static.</p>
+              </div>
+            </div>
+          </div>
+          <div class="frame-stage frame-stage--single">
+            <div class="panel">
+              <span class="panel-label">Portfolio Intake</span>
+              <img src="./screenshots/05-portfolio-launch.png" alt="Portfolio upload and launch" />
+              <div class="panel-callout">
+                <strong>Client proof</strong>
+                <p>Upload, map, validate, and launch without rebuilding the operational context.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-footer">
+          <span>00:10-00:20</span>
+          <span>Horizontal Slide</span>
+        </div>
+      </section>
+
+      <section class="video-frame theme-calling">
+        <div class="frame-aura frame-aura--one"></div>
+        <div class="frame-aura frame-aura--two"></div>
+        <div class="frame-grid">
+          <div class="frame-copy">
+            <div class="eyebrow">Frame 03 · Promise Capture</div>
+            <h2 class="frame-title">Capture the promise at the desk.</h2>
+            <p class="frame-body">
+              This frame ties the agent experience to the buyer’s operating concern: PTPs and
+              callbacks are captured where the work happens, so follow-through is measurable later.
+            </p>
+            <div class="tag-row">
+              <span class="tag">Live Desk</span>
+              <span class="tag">PTP Date</span>
+              <span class="tag">Callback Time</span>
+            </div>
+            <div class="note-grid">
+              <div class="note-card">
+                <strong>Voiceover</strong>
+                <p>Agents capture commitments directly from the desk, creating a clean trail for the rest of the system to enforce.</p>
+              </div>
+              <div class="note-card">
+                <strong>Motion</strong>
+                <p>Use a zoom-in on the commitment panel while the main desk frame holds steady behind it.</p>
+              </div>
+            </div>
+          </div>
+          <div class="frame-stage">
+            <div class="panel">
+              <span class="panel-label">Calling Console</span>
+              <img src="./screenshots/07-calling-console-live.png" alt="Calling console" />
+            </div>
+            <div class="metrics">
+              <div class="panel">
+                <span class="panel-label">Commitment Panel</span>
+                <img src="./screenshots/08-calling-console-commitment.png" alt="Commitment capture" />
+              </div>
+              <div class="metric">
+                <strong>Buyer angle</strong>
+                <p>The post-promise period is the real control point in early-bucket collections.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-footer">
+          <span>00:20-00:35</span>
+          <span>Focus Zoom</span>
+        </div>
+      </section>
+
+      <section class="video-frame theme-dashboard">
+        <div class="frame-aura frame-aura--one"></div>
+        <div class="frame-aura frame-aura--two"></div>
+        <div class="frame-grid">
+          <div class="frame-copy">
+            <div class="eyebrow">Frame 04 · Control Room</div>
+            <h2 class="frame-title">Prove follow-through, not just activity.</h2>
+            <p class="frame-body">
+              Use the Early Bucket Control Room as the proof layer for supervisors: discipline,
+              missed-PTP pressure, containment, and recovery all live in one operational screen.
+            </p>
+            <div class="tag-row">
+              <span class="tag">Discipline</span>
+              <span class="tag">Containment</span>
+              <span class="tag">Recovery</span>
+            </div>
+            <div class="note-grid">
+              <div class="note-card">
+                <strong>Voiceover</strong>
+                <p>Supervisors see missed-PTP pressure, roll-forward risk, and recovery potential in one control surface.</p>
+              </div>
+              <div class="note-card">
+                <strong>Motion</strong>
+                <p>Pan across the KPI band, then dip toward the discipline and bucket-pressure zones before transitioning out.</p>
+              </div>
+            </div>
+          </div>
+          <div class="frame-stage frame-stage--single">
+            <div class="panel">
+              <span class="panel-label">Early Bucket Control Room</span>
+              <img src="./screenshots/02-overview-control-room.png" alt="Control room" />
+              <div class="panel-callout">
+                <strong>Operational proof</strong>
+                <p>Show the operation is containing risk after the promise instead of simply logging call volume.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-footer">
+          <span>00:35-00:50</span>
+          <span>Guided Pan</span>
+        </div>
+      </section>
+
+      <section class="video-frame">
+        <div class="frame-aura frame-aura--one"></div>
+        <div class="frame-aura frame-aura--two"></div>
+        <div class="frame-grid">
+          <div class="frame-copy">
+            <div class="eyebrow">Frame 05 · Guided Action</div>
+            <h2 class="frame-title">Explain what is working. Then recommend the move.</h2>
+            <p class="frame-body">
+              This is the longest hold in the sequence. The response frame proves the AI is grounded
+              in the operation and ready to propose specific, governed changes.
+            </p>
+            <div class="tag-row">
+              <span class="tag">Evidence Blocks</span>
+              <span class="tag">Confidence</span>
+              <span class="tag">Action Payload</span>
+            </div>
+            <div class="note-grid">
+              <div class="note-card">
+                <strong>Voiceover</strong>
+                <p>The copilot explains what is working by campaign, bucket, agent, or account, then proposes the next move.</p>
+              </div>
+              <div class="note-card">
+                <strong>Motion</strong>
+                <p>Use a slower Smart Animate transition here and let the evidence region drift across the screen.</p>
+              </div>
+            </div>
+          </div>
+          <div class="frame-stage">
+            <div class="panel">
+              <span class="panel-label">Copilot Response</span>
+              <img src="./screenshots/04-ops-copilot-response.png" alt="Copilot response" />
+              <div class="panel-callout">
+                <strong>Differentiate</strong>
+                <p>Grounded recommendations, not vague AI summaries.</p>
+              </div>
+            </div>
+            <div class="metrics">
+              <div class="metric">
+                <strong>Action design</strong>
+                <p>Make this frame transition from the control room with a slight scale-up to imply zoomed reasoning.</p>
+              </div>
+              <div class="metric">
+                <strong>Client takeaway</strong>
+                <p>The decision layer is inspectable, evidence-backed, and ready for governed execution.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-footer">
+          <span>00:50-01:05</span>
+          <span>Slow Drift</span>
+        </div>
+      </section>
+
+      <section class="video-frame theme-close">
+        <div class="frame-aura frame-aura--one"></div>
+        <div class="frame-aura frame-aura--two"></div>
+        <div class="frame-grid">
+          <div class="frame-copy">
+            <div class="eyebrow">Frame 06 · Enterprise Close</div>
+            <h2 class="frame-title">Close the loop across the whole operation.</h2>
+            <p class="frame-body">
+              End on enterprise readiness. Supervisors, compliance, reporting, integrations, and
+              governance are all visible in the same operating system, giving the buyer a clean next step.
+            </p>
+            <div class="tag-row">
+              <span class="tag">Workbench</span>
+              <span class="tag">Compliance</span>
+              <span class="tag">Reports</span>
+              <span class="tag">Integrations</span>
+            </div>
+            <div class="note-grid">
+              <div class="note-card">
+                <strong>Voiceover</strong>
+                <p>Compliance, reporting, and reconciliation stay connected to the same system, so the operation closes the loop.</p>
+              </div>
+              <div class="note-card">
+                <strong>Motion</strong>
+                <p>Use a brisk mosaic reveal and end on the closing line: give the team a control layer, not another dashboard.</p>
+              </div>
+            </div>
+          </div>
+          <div class="frame-stage frame-stage--mosaic">
+            <div class="panel">
+              <span class="panel-label">Workbench</span>
+              <img src="./screenshots/06-workbench-queue.png" alt="Workbench" />
+            </div>
+            <div class="panel">
+              <span class="panel-label">Alerts &amp; Compliance</span>
+              <img src="./screenshots/09-alerts-compliance.png" alt="Alerts and compliance" />
+            </div>
+            <div class="panel">
+              <span class="panel-label">Reports</span>
+              <img src="./screenshots/10-reports-download-center.png" alt="Reports" />
+            </div>
+            <div class="panel">
+              <span class="panel-label">Integrations</span>
+              <img src="./screenshots/11-integrations-reconciliation.png" alt="Integrations" />
+            </div>
+          </div>
+        </div>
+        <div class="frame-footer">
+          <span>01:05-01:20</span>
+          <span>Mosaic Reveal</span>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

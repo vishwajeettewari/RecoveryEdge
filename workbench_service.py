@@ -14,6 +14,7 @@ class WorkbenchService:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
         self._init_db()
+        self._migrate_db()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -34,6 +35,7 @@ class WorkbenchService:
                     phone TEXT,
                     amount_due REAL,
                     dpd INTEGER,
+                    ptp_date TEXT,
                     state TEXT NOT NULL,
                     disposition TEXT,
                     owner TEXT,
@@ -67,6 +69,16 @@ class WorkbenchService:
         finally:
             conn.close()
 
+    def _migrate_db(self) -> None:
+        conn = self._connect()
+        try:
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+            if "ptp_date" not in cols:
+                conn.execute("ALTER TABLE tasks ADD COLUMN ptp_date TEXT")
+            conn.commit()
+        finally:
+            conn.close()
+
     def seed_tasks(self, *, campaign_id: str, portfolio_id: str, rows: List[Dict[str, Any]], actor: str = "system") -> int:
         conn = self._connect()
         now = time.time()
@@ -92,10 +104,10 @@ class WorkbenchService:
                 conn.execute(
                     """
                     INSERT INTO tasks (
-                        id, campaign_id, portfolio_id, customer_id, customer_name, phone, amount_due, dpd,
+                        id, campaign_id, portfolio_id, customer_id, customer_name, phone, amount_due, dpd, ptp_date,
                         state, disposition, owner, sla_due_at, last_action_at, priority, tags_json,
                         compliance_status_json, compliance_block, callback_at, notes, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'NEW', NULL, NULL, ?, ?, 2, '[]', ?, 0, NULL, NULL, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'NEW', NULL, NULL, ?, ?, 2, '[]', ?, 0, NULL, NULL, ?, ?)
                     """,
                     (
                         task_id,
@@ -243,6 +255,7 @@ class WorkbenchService:
         actor: str,
         role: str,
         state: Optional[str] = None,
+        ptp_date: Optional[str] = None,
         disposition: Optional[str] = None,
         notes: Optional[str] = None,
         callback_at: Optional[float] = None,
@@ -277,6 +290,7 @@ class WorkbenchService:
                 """
                 UPDATE tasks
                 SET state = ?,
+                    ptp_date = COALESCE(?, ptp_date),
                     disposition = COALESCE(?, disposition),
                     notes = COALESCE(?, notes),
                     callback_at = COALESCE(?, callback_at),
@@ -285,10 +299,11 @@ class WorkbenchService:
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (new_state, disposition, notes, callback_at, sla_due, now, now, task_id),
+                (new_state, ptp_date, disposition, notes, callback_at, sla_due, now, now, task_id),
             )
             payload = {
                 "state": new_state,
+                "ptp_date": ptp_date,
                 "disposition": disposition,
                 "notes": notes,
                 "callback_at": callback_at,
