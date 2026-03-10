@@ -199,6 +199,7 @@ class WebCallSession:
         compliance_engine: Optional[ComplianceEngine] = None,
         followup_service: Optional[FollowupService] = None,
         crm_adapter: Optional[CRMAdapter] = None,
+        session_id: Optional[str] = None,
     ) -> None:
         self.stt = stt_service
         self.llm = llm_service
@@ -212,7 +213,7 @@ class WebCallSession:
         # CHANGE: Conversation memory (history + optional persistence).
         self._max_history_turns = max(1, max_history_turns)
         self._chat_history = [{"role": "system", "content": SYSTEM_PROMPT}]
-        self._session_id = uuid.uuid4().hex[:12]
+        self._session_id = str(session_id or "").strip() or uuid.uuid4().hex[:12]
         self._session_store = SessionStore(session_store_path, self._session_id) if session_store_path else None
         self._dynamic_stt_language = dynamic_stt_language
         # Do not auto-switch response language from STT detections unless explicitly enabled.

@@ -2,7 +2,7 @@ import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
 import "./styles.css";
 
-import { MantineProvider, localStorageColorSchemeManager } from "@mantine/core";
+import { MantineProvider } from "@mantine/core";
 import { Notifications } from "@mantine/notifications";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
@@ -11,6 +11,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
 import { AuthProvider } from "./auth/AuthProvider";
+import { DEFAULT_COLOR_SCHEME, explicitColorSchemeManager } from "./theme/colorScheme";
 import { appTheme } from "./theme/theme";
 
 const queryClient = new QueryClient({
@@ -23,13 +24,9 @@ const queryClient = new QueryClient({
   },
 });
 
-const colorSchemeManager = localStorageColorSchemeManager({
-  key: "te-color-scheme",
-});
-
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <MantineProvider colorSchemeManager={colorSchemeManager} defaultColorScheme="light" theme={appTheme}>
+    <MantineProvider colorSchemeManager={explicitColorSchemeManager} defaultColorScheme={DEFAULT_COLOR_SCHEME} theme={appTheme}>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <BrowserRouter>

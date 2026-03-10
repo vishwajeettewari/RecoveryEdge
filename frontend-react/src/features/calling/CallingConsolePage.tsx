@@ -107,6 +107,13 @@ type VoiceLogEntry = {
   ts: number;
 };
 
+type SessionTimelineEvent = {
+  ts: number;
+  type: string;
+  payload?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
 function parseCompliance(jsonText?: string): Record<string, boolean> {
   try {
     const obj = jsonText ? JSON.parse(jsonText) : {};
@@ -243,10 +250,91 @@ function normalizeTaskDetail(input: TaskDetail | { rows?: TaskRow[] } | undefine
 
 function timelineFromTaskEvents(events?: TaskEvent[]) {
   return (events || []).slice(-8).reverse().map((event) => ({
-    ts: Number(event.ts || 0),
+    ts: normalizeTimelineTimestamp(Number(event.ts || 0)),
     type: String(event.event_type || "event"),
     note: String(event.actor || "system"),
   }));
+}
+
+function normalizeErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function normalizeTimelineTimestamp(ts?: number) {
+  const value = Number(ts || 0);
+  if (!Number.isFinite(value) || value <= 0) return Date.now();
+  return value > 10_000_000_000 ? Math.round(value) : Math.round(value * 1000);
+}
+
+function timelinePayload(event?: SessionTimelineEvent): Record<string, unknown> {
+  if (!event || typeof event !== "object") return {};
+  const directPayload = event.payload;
+  if (directPayload && typeof directPayload === "object" && !Array.isArray(directPayload)) {
+    return directPayload;
+  }
+  const fallback: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(event)) {
+    if (key === "ts" || key === "type" || key === "payload") continue;
+    fallback[key] = value;
+  }
+  return fallback;
+}
+
+function timelineNoteForEvent(event: SessionTimelineEvent) {
+  const payload = timelinePayload(event);
+  const candidates = [
+    payload.state,
+    payload.disposition,
+    payload.reason,
+    payload.detail,
+    payload.name,
+    payload.rule_code,
+    payload.role,
+  ];
+  for (const candidate of candidates) {
+    const text = String(candidate || "").trim();
+    if (text) return humanizeSlug(text);
+  }
+  return humanizeSlug(event.type || "event");
+}
+
+function voiceLogFromTimeline(events?: SessionTimelineEvent[]) {
+  const rows: VoiceLogEntry[] = [];
+  for (const event of events || []) {
+    const payload = timelinePayload(event);
+    let who: VoiceLogEntry["who"] | null = null;
+    let text = "";
+
+    if (event.type === "message") {
+      const role = String(payload.role || "").toLowerCase();
+      who = role === "assistant" ? "agent" : role === "user" ? "user" : "system";
+      text = String(payload.content_redacted || "").trim();
+    } else if (event.type === "agent_utterance_created" || event.type === "assistant_final") {
+      who = "agent";
+      text = String(payload.text || payload.message || "").trim();
+    } else if (event.type === "stt_final" || event.type === "transcript") {
+      who = "user";
+      text = String(payload.text || payload.transcript || "").trim();
+    } else if (event.type === "compliance_violation") {
+      who = "system";
+      text = [payload.rule_code, payload.detail].map((value) => String(value || "").trim()).filter(Boolean).join(": ");
+    }
+
+    if (!who || !text) continue;
+    const ts = normalizeTimelineTimestamp(event.ts);
+    const last = rows[rows.length - 1];
+    if (last && last.who === who && normalizeLogText(last.text) === normalizeLogText(text) && Math.abs(last.ts - ts) < 3000) {
+      continue;
+    }
+    rows.push({
+      id: `${event.type}-${ts}-${rows.length}`,
+      who,
+      text,
+      ts,
+    });
+  }
+  return rows.slice(-200);
 }
 
 export function CallingConsolePage() {
@@ -260,6 +348,7 @@ export function CallingConsolePage() {
   const [slaOnly, setSlaOnly] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [callLive, setCallLive] = useState(false);
+  const [callStarting, setCallStarting] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("disconnected");
   const [muted, setMuted] = useState(false);
   const [meterLevel, setMeterLevel] = useState(0);
@@ -275,6 +364,7 @@ export function CallingConsolePage() {
   const [testCallSid, setTestCallSid] = useState("");
   const [testCallStatus, setTestCallStatus] = useState("");
   const [telephonySessionId, setTelephonySessionId] = useState("");
+  const [micCheckBusy, setMicCheckBusy] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState("hi-IN");
   const [selectedVoice, setSelectedVoice] = useState("shubh");
   const [ptpDateDraft, setPtpDateDraft] = useState("");
@@ -329,12 +419,6 @@ export function CallingConsolePage() {
     }
   }, [tasksQuery.data, selectedTaskId]);
 
-  useEffect(() => {
-    setTelephonySessionId("");
-    setTestCallSid("");
-    setTestCallStatus("");
-  }, [selectedTaskId]);
-
   const assignedQueue = useMemo(() => {
     const rows = tasksQuery.data?.rows || [];
     let out = rows;
@@ -385,13 +469,15 @@ export function CallingConsolePage() {
     setCallbackTimeDraft(String(linkedSession?.callback_time || ""));
   }, [task?.id, task?.ptp_date, task?.callback_at, linkedSession?.ptp_date, linkedSession?.callback_time]);
 
+  const activeSessionId = linkedSession?.session_id || telephonySessionId || "";
+
   const timelineQuery = useQuery({
-    queryKey: ["calling_timeline", linkedSession?.session_id],
+    queryKey: ["calling_timeline", activeSessionId],
     queryFn: () =>
-      apiFetch<{ session_id: string; timeline: Array<{ ts: number; type: string; payload: Record<string, unknown> }> }>(
-        `/api/sessions/${encodeURIComponent(linkedSession?.session_id || "")}/timeline`
+      apiFetch<{ session_id: string; timeline: SessionTimelineEvent[] }>(
+        `/api/sessions/${encodeURIComponent(activeSessionId)}/timeline`
       ),
-    enabled: !!linkedSession?.session_id,
+    enabled: !!activeSessionId,
     refetchInterval: autoRefresh ? 10_000 : false,
   });
 
@@ -485,7 +571,15 @@ export function CallingConsolePage() {
 
     if ("audioWorklet" in ctx && typeof AudioWorkletNode !== "undefined") {
       try {
-        const moduleCandidates = ["/worklets/pcm-processor.js", "/static/worklets/pcm-processor.js"];
+        const baseUrl = new URL(import.meta.env.BASE_URL || "/", window.location.origin);
+        const moduleCandidates = Array.from(
+          new Set([
+            new URL("worklets/pcm-processor.js", baseUrl).toString(),
+            new URL("static/worklets/pcm-processor.js", baseUrl).toString(),
+            new URL("/worklets/pcm-processor.js", window.location.origin).toString(),
+            new URL("/static/worklets/pcm-processor.js", window.location.origin).toString(),
+          ])
+        );
         let loaded = false;
         let lastErr: unknown = null;
         for (const modulePath of moduleCandidates) {
@@ -766,6 +860,7 @@ export function CallingConsolePage() {
   const stopCall = async () => {
     runningRef.current = false;
     setCallLive(false);
+    setCallStarting(false);
     setVoiceStatus("disconnected");
     setUserPartial("");
     setAgentPartial("");
@@ -795,6 +890,7 @@ export function CallingConsolePage() {
 
   const startCall = async () => {
     if (!task) return;
+    if (callStarting || callLive) return;
     if (!canMutate) {
       notifications.show({ color: "red", message: "This role is read-only for calling actions" });
       return;
@@ -811,7 +907,7 @@ export function CallingConsolePage() {
 
     await stopCall();
     runningRef.current = true;
-    setCallLive(true);
+    setCallStarting(true);
     setVoiceStatus("connecting");
     setLiveLog([]);
     audioStartedSentRef.current = false;
@@ -827,7 +923,7 @@ export function CallingConsolePage() {
       });
       wsToken = tokenOut.ws_token || "";
     } catch (err) {
-      notifications.show({ color: "red", message: `Unable to mint voice token: ${String(err)}` });
+      notifications.show({ color: "red", message: `Unable to mint voice token: ${normalizeErrorMessage(err)}` });
       await stopCall();
       return;
     }
@@ -845,10 +941,12 @@ export function CallingConsolePage() {
       try {
         await setupAudio();
       } catch (err) {
-        notifications.show({ color: "red", message: `Mic setup failed: ${String(err)}` });
+        notifications.show({ color: "red", message: `Mic setup failed: ${normalizeErrorMessage(err)}` });
         await stopCall();
         return;
       }
+      setCallLive(true);
+      setCallStarting(false);
       setVoiceStatus("listening");
       ws.send(JSON.stringify({ type: "start", sampleRate: TARGET_SAMPLE_RATE, context: voiceContext() }));
     };
@@ -883,11 +981,13 @@ export function CallingConsolePage() {
     };
 
     ws.onerror = () => {
+      setCallStarting(false);
       setVoiceStatus("error");
       notifications.show({ color: "red", message: "Voice websocket error" });
     };
 
     ws.onclose = async () => {
+      setCallStarting(false);
       await stopCall();
     };
   };
@@ -932,12 +1032,15 @@ export function CallingConsolePage() {
   };
 
   const requestMic = async () => {
+    setMicCheckBusy(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((t) => t.stop());
       notifications.show({ color: "green", message: "Microphone permission granted" });
     } catch {
       notifications.show({ color: "red", message: "Microphone permission denied" });
+    } finally {
+      setMicCheckBusy(false);
     }
   };
 
@@ -952,6 +1055,9 @@ export function CallingConsolePage() {
       return;
     }
     setTestCallBusy(true);
+    setTelephonySessionId("");
+    setTestCallSid("");
+    setTestCallStatus("");
     try {
       const out = await apiFetch<{
         ok: boolean;
@@ -981,7 +1087,7 @@ export function CallingConsolePage() {
         message: sid ? `Agent call queued (${sid})` : "Agent call queued",
       });
     } catch (err) {
-      notifications.show({ color: "red", message: String(err) });
+      notifications.show({ color: "red", message: normalizeErrorMessage(err) });
     } finally {
       setTestCallBusy(false);
     }
@@ -1063,18 +1169,30 @@ export function CallingConsolePage() {
     (task?.callback_at ? dayjs.unix(Number(task.callback_at)).format("HH:mm") : "") ||
     linkedSession?.callback_time ||
     "";
+  const timelineEvents = (timelineQuery.data?.timeline || []) as SessionTimelineEvent[];
   const timelineItems = useMemo(() => {
-    const liveTimeline =
-      (timelineQuery.data?.timeline || [])
-        .slice(-8)
-        .reverse()
-        .map((event) => ({
-          ts: Number(event.ts || 0),
-          type: String(event.type || "event"),
-          note: humanizeSlug(String(event.payload?.state || event.payload?.disposition || "")),
-        })) || [];
+    const liveTimeline = timelineEvents
+      .slice(-8)
+      .reverse()
+      .map((event) => ({
+        ts: normalizeTimelineTimestamp(event.ts),
+        type: String(event.type || "event"),
+        note: timelineNoteForEvent(event),
+      }));
     return liveTimeline.length ? liveTimeline : timelineFromTaskEvents(task?.events);
-  }, [task?.events, timelineQuery.data]);
+  }, [task?.events, timelineEvents]);
+  const transcriptEntries = useMemo(() => {
+    if (liveLog.length) return liveLog;
+    return voiceLogFromTimeline(timelineEvents);
+  }, [liveLog, timelineEvents]);
+  const transcriptHint = activeSessionId
+    ? "Waiting for the voice bridge to emit transcript events."
+    : task
+      ? "Start call to begin live transcript capture."
+      : "Queue a direct phone bridge to open transcript and session telemetry.";
+  const sessionLastActivityLabel = timelineItems.length
+    ? dayjs(timelineItems[0]?.ts || Date.now()).format("DD MMM HH:mm:ss")
+    : "Awaiting activity";
   const ui = {
     heading: "var(--te-calling-heading)",
     body: "var(--te-calling-body)",
@@ -1191,7 +1309,7 @@ export function CallingConsolePage() {
                 <Button leftSection={<Phone size={14} />} onClick={triggerTestCall} loading={testCallBusy} disabled={!canMutate}>
                   Call Number
                 </Button>
-                <Button variant="light" leftSection={<Mic size={14} />} onClick={requestMic}>
+                <Button variant="light" leftSection={<Mic size={14} />} onClick={requestMic} loading={micCheckBusy} disabled={micCheckBusy}>
                   Check Mic
                 </Button>
               </SimpleGrid>
@@ -1207,27 +1325,173 @@ export function CallingConsolePage() {
                   </Group>
                 </Paper>
               ) : null}
+              {telephonySessionId ? (
+                <Paper className="te-calling-inline-note" p="sm" radius="lg">
+                  <Text size="xs" c={ui.muted}>
+                    Active session
+                  </Text>
+                  <Text size="sm" c={ui.heading} fw={700}>
+                    {telephonySessionId}
+                  </Text>
+                </Paper>
+              ) : null}
             </Stack>
           </Card>
 
           <Card className="te-calling-panel te-calling-fill-card">
-            <Stack gap="lg" h="100%" justify="center">
-              <EmptyStateCard
-                title="No assigned tasks"
-                description="Assign borrower accounts from Workbench to open the live calling cockpit. This view is optimized for active calling, not empty states."
-              />
-              <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
-                {[
-                  "Route work to the calling agent from Workbench.",
-                  "Verify microphone access and voice selection.",
-                  "Use the phone bridge only for supervised outbound checks.",
-                ].map((item) => (
-                  <Paper key={item} className="te-calling-brief-card" p="md" radius="xl">
-                    <Text size="sm" c={ui.body}>
-                      {item}
-                    </Text>
-                  </Paper>
-                ))}
+            <Stack gap="lg" h="100%">
+              <Group justify="space-between" wrap="wrap">
+                <div>
+                  <Text className="te-calling-section-label">Voice Test Desk</Text>
+                  <Title order={4} c={ui.heading}>
+                    Transcript and session telemetry
+                  </Title>
+                </div>
+                <Badge variant="outline" color={activeSessionId ? "teal" : "gray"}>
+                  {activeSessionId ? "Session active" : "Idle"}
+                </Badge>
+              </Group>
+
+              <SimpleGrid cols={{ base: 1, sm: 2, xl: 4 }} spacing="sm">
+                <Paper className="te-calling-brief-card" p="md" radius="xl">
+                  <Text size="10px" tt="uppercase" fw={700} c={ui.label}>
+                    Session
+                  </Text>
+                  <Text fw={700} c={ui.heading}>
+                    {activeSessionId ? activeSessionId.slice(-12) : "Not started"}
+                  </Text>
+                  <Text size="sm" c={ui.body}>
+                    {activeSessionId ? "Timeline capture attached" : "Queue a phone bridge call to begin"}
+                  </Text>
+                </Paper>
+                <Paper className="te-calling-brief-card" p="md" radius="xl">
+                  <Text size="10px" tt="uppercase" fw={700} c={ui.label}>
+                    Bridge status
+                  </Text>
+                  <Text fw={700} c={ui.heading}>
+                    {humanizeSlug(testCallStatus || voiceStatus)}
+                  </Text>
+                  <Text size="sm" c={ui.body}>
+                    {testCallSid ? `Twilio SID ${testCallSid}` : "No outbound bridge queued yet"}
+                  </Text>
+                </Paper>
+                <Paper className="te-calling-brief-card" p="md" radius="xl">
+                  <Text size="10px" tt="uppercase" fw={700} c={ui.label}>
+                    Transcript
+                  </Text>
+                  <Text fw={700} c={ui.heading}>
+                    {transcriptEntries.length} event{transcriptEntries.length === 1 ? "" : "s"}
+                  </Text>
+                  <Text size="sm" c={ui.body}>
+                    Browser and telephony sessions both feed this desk.
+                  </Text>
+                </Paper>
+                <Paper className="te-calling-brief-card" p="md" radius="xl">
+                  <Text size="10px" tt="uppercase" fw={700} c={ui.label}>
+                    Last activity
+                  </Text>
+                  <Text fw={700} c={ui.heading}>
+                    {sessionLastActivityLabel}
+                  </Text>
+                  <Text size="sm" c={ui.body}>
+                    {timelineItems.length} timeline event{timelineItems.length === 1 ? "" : "s"} tracked
+                  </Text>
+                </Paper>
+              </SimpleGrid>
+
+              <Paper className="te-calling-transcript-panel te-calling-transcript-panel--desk" p="md" radius="xl">
+                <Stack gap="md" h="100%">
+                  <Group justify="space-between" wrap="wrap">
+                    <div>
+                      <Text className="te-calling-section-label">Conversation Log</Text>
+                      <Title order={5} c={ui.heading}>
+                        Live transcript
+                      </Title>
+                    </div>
+                    <Badge variant="outline" color="teal">
+                      {transcriptEntries.length} message{transcriptEntries.length === 1 ? "" : "s"}
+                    </Badge>
+                  </Group>
+
+                  <ScrollArea className="te-subtle-scroll te-calling-scroll-fill te-calling-transcript-scroll" viewportRef={transcriptViewportRef}>
+                    <Stack gap="sm">
+                      {!transcriptEntries.length ? (
+                        <Paper className="te-calling-inline-note" p="md" radius="xl">
+                          <Text size="sm" c={ui.body} className="te-transcript-copy">
+                            {transcriptHint}
+                          </Text>
+                        </Paper>
+                      ) : null}
+                      {transcriptEntries.map((message) => (
+                        <Paper key={message.id} className="te-transcript-bubble" data-who={message.who} p="md" radius="xl">
+                          <Group justify="space-between" wrap="wrap">
+                            <Text size="xs" fw={700} c={ui.body}>
+                              {message.who === "agent" ? "Agent" : message.who === "user" ? "Borrower" : "System"}
+                            </Text>
+                            <Text size="10px" c={ui.muted}>
+                              {dayjs(message.ts).format("HH:mm:ss")}
+                            </Text>
+                          </Group>
+                          <Text size="sm" c={ui.heading} mt={6} className="te-transcript-copy">
+                            {message.text}
+                          </Text>
+                        </Paper>
+                      ))}
+                    </Stack>
+                  </ScrollArea>
+                </Stack>
+              </Paper>
+
+              <SimpleGrid cols={{ base: 1, xl: 2 }} spacing="sm">
+                <Paper className="te-calling-inline-note" p="md" radius="xl">
+                  <Stack gap="sm">
+                    <Text className="te-calling-section-label">Session Timeline</Text>
+                    {!timelineItems.length ? (
+                      <Text size="sm" c={ui.body}>
+                        Timeline markers will appear here once the phone bridge or browser voice session starts.
+                      </Text>
+                    ) : (
+                      timelineItems.map((item) => (
+                        <Paper key={`${item.type}-${item.ts}`} className="te-timeline-row" p="sm" radius="lg">
+                          <Group justify="space-between" wrap="wrap">
+                            <Text size="sm" fw={700} c={ui.heading}>
+                              {humanizeSlug(item.type)}
+                            </Text>
+                            <Text size="10px" c={ui.muted}>
+                              {dayjs(item.ts).format("HH:mm:ss")}
+                            </Text>
+                          </Group>
+                          <Text size="sm" c={ui.body} mt={4}>
+                            {item.note || "Session event"}
+                          </Text>
+                        </Paper>
+                      ))
+                    )}
+                  </Stack>
+                </Paper>
+
+                <Paper className="te-calling-inline-note" p="md" radius="xl">
+                  <Stack gap="sm">
+                    <Text className="te-calling-section-label">No Assigned Tasks</Text>
+                    <EmptyStateCard
+                      title="No assigned tasks"
+                      description="Route work from Workbench for borrower-specific calling, or use the direct bridge on the left to validate the voice stack end to end."
+                    />
+                    <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
+                      {[
+                        "Route work to the calling agent from Workbench.",
+                        "Verify microphone access and voice selection.",
+                        "Use the phone bridge only for supervised outbound checks.",
+                      ].map((item) => (
+                        <Paper key={item} className="te-calling-brief-card" p="md" radius="xl">
+                          <Text size="sm" c={ui.body}>
+                            {item}
+                          </Text>
+                        </Paper>
+                      ))}
+                    </SimpleGrid>
+                  </Stack>
+                </Paper>
               </SimpleGrid>
             </Stack>
           </Card>
@@ -1451,7 +1715,7 @@ export function CallingConsolePage() {
                       Session
                     </Text>
                     <Text fw={700} c={ui.heading}>
-                      {linkedSession?.session_id ? linkedSession.session_id.slice(-10) : "Awaiting connection"}
+                      {activeSessionId ? activeSessionId.slice(-10) : "Awaiting connection"}
                     </Text>
                     <Text size="sm" c={ui.body}>
                       {voiceHeadline(voiceStatus)}
@@ -1500,8 +1764,8 @@ export function CallingConsolePage() {
                       />
                     </div>
                     <div className="te-calling-actions-grid">
-                      <Button leftSection={<Phone size={14} />} onClick={startCall} disabled={callLive || !canMutate}>
-                        Start Call
+                      <Button leftSection={<Phone size={14} />} onClick={startCall} loading={callStarting} disabled={callLive || callStarting || !canMutate}>
+                        {callStarting ? "Starting..." : "Start Call"}
                       </Button>
                       <Button color="red" variant="light" leftSection={<PhoneOff size={14} />} onClick={() => void stopCall()} disabled={!callLive}>
                         End Call
@@ -1514,7 +1778,7 @@ export function CallingConsolePage() {
                       >
                         {muted ? "Unmute" : "Mute"}
                       </Button>
-                      <Button variant="subtle" leftSection={<Mic size={14} />} onClick={requestMic}>
+                      <Button variant="subtle" leftSection={<Mic size={14} />} onClick={requestMic} loading={micCheckBusy} disabled={micCheckBusy}>
                         Check Mic
                       </Button>
                     </div>
@@ -1534,7 +1798,7 @@ export function CallingConsolePage() {
                   </Paper>
                 </div>
 
-                <Paper className="te-calling-transcript-panel" p="md" radius="xl">
+                <Paper className="te-calling-transcript-panel te-calling-transcript-panel--live" p="md" radius="xl">
                   <Stack gap="md" h="100%">
                     <Group justify="space-between" wrap="wrap">
                       <div>
@@ -1544,20 +1808,20 @@ export function CallingConsolePage() {
                         </Title>
                       </div>
                       <Badge variant="outline" color="teal">
-                        {liveLog.length} message{liveLog.length === 1 ? "" : "s"}
+                        {transcriptEntries.length} message{transcriptEntries.length === 1 ? "" : "s"}
                       </Badge>
                     </Group>
 
-                    <ScrollArea className="te-subtle-scroll te-calling-scroll-fill" viewportRef={transcriptViewportRef}>
+                    <ScrollArea className="te-subtle-scroll te-calling-scroll-fill te-calling-transcript-scroll" viewportRef={transcriptViewportRef}>
                       <Stack gap="sm">
-                        {!liveLog.length ? (
+                        {!transcriptEntries.length ? (
                           <Paper className="te-calling-inline-note" p="md" radius="xl">
-                            <Text size="sm" c={ui.body}>
-                              Start call to begin live transcript capture.
+                            <Text size="sm" c={ui.body} className="te-transcript-copy">
+                              {transcriptHint}
                             </Text>
                           </Paper>
                         ) : null}
-                        {liveLog.map((message) => (
+                        {transcriptEntries.map((message) => (
                           <Paper key={message.id} className="te-transcript-bubble" data-who={message.who} p="md" radius="xl">
                             <Group justify="space-between" wrap="wrap">
                               <Text size="xs" fw={700} c={ui.body}>
@@ -1567,21 +1831,21 @@ export function CallingConsolePage() {
                                 {dayjs(message.ts).format("HH:mm:ss")}
                               </Text>
                             </Group>
-                            <Text size="sm" c={ui.heading} mt={6}>
+                            <Text size="sm" c={ui.heading} mt={6} className="te-transcript-copy">
                               {message.text}
                             </Text>
                           </Paper>
                         ))}
                         {userPartial ? (
                           <Paper className="te-transcript-partial" data-who="user" p="sm" radius="xl">
-                            <Text size="sm" c={ui.success}>
+                            <Text size="sm" c={ui.success} className="te-transcript-copy">
                               Borrower (partial): {userPartial}
                             </Text>
                           </Paper>
                         ) : null}
                         {agentPartial ? (
                           <Paper className="te-transcript-partial" data-who="agent" p="sm" radius="xl">
-                            <Text size="sm" c={ui.body}>
+                            <Text size="sm" c={ui.body} className="te-transcript-copy">
                               Agent (partial): {agentPartial}
                             </Text>
                           </Paper>
@@ -1705,7 +1969,7 @@ export function CallingConsolePage() {
                 <Button leftSection={<Phone size={14} />} onClick={triggerTestCall} loading={testCallBusy} disabled={!canMutate}>
                   Call Number
                 </Button>
-                <Button variant="subtle" leftSection={<Mic size={14} />} onClick={requestMic}>
+                <Button variant="subtle" leftSection={<Mic size={14} />} onClick={requestMic} loading={micCheckBusy} disabled={micCheckBusy}>
                   Check Mic
                 </Button>
               </div>
@@ -1869,7 +2133,7 @@ export function CallingConsolePage() {
                             </Text>
                           </Stack>
                           <Text size="xs" c={ui.muted} ta="right">
-                            {event.ts ? dayjs.unix(event.ts).format("DD MMM HH:mm:ss") : "-"}
+                            {event.ts ? dayjs(event.ts).format("DD MMM HH:mm:ss") : "-"}
                           </Text>
                         </Group>
                       </Paper>

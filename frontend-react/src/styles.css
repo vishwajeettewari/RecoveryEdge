@@ -59,6 +59,42 @@
   --te-shell-nav-active-shadow: 0 10px 20px rgba(17, 32, 57, 0.09);
   --te-shell-mark-shadow: 0 8px 24px rgba(5, 18, 35, 0.4);
   --te-shell-wordmark-filter: contrast(1.08);
+  --te-button-filled-bg: linear-gradient(180deg, #2c94ff 0%, #125dff 100%);
+  --te-button-filled-border: rgba(8, 77, 223, 0.72);
+  --te-button-filled-text: #f8fbff;
+  --te-button-filled-shadow: 0 10px 24px rgba(18, 93, 255, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  --te-button-default-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 250, 255, 0.84));
+  --te-button-default-border: rgba(101, 122, 162, 0.22);
+  --te-button-default-text: #1a2435;
+  --te-button-default-hover-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 246, 255, 0.92));
+  --te-button-default-shadow: 0 8px 20px rgba(15, 24, 42, 0.08);
+  --te-button-light-bg: linear-gradient(180deg, rgba(230, 239, 255, 0.92), rgba(220, 233, 255, 0.86));
+  --te-button-light-border: rgba(96, 134, 210, 0.24);
+  --te-button-light-text: #1651c5;
+  --te-button-light-hover-bg: linear-gradient(180deg, rgba(235, 243, 255, 0.98), rgba(225, 237, 255, 0.92));
+  --te-button-light-shadow: 0 8px 20px rgba(35, 88, 177, 0.08);
+  --te-button-subtle-bg: rgba(18, 93, 255, 0.06);
+  --te-button-subtle-border: rgba(84, 130, 211, 0.12);
+  --te-button-subtle-text: #1651c5;
+  --te-button-subtle-hover-bg: rgba(18, 93, 255, 0.12);
+  --te-button-outline-bg: rgba(255, 255, 255, 0.02);
+  --te-button-outline-border: rgba(96, 134, 210, 0.32);
+  --te-button-outline-text: #2058d4;
+  --te-button-outline-hover-bg: rgba(18, 93, 255, 0.08);
+  --te-button-disabled-bg: linear-gradient(180deg, rgba(241, 245, 251, 0.88), rgba(235, 240, 247, 0.84));
+  --te-button-disabled-border: rgba(125, 144, 178, 0.14);
+  --te-button-disabled-text: #94a2b8;
+  --te-button-disabled-shadow: none;
+  --te-action-icon-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 250, 255, 0.86));
+  --te-action-icon-border: rgba(101, 122, 162, 0.18);
+  --te-action-icon-text: #23314a;
+  --te-action-icon-hover-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(236, 244, 255, 0.9));
+  --te-action-icon-shadow: 0 8px 20px rgba(15, 24, 42, 0.08);
+  --te-menu-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.94));
+  --te-menu-border: rgba(101, 122, 162, 0.16);
+  --te-menu-shadow: 0 16px 32px rgba(15, 24, 42, 0.12);
+  --te-menu-item-text: #1a2435;
+  --te-menu-item-hover-bg: rgba(18, 93, 255, 0.08);
   --te-module-header-bg:
     linear-gradient(120deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.78) 100%),
     radial-gradient(420px 180px at 0% 0%, rgba(90, 126, 255, 0.22), transparent 62%);
@@ -320,6 +356,42 @@
   --te-shell-nav-active-shadow: 0 14px 28px rgba(0, 0, 0, 0.24);
   --te-shell-mark-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
   --te-shell-wordmark-filter: brightness(0) invert(1);
+  --te-button-filled-bg: linear-gradient(180deg, #2f82ff 0%, #125dff 100%);
+  --te-button-filled-border: rgba(120, 176, 255, 0.34);
+  --te-button-filled-text: #f5f9ff;
+  --te-button-filled-shadow: 0 12px 28px rgba(18, 93, 255, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  --te-button-default-bg: linear-gradient(180deg, rgba(14, 19, 30, 0.96), rgba(10, 14, 22, 0.92));
+  --te-button-default-border: rgba(118, 135, 168, 0.2);
+  --te-button-default-text: #eef4ff;
+  --te-button-default-hover-bg: linear-gradient(180deg, rgba(18, 24, 37, 0.98), rgba(12, 17, 27, 0.94));
+  --te-button-default-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+  --te-button-light-bg: linear-gradient(180deg, rgba(20, 49, 94, 0.86), rgba(16, 37, 72, 0.82));
+  --te-button-light-border: rgba(92, 140, 224, 0.26);
+  --te-button-light-text: #d7e6ff;
+  --te-button-light-hover-bg: linear-gradient(180deg, rgba(24, 58, 109, 0.92), rgba(18, 44, 84, 0.86));
+  --te-button-light-shadow: 0 10px 22px rgba(5, 16, 34, 0.22);
+  --te-button-subtle-bg: rgba(255, 255, 255, 0.02);
+  --te-button-subtle-border: rgba(118, 135, 168, 0.12);
+  --te-button-subtle-text: #dbe8fb;
+  --te-button-subtle-hover-bg: rgba(93, 150, 255, 0.12);
+  --te-button-outline-bg: rgba(255, 255, 255, 0.01);
+  --te-button-outline-border: rgba(118, 135, 168, 0.28);
+  --te-button-outline-text: #dbe8fb;
+  --te-button-outline-hover-bg: rgba(93, 150, 255, 0.08);
+  --te-button-disabled-bg: linear-gradient(180deg, rgba(18, 23, 32, 0.88), rgba(13, 17, 24, 0.84));
+  --te-button-disabled-border: rgba(118, 135, 168, 0.12);
+  --te-button-disabled-text: #73839b;
+  --te-button-disabled-shadow: none;
+  --te-action-icon-bg: linear-gradient(180deg, rgba(14, 19, 30, 0.96), rgba(10, 14, 22, 0.92));
+  --te-action-icon-border: rgba(118, 135, 168, 0.18);
+  --te-action-icon-text: #eef4ff;
+  --te-action-icon-hover-bg: linear-gradient(180deg, rgba(18, 24, 37, 0.98), rgba(12, 17, 27, 0.94));
+  --te-action-icon-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+  --te-menu-bg: linear-gradient(180deg, rgba(13, 18, 28, 0.98), rgba(9, 14, 22, 0.96));
+  --te-menu-border: rgba(118, 135, 168, 0.16);
+  --te-menu-shadow: 0 20px 38px rgba(0, 0, 0, 0.34);
+  --te-menu-item-text: #edf3ff;
+  --te-menu-item-hover-bg: rgba(93, 150, 255, 0.12);
   --te-module-header-bg:
     linear-gradient(120deg, rgba(12, 17, 26, 0.94) 0%, rgba(9, 14, 22, 0.88) 100%),
     radial-gradient(420px 180px at 0% 0%, rgba(90, 126, 255, 0.2), transparent 62%);
@@ -685,11 +757,15 @@ a:hover {
 .mantine-Button-root {
   position: relative;
   overflow: hidden;
+  border: 1px solid transparent;
+  transition: transform 160ms ease, filter 180ms ease, box-shadow 180ms ease, background 180ms ease, border-color 180ms ease, color 180ms ease;
 }
 
 .mantine-Button-root[data-variant="filled"] {
-  background: linear-gradient(180deg, #2c94ff 0%, #125dff 100%);
-  box-shadow: 0 10px 24px rgba(18, 93, 255, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  background: var(--te-button-filled-bg) !important;
+  border-color: var(--te-button-filled-border) !important;
+  color: var(--te-button-filled-text) !important;
+  box-shadow: var(--te-button-filled-shadow);
 }
 
 .mantine-Button-root[data-variant="filled"]::after {
@@ -700,9 +776,123 @@ a:hover {
   pointer-events: none;
 }
 
-.mantine-Button-root:hover {
+.mantine-Button-root[data-variant="default"] {
+  background: var(--te-button-default-bg) !important;
+  border-color: var(--te-button-default-border) !important;
+  color: var(--te-button-default-text) !important;
+  box-shadow: var(--te-button-default-shadow);
+}
+
+.mantine-Button-root[data-variant="light"] {
+  background: var(--te-button-light-bg) !important;
+  border-color: var(--te-button-light-border) !important;
+  color: var(--te-button-light-text) !important;
+  box-shadow: var(--te-button-light-shadow);
+}
+
+.mantine-Button-root[data-variant="subtle"] {
+  background: var(--te-button-subtle-bg) !important;
+  border-color: var(--te-button-subtle-border) !important;
+  color: var(--te-button-subtle-text) !important;
+}
+
+.mantine-Button-root[data-variant="outline"] {
+  background: var(--te-button-outline-bg) !important;
+  border-color: var(--te-button-outline-border) !important;
+  color: var(--te-button-outline-text) !important;
+}
+
+.mantine-Button-root:not([data-disabled]):not(:disabled):hover {
   transform: translateY(-1px);
   filter: saturate(108%);
+}
+
+.mantine-Button-root[data-variant="default"]:not([data-disabled]):not(:disabled):hover {
+  background: var(--te-button-default-hover-bg) !important;
+}
+
+.mantine-Button-root[data-variant="light"]:not([data-disabled]):not(:disabled):hover {
+  background: var(--te-button-light-hover-bg) !important;
+}
+
+.mantine-Button-root[data-variant="subtle"]:not([data-disabled]):not(:disabled):hover {
+  background: var(--te-button-subtle-hover-bg) !important;
+}
+
+.mantine-Button-root[data-variant="outline"]:not([data-disabled]):not(:disabled):hover {
+  background: var(--te-button-outline-hover-bg) !important;
+}
+
+.mantine-Button-root[data-disabled],
+.mantine-Button-root:disabled,
+.mantine-ActionIcon-root[data-disabled],
+.mantine-ActionIcon-root:disabled {
+  transform: none !important;
+  filter: none !important;
+  background: var(--te-button-disabled-bg) !important;
+  border-color: var(--te-button-disabled-border) !important;
+  color: var(--te-button-disabled-text) !important;
+  box-shadow: var(--te-button-disabled-shadow) !important;
+  opacity: 1 !important;
+}
+
+.mantine-Button-root[data-loading] {
+  filter: none;
+}
+
+.mantine-Button-loader,
+.mantine-ActionIcon-loader {
+  color: currentColor;
+}
+
+.mantine-ActionIcon-root {
+  border: 1px solid var(--te-action-icon-border);
+  background: var(--te-action-icon-bg);
+  color: var(--te-action-icon-text);
+  box-shadow: var(--te-action-icon-shadow);
+  transition: transform 160ms ease, filter 180ms ease, box-shadow 180ms ease, background 180ms ease, border-color 180ms ease, color 180ms ease;
+}
+
+.mantine-ActionIcon-root[data-variant="light"],
+.mantine-ActionIcon-root[data-variant="subtle"],
+.mantine-ActionIcon-root[data-variant="default"] {
+  border-color: var(--te-action-icon-border);
+  background: var(--te-action-icon-bg);
+  color: var(--te-action-icon-text);
+}
+
+.mantine-ActionIcon-root[data-variant="outline"] {
+  background: var(--te-button-outline-bg);
+  border-color: var(--te-button-outline-border);
+  color: var(--te-button-outline-text);
+}
+
+.mantine-ActionIcon-root:not([data-disabled]):not(:disabled):hover {
+  transform: translateY(-1px);
+  filter: saturate(108%);
+  background: var(--te-action-icon-hover-bg);
+}
+
+.mantine-Menu-dropdown,
+.mantine-Combobox-dropdown,
+.mantine-Popover-dropdown {
+  background: var(--te-menu-bg);
+  border: 1px solid var(--te-menu-border);
+  box-shadow: var(--te-menu-shadow);
+  color: var(--te-menu-item-text);
+}
+
+.mantine-Menu-item,
+.mantine-Combobox-option {
+  color: var(--te-menu-item-text);
+}
+
+.mantine-Menu-item:hover,
+.mantine-Menu-item[data-hovered],
+.mantine-Combobox-option:hover,
+.mantine-Combobox-option[data-combobox-selected],
+.mantine-Combobox-option[data-combobox-active] {
+  background: var(--te-menu-item-hover-bg);
 }
 
 .mantine-Card-root,
@@ -1174,6 +1364,18 @@ a:hover {
   background: var(--te-calling-transcript-bg);
 }
 
+.te-calling-transcript-panel--desk {
+  min-height: 380px;
+}
+
+.te-calling-transcript-panel--live {
+  min-height: 420px;
+}
+
+.te-calling-transcript-scroll {
+  min-height: 240px;
+}
+
 .te-disposition-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1203,6 +1405,13 @@ a:hover {
 .te-transcript-bubble {
   border: 1px solid var(--te-calling-bubble-border);
   background: var(--te-calling-bubble-bg);
+}
+
+.te-transcript-copy {
+  font-size: 0.97rem;
+  line-height: 1.58;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .te-transcript-bubble[data-who="agent"] {
@@ -1311,6 +1520,15 @@ a:hover {
 
   .te-calling-actions-grid {
     grid-template-columns: 1fr;
+  }
+
+  .te-calling-transcript-panel--desk,
+  .te-calling-transcript-panel--live {
+    min-height: 320px;
+  }
+
+  .te-calling-transcript-scroll {
+    min-height: 200px;
   }
 
   .te-stage-track {

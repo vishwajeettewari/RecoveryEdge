@@ -329,6 +329,7 @@ class ActionRouter:
         *,
         customer_phone: Optional[str],
         stream_ws_url: str,
+        session_id: Optional[str] = None,
         customer_name: Optional[str] = None,
         amount: Optional[str] = None,
         customer_id: Optional[str] = None,
@@ -370,6 +371,7 @@ class ActionRouter:
 
         params = "".join(
             [
+                _param("session_id", session_id),
                 _param("customer_name", customer_name),
                 _param("amount_due", amount),
                 _param("customer_id", customer_id),

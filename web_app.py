@@ -14,6 +14,7 @@ import struct
 import uuid
 from datetime import datetime
 from typing import Dict, Optional, List, Any, Tuple
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -1465,15 +1466,6 @@ def _get_demo_singletons() -> Dict[str, object]:
     db_path = get_env("DEMO_DB_PATH", os.path.join(DATA_DIR, "demo.db"))
     knowledge_dir = get_env("KNOWLEDGE_DIR", KNOWLEDGE_DIR_DEFAULT)
     pay_base_url = get_env("DEMO_PAY_BASE_URL", "https://pay.example/demo")
-    twilio_account_sid = get_env("TWILIO_ACCOUNT_SID")
-    twilio_auth_token = get_env("TWILIO_AUTH_TOKEN")
-    twilio_from_number = get_env("TWILIO_PHONE_NUMBER", get_env("TWILIO_FROM_NUMBER"))
-    twilio_whatsapp_from = get_env("TWILIO_WHATSAPP_FROM")
-    twilio_send_enabled_raw = get_env("TWILIO_SEND_ENABLED")
-    if twilio_send_enabled_raw is None or str(twilio_send_enabled_raw).strip() == "":
-        twilio_send_enabled: Optional[bool] = None
-    else:
-        twilio_send_enabled = str(twilio_send_enabled_raw).strip().lower() in {"1", "true", "yes", "y", "on"}
     twilio_timeout_s = float(get_env("TWILIO_TIMEOUT_S", "8") or "8")
 
     retention_days = int(get_env("PHI_RETENTION_DAYS", "30") or "30")
@@ -1484,15 +1476,7 @@ def _get_demo_singletons() -> Dict[str, object]:
     sink = ExcelOutcomeSink(output_path)
     sink.ensure_workbook()
     source = ExcelCustomerSource(customers_path)
-    router = ActionRouter(
-        pay_base_url=pay_base_url,
-        twilio_account_sid=twilio_account_sid,
-        twilio_auth_token=twilio_auth_token,
-        twilio_from_number=twilio_from_number,
-        twilio_whatsapp_from=twilio_whatsapp_from,
-        twilio_send_enabled=twilio_send_enabled,
-        twilio_timeout_s=twilio_timeout_s,
-    )
+    router = _build_action_router_from_env()
     knowledge = SQLiteFTSKnowledgeStore(db_path, knowledge_dir)
     strategy = StrategyEngine()
     compliance = ComplianceEngine()
@@ -1591,6 +1575,34 @@ def _get_demo_singletons() -> Dict[str, object]:
     )
     _start_background_loops()
     return _demo_state
+
+
+def _build_action_router_from_env() -> ActionRouter:
+    pay_base_url = get_env("DEMO_PAY_BASE_URL", "https://pay.example/demo")
+    twilio_account_sid = get_env("TWILIO_ACCOUNT_SID")
+    twilio_auth_token = get_env("TWILIO_AUTH_TOKEN")
+    twilio_from_number = get_env("TWILIO_PHONE_NUMBER", get_env("TWILIO_FROM_NUMBER"))
+    twilio_whatsapp_from = get_env("TWILIO_WHATSAPP_FROM")
+    twilio_send_enabled_raw = get_env("TWILIO_SEND_ENABLED")
+    if twilio_send_enabled_raw is None or str(twilio_send_enabled_raw).strip() == "":
+        twilio_send_enabled: Optional[bool] = None
+    else:
+        twilio_send_enabled = str(twilio_send_enabled_raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+    twilio_timeout_s = float(get_env("TWILIO_TIMEOUT_S", "8") or "8")
+    return ActionRouter(
+        pay_base_url=pay_base_url,
+        twilio_account_sid=twilio_account_sid,
+        twilio_auth_token=twilio_auth_token,
+        twilio_from_number=twilio_from_number,
+        twilio_whatsapp_from=twilio_whatsapp_from,
+        twilio_send_enabled=twilio_send_enabled,
+        twilio_timeout_s=twilio_timeout_s,
+    )
+
+
+def _refresh_demo_runtime_config(demo: Dict[str, object]) -> None:
+    load_dotenv(override=True)
+    demo["router"] = _build_action_router_from_env()
 
 
 def _dpd_value_and_bucket(value: Any) -> Tuple[Optional[int], Optional[str]]:
@@ -2313,6 +2325,7 @@ async def api_telephony_test_call(request: Request):
         )
 
     demo = _get_demo_singletons()
+    _refresh_demo_runtime_config(demo)
     router: ActionRouter = demo["router"]  # type: ignore[assignment]
     audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
     sink: ExcelOutcomeSink = demo["sink"]  # type: ignore[assignment]
@@ -2360,8 +2373,16 @@ async def api_telephony_agent_call(request: Request):
             message="Invalid telephony agent call payload",
             details={"errors": exc.errors()},
         )
-    stream_ws_url = _telephony_stream_ws_url(request)
-    demo_stream_url = "wss://demo.turingedge.invalid/ws/twilio-media"
+    demo = _get_demo_singletons()
+    _refresh_demo_runtime_config(demo)
+    router: ActionRouter = demo["router"]  # type: ignore[assignment]
+    audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
+    sink: ExcelOutcomeSink = demo["sink"]  # type: ignore[assignment]
+    actor = _actor(request)
+    payload = body_obj.model_dump(exclude_none=True)
+    session_id = f"tel-agent-{uuid.uuid4().hex[:10]}"
+    stream_ws_url = _append_query_params(_telephony_stream_ws_url(request), session_id=session_id)
+    demo_stream_url = _append_query_params("wss://demo.turingedge.invalid/ws/twilio-media", session_id=session_id)
     if not stream_ws_url.startswith("wss://") and not _is_demo():
         return _error_response(
             request,
@@ -2370,20 +2391,13 @@ async def api_telephony_agent_call(request: Request):
             message="Set TELEPHONY_PUBLIC_BASE_URL or TELEPHONY_STREAM_WSS_URL to a public wss:// endpoint",
             details={"resolved_stream_ws_url": stream_ws_url},
         )
-
-    demo = _get_demo_singletons()
-    router: ActionRouter = demo["router"]  # type: ignore[assignment]
-    audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
-    sink: ExcelOutcomeSink = demo["sink"]  # type: ignore[assignment]
-    actor = _actor(request)
-    payload = body_obj.model_dump(exclude_none=True)
-    session_id = f"tel-agent-{uuid.uuid4().hex[:10]}"
     if not stream_ws_url.startswith("wss://") and _is_demo():
         call_result = _demo_voice_call_result(customer_phone=body_obj.phone, stream_ws_url=demo_stream_url)
     else:
         call_result = router.place_agent_stream_call(
             customer_phone=body_obj.phone,
             stream_ws_url=stream_ws_url,
+            session_id=session_id,
             customer_name=body_obj.customer_name,
             amount=body_obj.amount_due,
             customer_id=body_obj.customer_id,
@@ -4188,6 +4202,19 @@ def _telephony_stream_ws_url(request: Optional[Request] = None) -> str:
     return _to_ws_url(base, "/ws/twilio-media")
 
 
+def _append_query_params(url: str, **params: Optional[str]) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return raw
+    parts = urlsplit(raw)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    for key, value in params.items():
+        text = str(value or "").strip()
+        if text:
+            query[key] = text
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
 class TwilioMediaSender:
     def __init__(self, websocket: WebSocket) -> None:
         self.websocket = websocket
@@ -4248,6 +4275,7 @@ async def twilio_media_socket(websocket: WebSocket) -> None:
     await websocket.accept()
 
     demo = _get_demo_singletons()
+    _refresh_demo_runtime_config(demo)
     audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
     sink: ExcelOutcomeSink = demo["sink"]  # type: ignore[assignment]
     router: ActionRouter = demo["router"]  # type: ignore[assignment]
@@ -4345,6 +4373,7 @@ async def twilio_media_socket(websocket: WebSocket) -> None:
         return
 
     twilio_sender = TwilioMediaSender(websocket)
+    requested_session_id = (websocket.query_params.get("session_id") or "").strip() or None
     session = WebCallSession(
         stt_service=stt,
         llm_service=llm,
@@ -4387,6 +4416,7 @@ async def twilio_media_socket(websocket: WebSocket) -> None:
         compliance_engine=compliance,
         followup_service=followups,
         crm_adapter=crm,
+        session_id=requested_session_id,
     )
     session_objs[session._session_id] = session
 
@@ -4487,6 +4517,7 @@ async def voice_socket(websocket: WebSocket) -> None:
     ws_tenant_id = ""
     ws_session_id = ""
     demo = _get_demo_singletons()
+    _refresh_demo_runtime_config(demo)
     audit: SQLiteAuditStore = demo["audit"]  # type: ignore[assignment]
     ws_token = (websocket.query_params.get("token") or websocket.query_params.get("ws_token") or "").strip()
     if not ws_token:

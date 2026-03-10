@@ -6,13 +6,12 @@
     <title>NBFC Recovery OS</title>
     <script>
       (() => {
-        const stored = window.localStorage.getItem("te-color-scheme");
-        const resolved =
-          stored === "light" || stored === "dark"
-            ? stored
-            : window.matchMedia("(prefers-color-scheme: dark)").matches
-              ? "dark"
-              : "light";
+        const key = "te-color-scheme";
+        const stored = window.localStorage.getItem(key);
+        const resolved = stored === "dark" ? "dark" : "light";
+        if (stored !== resolved) {
+          window.localStorage.setItem(key, resolved);
+        }
         document.documentElement.setAttribute("data-mantine-color-scheme", resolved);
       })();
     </script>

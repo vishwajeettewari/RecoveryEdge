@@ -6,6 +6,7 @@ import {
   Collapse,
   Grid,
   Group,
+  Loader,
   Menu,
   Paper,
   Progress,
@@ -20,9 +21,9 @@ import {
   Title,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  ArrowUpRight,
   Brain,
   Calendar,
   ChevronDown,
@@ -32,41 +33,36 @@ import {
   Filter,
   Landmark,
   Layers,
-  MapPin,
   Phone,
   PhoneCall,
   RefreshCw,
-  Scale,
-  Send,
+  ShieldAlert,
   Target,
   TrendingDown,
   TrendingUp,
-  User,
   UserCheck,
   Users,
   Wallet,
   Zap,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
-  ComposedChart,
-  LabelList,
-  Legend,
-  Line,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
 } from "recharts";
 
+import { apiFetch, toQuery } from "../../api/client";
+import { EmptyStateCard } from "../../components/EmptyStateCard";
 import { ModuleHeader } from "../../components/ModuleHeader";
+import type { ApiListResponse, BuildInfo, CampaignRow, SessionSnapshot, TaskRow } from "../../types/api";
 
 const COLORS = {
   primary: "#125dff",
@@ -87,19 +83,20 @@ const COLORS = {
   slateLight: "rgba(100, 116, 139, 0.12)",
 };
 
-const BUCKET_COLORS = {
-  "0-30": "#22c55e",
+const BUCKET_COLORS: Record<string, string> = {
+  "1-30": "#22c55e",
   "31-60": "#eab308",
   "61-90": "#f97316",
-  "90-180": "#ef4444",
-  "180+": "#991b1b",
+  "90+": "#ef4444",
 };
 
-const RISK_COLORS = {
-  low: "#22c55e",
-  medium: "#eab308",
-  high: "#f97316",
-  severe: "#ef4444",
+const STATE_COLORS: Record<string, string> = {
+  NEW: COLORS.primary,
+  IN_PROGRESS: COLORS.info,
+  PTP: COLORS.success,
+  CALLBACK: COLORS.warning,
+  ESCALATED: COLORS.danger,
+  CLOSED: COLORS.slate,
 };
 
 const CHART_THEME = {
@@ -131,6 +128,149 @@ const CHART_SUBTLE_PANEL_STYLE = {
   border: `1px solid ${CHART_THEME.subtleBorder}`,
 };
 
+const DATE_RANGE_OPTIONS = [
+  { value: "today", label: "Today" },
+  { value: "last_7", label: "Last 7 Days" },
+  { value: "last_30", label: "Last 30 Days" },
+  { value: "last_90", label: "Last 90 Days" },
+];
+
+const TASK_STATE_OPTIONS = [
+  { value: "", label: "All task states" },
+  { value: "NEW", label: "New" },
+  { value: "IN_PROGRESS", label: "In Progress" },
+  { value: "PTP", label: "PTP" },
+  { value: "CALLBACK", label: "Callback" },
+  { value: "ESCALATED", label: "Escalated" },
+  { value: "CLOSED", label: "Closed" },
+];
+
+const DPD_BUCKET_OPTIONS = [
+  { value: "", label: "All buckets" },
+  { value: "1-30", label: "1-30 DPD" },
+  { value: "31-60", label: "31-60 DPD" },
+  { value: "61-90", label: "61-90 DPD" },
+  { value: "90+", label: "90+ DPD" },
+];
+
+const TASK_STATE_ORDER = ["NEW", "IN_PROGRESS", "PTP", "CALLBACK", "ESCALATED", "CLOSED"] as const;
+const LIVE_REFRESH_MS = 10_000;
+
+interface MetricsResponse {
+  sessions_today: number;
+  ptp_count: number;
+  callback_count: number;
+  escalations: number;
+  retries_pending: number;
+  avg_handle_seconds?: number | null;
+  expected_recovery_amount?: number;
+  sla_breaches?: number;
+  accounts_assigned?: number;
+  accounts_contacted?: number;
+  contact_rate_pct?: number;
+  followups_scheduled_total?: number;
+  followups_pending_total?: number;
+  followups_sent_total?: number;
+  followups_missed_total?: number;
+  followups_due_today?: number;
+  followups_completed_today?: number;
+  followup_discipline_rate_pct?: number;
+  ptp_miss_count?: number;
+  ptp_miss_open_alerts?: number;
+  profanity_incidents?: number;
+  queue_snapshot?: Record<string, number>;
+  bucket_heatmap?: Record<string, number>;
+  ptp_rate_by_bucket?: Record<string, { total: number; ptp: number; rate: number }>;
+}
+
+interface RollForwardResponse {
+  buckets: string[];
+  matrix: Record<string, Record<string, number>>;
+  total_transitions: number;
+  roll_forward_count: number;
+  roll_forward_pct: number;
+  rollback_count?: number;
+  rollback_pct?: number;
+  cure_count?: number;
+  cure_rate_pct?: number;
+  window_days: number;
+}
+
+interface RecoveryResponse {
+  dates: string[];
+  amounts: number[];
+  total_recovered: number;
+  portfolio_value: number;
+  recovery_rate_pct: number;
+  window_days: number;
+  reconciliation: Array<{ date?: string; session_id?: string; customer_id?: string; amount?: number }>;
+}
+
+interface AgentMetric {
+  rank: number;
+  agent_id?: string;
+  display_name: string;
+  total_calls: number;
+  connect_rate_pct: number;
+  avg_handle_time_s: number;
+  ptp_count: number;
+  ptp_conversion_pct: number;
+  escalations: number;
+  compliance_violations: number;
+}
+
+interface BucketMetric {
+  bucket: string;
+  exposure: number;
+  share: number;
+  ptpRate: number;
+  ptpCount: number;
+  ptpTotal: number;
+  color: string;
+}
+
+interface SignalTileProps {
+  title: string;
+  value: string;
+  detail: string;
+  color: string;
+  icon: React.ReactNode;
+}
+
+interface RecommendationTileProps {
+  title: string;
+  countLabel: string;
+  detail: string;
+  color: string;
+  icon: React.ReactNode;
+}
+
+interface QueueAction {
+  title: string;
+  count: number;
+  detail: string;
+  color: string;
+  icon: React.ReactNode;
+}
+
+interface KPICardProps {
+  label: string;
+  value: string | number;
+  subValue?: string;
+  trend?: number;
+  icon?: React.ReactNode;
+  color?: string;
+}
+
+interface SectionHeaderProps {
+  title: string;
+  subtitle?: string;
+  icon: React.ReactNode;
+  badge?: string;
+  badgeColor?: string;
+  action?: React.ReactNode;
+}
+
 function rupees(n: number): string {
   try {
     return new Intl.NumberFormat("en-IN", {
@@ -158,70 +298,111 @@ function formatNumber(n: number): string {
   return new Intl.NumberFormat("en-IN").format(n || 0);
 }
 
-interface KPICardProps {
-  label: string;
-  value: string | number;
-  subValue?: string;
-  trend?: number;
-  trendLabel?: string;
-  icon?: React.ReactNode;
-  color?: string;
-  onClick?: () => void;
+function formatDuration(seconds?: number | null): string {
+  const totalSeconds = Math.max(0, Math.round(Number(seconds || 0)));
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainder = totalSeconds % 60;
+  if (minutes <= 0) {
+    return `${remainder}s`;
+  }
+  return `${minutes}m ${remainder}s`;
 }
 
-function KPICard({ label, value, subValue, trend, trendLabel, icon, color = COLORS.primary, onClick }: KPICardProps) {
+function formatShortDate(value?: string): string {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
+}
+
+function stateLabel(state: string): string {
+  return state.replaceAll("_", " ");
+}
+
+function daysFromRange(range: string): number {
+  switch (range) {
+    case "today":
+      return 1;
+    case "last_7":
+      return 7;
+    case "last_90":
+      return 90;
+    default:
+      return 30;
+  }
+}
+
+function clamp(value: number, min = 0, max = 100): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function pressureLabel(score: number): { label: string; color: string; detail: string } {
+  if (score >= 76) {
+    return {
+      label: "Intervention",
+      color: "red",
+      detail: "Queue pressure is high enough that collections leadership should intervene now.",
+    };
+  }
+  if (score >= 56) {
+    return {
+      label: "Tight",
+      color: "orange",
+      detail: "The campaign is still recoverable, but rollover and follow-up exceptions are accumulating.",
+    };
+  }
+  if (score >= 31) {
+    return {
+      label: "Watch",
+      color: "blue",
+      detail: "Current pressure is manageable, but the next movement window should be watched closely.",
+    };
+  }
+  return {
+    label: "Stable",
+    color: "green",
+    detail: "Current campaign behavior is within normal operating guardrails.",
+  };
+}
+
+function KPICard({ label, value, subValue, trend, icon, color = COLORS.primary }: KPICardProps) {
   const TrendIcon = trend && trend > 0 ? TrendingUp : trend && trend < 0 ? TrendingDown : null;
-  const trendColor = trend && trend > 0 ? COLORS.success : trend && trend < 0 ? COLORS.danger : COLORS.slate;
 
   return (
-    <Card
-      className="te-command-kpi"
-      onClick={onClick}
-      style={{ cursor: onClick ? "pointer" : "default" }}
-    >
+    <Card className="te-command-kpi">
       <Group justify="space-between" align="flex-start" mb="xs">
         <Text size="xs" tt="uppercase" fw={700} c="dimmed" style={{ letterSpacing: "0.06em" }}>
           {label}
         </Text>
-        {icon && (
+        {icon ? (
           <ThemeIcon size="sm" variant="light" color="blue" radius="md">
             {icon}
           </ThemeIcon>
-        )}
+        ) : null}
       </Group>
       <Title order={2} style={{ color, letterSpacing: "-0.02em" }}>
         {value}
       </Title>
-      {(subValue || trend !== undefined) && (
+      {subValue || trend !== undefined ? (
         <Group gap="xs" mt="xs">
-          {trend !== undefined && TrendIcon && (
-            <Badge
-              variant="light"
-              color={trend > 0 ? "green" : "red"}
-              size="sm"
-              leftSection={<TrendIcon size={12} />}
-            >
+          {trend !== undefined && TrendIcon ? (
+            <Badge variant="light" color={trend > 0 ? "green" : "red"} size="sm" leftSection={<TrendIcon size={12} />}>
               {Math.abs(trend).toFixed(1)}%
             </Badge>
-          )}
-          {subValue && (
+          ) : null}
+          {subValue ? (
             <Text size="xs" c="dimmed">
               {subValue}
             </Text>
-          )}
+          ) : null}
         </Group>
-      )}
+      ) : null}
     </Card>
   );
-}
-
-interface SectionHeaderProps {
-  title: string;
-  subtitle?: string;
-  icon: React.ReactNode;
-  badge?: string;
-  badgeColor?: string;
-  action?: React.ReactNode;
 }
 
 function SectionHeader({ title, subtitle, icon, badge, badgeColor = "blue", action }: SectionHeaderProps) {
@@ -236,17 +417,17 @@ function SectionHeader({ title, subtitle, icon, badge, badgeColor = "blue", acti
             <Title order={4} style={{ letterSpacing: "-0.01em" }}>
               {title}
             </Title>
-            {badge && (
+            {badge ? (
               <Badge variant="light" color={badgeColor} size="sm">
                 {badge}
               </Badge>
-            )}
+            ) : null}
           </Group>
-          {subtitle && (
+          {subtitle ? (
             <Text size="sm" c="dimmed">
               {subtitle}
             </Text>
-          )}
+          ) : null}
         </div>
       </Group>
       {action}
@@ -254,24 +435,106 @@ function SectionHeader({ title, subtitle, icon, badge, badgeColor = "blue", acti
   );
 }
 
+function SignalTile({ title, value, detail, color, icon }: SignalTileProps) {
+  return (
+    <Paper
+      p="md"
+      radius="md"
+      style={{
+        ...CHART_SUBTLE_PANEL_STYLE,
+        background:
+          color === COLORS.danger
+            ? COLORS.dangerLight
+            : color === COLORS.warning
+            ? COLORS.warningLight
+            : color === COLORS.success
+            ? COLORS.successLight
+            : color === COLORS.teal
+            ? COLORS.tealLight
+            : color === COLORS.purple
+            ? COLORS.purpleLight
+            : COLORS.primaryLight,
+      }}
+    >
+      <Stack gap={8}>
+        <Group justify="space-between" align="flex-start">
+          <ThemeIcon radius="md" variant="light" color="blue">
+            {icon}
+          </ThemeIcon>
+          <Badge variant="outline" color="gray">
+            {title}
+          </Badge>
+        </Group>
+        <Title order={3} style={{ color, letterSpacing: "-0.02em" }}>
+          {value}
+        </Title>
+        <Text size="sm">{detail}</Text>
+      </Stack>
+    </Paper>
+  );
+}
+
+function RecommendationTile({ title, countLabel, detail, color, icon }: RecommendationTileProps) {
+  return (
+    <Paper
+      p="md"
+      radius="md"
+      style={{
+        ...CHART_SUBTLE_PANEL_STYLE,
+        background:
+          color === COLORS.danger
+            ? COLORS.dangerLight
+            : color === COLORS.warning
+            ? COLORS.warningLight
+            : color === COLORS.success
+            ? COLORS.successLight
+            : color === COLORS.teal
+            ? COLORS.tealLight
+            : COLORS.primaryLight,
+      }}
+    >
+      <Group justify="space-between" align="flex-start">
+        <Group gap="sm" align="flex-start">
+          <ThemeIcon radius="md" variant="light" color="blue">
+            {icon}
+          </ThemeIcon>
+          <div>
+            <Text size="sm" fw={600}>
+              {title}
+            </Text>
+            <Text size="xs" c="dimmed" mt={4}>
+              {detail}
+            </Text>
+          </div>
+        </Group>
+        <Badge variant="filled" color={color === COLORS.warning ? "orange" : color === COLORS.danger ? "red" : color === COLORS.success ? "green" : "blue"}>
+          {countLabel}
+        </Badge>
+      </Group>
+    </Paper>
+  );
+}
+
 function GlobalFilters({
   dateRange,
   setDateRange,
-  region,
-  setRegion,
-  portfolio,
-  setPortfolio,
+  campaignId,
+  setCampaignId,
+  campaignOptions,
+  taskState,
+  setTaskState,
   bucket,
   setBucket,
 }: {
   dateRange: string;
-  setDateRange: (v: string) => void;
-  region: string;
-  setRegion: (v: string) => void;
-  portfolio: string;
-  setPortfolio: (v: string) => void;
+  setDateRange: (value: string) => void;
+  campaignId: string;
+  setCampaignId: (value: string) => void;
+  campaignOptions: Array<{ value: string; label: string }>;
+  taskState: string;
+  setTaskState: (value: string) => void;
   bucket: string;
-  setBucket: (v: string) => void;
+  setBucket: (value: string) => void;
 }) {
   const [filtersOpen, { toggle: toggleFilters }] = useDisclosure(true);
 
@@ -287,7 +550,7 @@ function GlobalFilters({
               Global Filters
             </Text>
             <Text size="xs" c="dimmed">
-              Apply filters across all dashboard sections
+              Scope the command center to a live campaign and its current queue.
             </Text>
           </div>
         </Group>
@@ -298,8 +561,7 @@ function GlobalFilters({
             leftSection={<RefreshCw size={14} />}
             onClick={() => {
               setDateRange("last_30");
-              setRegion("");
-              setPortfolio("");
+              setTaskState("");
               setBucket("");
             }}
           >
@@ -323,61 +585,34 @@ function GlobalFilters({
             label="Date Range"
             placeholder="Select period"
             value={dateRange}
-            onChange={(v) => setDateRange(v || "last_30")}
-            data={[
-              { value: "today", label: "Today" },
-              { value: "last_7", label: "Last 7 Days" },
-              { value: "last_30", label: "Last 30 Days" },
-              { value: "last_90", label: "Last 90 Days" },
-              { value: "custom", label: "Custom Range" },
-            ]}
+            onChange={(value) => setDateRange(value || "last_30")}
+            data={DATE_RANGE_OPTIONS}
             leftSection={<Calendar size={16} />}
           />
           <Select
-            label="Region"
-            placeholder="All Regions"
-            value={region}
-            onChange={(v) => setRegion(v || "")}
-            data={[
-              { value: "", label: "All Regions" },
-              { value: "north", label: "North India" },
-              { value: "south", label: "South India" },
-              { value: "east", label: "East India" },
-              { value: "west", label: "West India" },
-            ]}
-            leftSection={<MapPin size={16} />}
-            clearable
+            label="Campaign"
+            placeholder="Select campaign"
+            value={campaignId}
+            onChange={(value) => setCampaignId(value || "")}
+            data={campaignOptions}
+            leftSection={<Landmark size={16} />}
+            searchable
           />
           <Select
-            label="Portfolio"
-            placeholder="All Portfolios"
-            value={portfolio}
-            onChange={(v) => setPortfolio(v || "")}
-            data={[
-              { value: "", label: "All Portfolios" },
-              { value: "personal_loan", label: "Personal Loans" },
-              { value: "business_loan", label: "Business Loans" },
-              { value: "vehicle_loan", label: "Vehicle Loans" },
-              { value: "credit_card", label: "Credit Cards" },
-            ]}
-            leftSection={<Wallet size={16} />}
-            clearable
+            label="Task State"
+            placeholder="All task states"
+            value={taskState}
+            onChange={(value) => setTaskState(value || "")}
+            data={TASK_STATE_OPTIONS}
+            leftSection={<Target size={16} />}
           />
           <Select
             label="Delinquency Bucket"
-            placeholder="All Buckets"
+            placeholder="All buckets"
             value={bucket}
-            onChange={(v) => setBucket(v || "")}
-            data={[
-              { value: "", label: "All Buckets" },
-              { value: "0-30", label: "0-30 DPD" },
-              { value: "31-60", label: "31-60 DPD" },
-              { value: "61-90", label: "61-90 DPD" },
-              { value: "90-180", label: "90-180 DPD" },
-              { value: "180+", label: "180+ DPD" },
-            ]}
-            leftSection={<Layers size={16} />}
-            clearable
+            onChange={(value) => setBucket(value || "")}
+            data={DPD_BUCKET_OPTIONS}
+            leftSection={<Wallet size={16} />}
           />
         </SimpleGrid>
       </Collapse>
@@ -385,219 +620,267 @@ function GlobalFilters({
   );
 }
 
-function PortfolioHealthSection() {
-  const portfolioData = {
-    totalLoanBook: 245000000000,
-    activeLoans: 1250000,
-    overdueAmount: 18500000000,
-    npaAmount: 8200000000,
-    npaRatio: 3.35,
-    expectedRecovery: 4500000000,
-    recoveryThisMonth: 2800000000,
-  };
-
-  const trendData = [
-    { month: "Aug", total: 220, delinquent: 15, recovered: 2.1 },
-    { month: "Sep", total: 228, delinquent: 16, recovered: 2.4 },
-    { month: "Oct", total: 235, delinquent: 17, recovered: 2.6 },
-    { month: "Nov", total: 240, delinquent: 18, recovered: 2.5 },
-    { month: "Dec", total: 242, delinquent: 18.2, recovered: 2.7 },
-    { month: "Jan", total: 245, delinquent: 18.5, recovered: 2.8 },
-  ];
+function PortfolioHealthSection({
+  metrics,
+  recovery,
+  queueRows,
+  selectedCampaign,
+}: {
+  metrics: MetricsResponse;
+  recovery: RecoveryResponse;
+  queueRows: Array<{ state: string; count: number; color: string }>;
+  selectedCampaign: CampaignRow;
+}) {
+  const totalRecovered = Number(recovery.total_recovered || 0);
+  const expectedRecovery = Number(metrics.expected_recovery_amount || 0);
+  const recoveryGap = Math.max(0, expectedRecovery - totalRecovered);
+  const recoveryData = (recovery.dates || []).map((date, index) => ({
+    date: formatShortDate(date),
+    amount: Number(recovery.amounts?.[index] || 0),
+  }));
 
   return (
     <Card className="te-command-section">
       <SectionHeader
         title="Portfolio Health Overview"
-        subtitle="Real-time snapshot of the loan portfolio"
+        subtitle="Live campaign scope, recovery throughput, and queue posture"
         icon={<Landmark size={20} />}
-        badge="Live"
+        badge={selectedCampaign.status || "active"}
         badgeColor="green"
+        action={
+          <Badge variant="outline" color="blue">
+            {formatNumber(Number(selectedCampaign.total_accounts || 0))} accounts
+          </Badge>
+        }
       />
 
-      <SimpleGrid cols={{ base: 2, sm: 3, lg: 7 }} spacing="md" mb="lg">
+      <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} spacing="md" mb="lg">
         <KPICard
-          label="Total Loan Book"
-          value={rupeesCompact(portfolioData.totalLoanBook)}
-          subValue="Outstanding principal"
-          trend={2.1}
-          icon={<Wallet size={14} />}
-        />
-        <KPICard
-          label="Active Loans"
-          value={formatNumber(portfolioData.activeLoans)}
-          subValue="Current accounts"
-          trend={1.8}
+          label="Accounts In Scope"
+          value={formatNumber(Number(metrics.accounts_assigned || selectedCampaign.total_accounts || 0))}
+          subValue="Campaign queue"
           icon={<Users size={14} />}
         />
         <KPICard
-          label="Total Overdue"
-          value={rupeesCompact(portfolioData.overdueAmount)}
-          subValue="Pending payments"
-          trend={-3.2}
-          icon={<Clock size={14} />}
-          color={COLORS.warning}
+          label="Accounts Contacted"
+          value={formatNumber(Number(metrics.accounts_contacted || 0))}
+          subValue="Distinct borrowers reached"
+          icon={<UserCheck size={14} />}
+          color={COLORS.info}
         />
         <KPICard
-          label="NPA Amount"
-          value={rupeesCompact(portfolioData.npaAmount)}
-          subValue={`${portfolioData.npaRatio}% of portfolio`}
-          trend={-1.5}
-          icon={<AlertTriangle size={14} />}
-          color={COLORS.danger}
+          label="Contact Coverage"
+          value={percent(metrics.contact_rate_pct)}
+          subValue="Reached vs assigned"
+          icon={<Phone size={14} />}
+          color={COLORS.success}
         />
         <KPICard
           label="Expected Recovery"
-          value={rupeesCompact(portfolioData.expectedRecovery)}
-          subValue="Next 30 days (AI)"
-          icon={<Brain size={14} />}
+          value={rupeesCompact(expectedRecovery)}
+          subValue="Current PTP book"
+          icon={<Wallet size={14} />}
           color={COLORS.teal}
         />
         <KPICard
-          label="Recovery MTD"
-          value={rupeesCompact(portfolioData.recoveryThisMonth)}
-          subValue="This month"
-          trend={12.4}
+          label="Realized Recovery"
+          value={rupeesCompact(totalRecovered)}
+          subValue={`${percent(recovery.recovery_rate_pct)} realized`}
           icon={<TrendingUp size={14} />}
           color={COLORS.success}
         />
         <KPICard
-          label="Recovery Rate"
-          value={percent(15.1)}
-          subValue="vs 13.2% last month"
-          trend={14.4}
-          icon={<Target size={14} />}
-          color={COLORS.success}
+          label="Recovery Gap"
+          value={rupeesCompact(recoveryGap)}
+          subValue={recoveryGap > 0 ? "Gap between expected and realized" : "Expected book is realized"}
+          icon={<AlertTriangle size={14} />}
+          color={recoveryGap > 0 ? COLORS.warning : COLORS.success}
         />
       </SimpleGrid>
 
-      <Card className="te-command-chart-card">
-        <Group justify="space-between" mb="md">
-          <Text size="sm" fw={600}>
-            Portfolio Trend (₹ in Cr)
-          </Text>
-          <Badge variant="light" size="sm">
-            6 Months
-          </Badge>
-        </Group>
-        <div style={{ height: 280 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={trendData}>
-              <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
-              <XAxis dataKey="month" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
-              <YAxis yAxisId="left" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
-              <YAxis yAxisId="right" orientation="right" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
-              <RechartsTooltip
-                contentStyle={CHART_TOOLTIP_STYLE}
-                labelStyle={CHART_TOOLTIP_TEXT_STYLE}
-                itemStyle={CHART_TOOLTIP_TEXT_STYLE}
+      <Grid>
+        <Grid.Col span={{ base: 12, lg: 7 }}>
+          <Card className="te-command-chart-card">
+            <Group justify="space-between" mb="md">
+              <div>
+                <Text size="sm" fw={600}>
+                  Realized Recovery Trend
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Successful payment captures in the selected observation window
+                </Text>
+              </div>
+              <Badge variant="light" size="sm">
+                {recovery.window_days || 30} days
+              </Badge>
+            </Group>
+            {recoveryData.length ? (
+              <div style={{ height: 250 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={recoveryData}>
+                    <defs>
+                      <linearGradient id="te-command-recovery-fill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={COLORS.primary} stopOpacity={0.36} />
+                        <stop offset="95%" stopColor={COLORS.primary} stopOpacity={0.04} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
+                    <XAxis dataKey="date" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
+                    <YAxis tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
+                    <RechartsTooltip
+                      contentStyle={CHART_TOOLTIP_STYLE}
+                      labelStyle={CHART_TOOLTIP_TEXT_STYLE}
+                      itemStyle={CHART_TOOLTIP_TEXT_STYLE}
+                      formatter={(value) => [rupees(Number(value || 0)), "Recovered"]}
+                    />
+                    <Area type="monotone" dataKey="amount" stroke={COLORS.primary} fill="url(#te-command-recovery-fill)" strokeWidth={2.5} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <EmptyStateCard
+                title="No realized recovery yet"
+                description="Successful payment captures will populate the campaign recovery trend here."
               />
-              <Legend />
-              <Area
-                yAxisId="left"
-                type="monotone"
-                dataKey="total"
-                name="Total Portfolio"
-                fill={COLORS.primaryLight}
-                stroke={COLORS.primary}
-                strokeWidth={2}
-              />
-              <Area
-                yAxisId="left"
-                type="monotone"
-                dataKey="delinquent"
-                name="Delinquent"
-                fill={COLORS.dangerLight}
-                stroke={COLORS.danger}
-                strokeWidth={2}
-              />
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="recovered"
-                name="Recovered"
-                stroke={COLORS.success}
-                strokeWidth={3}
-                dot={{ fill: COLORS.success, r: 4 }}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
+            )}
+          </Card>
+        </Grid.Col>
+
+        <Grid.Col span={{ base: 12, lg: 5 }}>
+          <Card className="te-command-chart-card">
+            <Group justify="space-between" mb="md">
+              <div>
+                <Text size="sm" fw={600}>
+                  Queue Posture
+                </Text>
+                <Text size="xs" c="dimmed">
+                  How the campaign is distributed across work states right now
+                </Text>
+              </div>
+              <Badge variant="light" size="sm">
+                Live
+              </Badge>
+            </Group>
+            <Stack gap="sm">
+              {queueRows.map((item) => {
+                const maxCount = Math.max(1, ...queueRows.map((row) => row.count));
+                return (
+                  <div key={item.state}>
+                    <Group justify="space-between" mb={6}>
+                      <Text size="sm" fw={500}>
+                        {stateLabel(item.state)}
+                      </Text>
+                      <Text size="sm" fw={700}>
+                        {formatNumber(item.count)}
+                      </Text>
+                    </Group>
+                    <Progress value={(item.count / maxCount) * 100} color={item.color} size="sm" radius="xl" />
+                  </div>
+                );
+              })}
+              <Paper p="md" radius="md" style={CHART_SUBTLE_PANEL_STYLE}>
+                <Text size="xs" tt="uppercase" fw={700} c="dimmed">
+                  Campaign scope
+                </Text>
+                <Title order={4} mt={6}>
+                  {selectedCampaign.name || selectedCampaign.campaign_id}
+                </Title>
+                <Text size="sm" c="dimmed" mt={4}>
+                  {selectedCampaign.campaign_id}
+                </Text>
+              </Paper>
+            </Stack>
+          </Card>
+        </Grid.Col>
+      </Grid>
     </Card>
   );
 }
 
-function DelinquencyRiskSection() {
-  const bucketData = [
-    { bucket: "0-30 DPD", count: 45000, amount: 4500, color: BUCKET_COLORS["0-30"] },
-    { bucket: "31-60 DPD", count: 28000, amount: 3200, color: BUCKET_COLORS["31-60"] },
-    { bucket: "61-90 DPD", count: 15000, amount: 2800, color: BUCKET_COLORS["61-90"] },
-    { bucket: "90-180 DPD", count: 8500, amount: 4200, color: BUCKET_COLORS["90-180"] },
-    { bucket: "180+ DPD", count: 5200, amount: 3800, color: BUCKET_COLORS["180+"] },
-  ];
-
-  const parData = [
-    { metric: "PAR 30", value: 7.55, target: 8.0, status: "healthy" },
-    { metric: "PAR 60", value: 4.82, target: 5.0, status: "healthy" },
-    { metric: "PAR 90", value: 3.35, target: 3.5, status: "warning" },
-  ];
-
-  const rollRateData = [
-    { from: "Current", to_30: 92, to_60: 5, to_90: 2, to_npa: 1 },
-    { from: "0-30 DPD", to_30: 45, to_60: 38, to_90: 12, to_npa: 5 },
-    { from: "31-60 DPD", to_30: 22, to_60: 35, to_90: 28, to_npa: 15 },
-    { from: "61-90 DPD", to_30: 12, to_60: 18, to_90: 35, to_npa: 35 },
-  ];
-
-  const regionRiskData = [
-    { region: "Maharashtra", risk: "high", delinquency: 8.2, accounts: 125000 },
-    { region: "Karnataka", risk: "medium", delinquency: 5.4, accounts: 98000 },
-    { region: "Tamil Nadu", risk: "low", delinquency: 3.2, accounts: 112000 },
-    { region: "Delhi NCR", risk: "high", delinquency: 7.8, accounts: 145000 },
-    { region: "Gujarat", risk: "medium", delinquency: 4.9, accounts: 87000 },
-    { region: "West Bengal", risk: "high", delinquency: 9.1, accounts: 76000 },
-  ];
+function DelinquencyRiskSection({
+  bucketRows,
+  rollForward,
+}: {
+  bucketRows: BucketMetric[];
+  rollForward: RollForwardResponse;
+}) {
+  const totalExposure = bucketRows.reduce((sum, item) => sum + item.exposure, 0);
+  const highRiskExposure = bucketRows
+    .filter((item) => item.bucket === "61-90" || item.bucket === "90+")
+    .reduce((sum, item) => sum + item.exposure, 0);
+  const dominantBucket =
+    bucketRows
+      .slice()
+      .sort((left, right) => right.exposure - left.exposure)[0] ||
+    bucketRows[0];
+  const containmentRate = rollForward.total_transitions > 0 ? 100 - Number(rollForward.roll_forward_pct || 0) : 0;
 
   return (
     <Card className="te-command-section">
       <SectionHeader
         title="Delinquency & Risk Intelligence"
-        subtitle="Identify where risk is emerging across the portfolio"
-        icon={<AlertTriangle size={20} />}
-        badge="Risk Monitor"
+        subtitle="Actual bucket concentration, movement risk, and commitment quality"
+        icon={<ShieldAlert size={20} />}
+        badge="Campaign live"
         badgeColor="orange"
       />
 
+      <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md" mb="lg">
+        <KPICard
+          label="Total Exposure"
+          value={formatNumber(totalExposure)}
+          subValue="Accounts across DPD buckets"
+          icon={<Layers size={14} />}
+        />
+        <KPICard
+          label="Dominant Bucket"
+          value={dominantBucket?.bucket || "-"}
+          subValue={dominantBucket ? `${dominantBucket.share.toFixed(1)}% of campaign exposure` : "No exposure recorded"}
+          icon={<AlertTriangle size={14} />}
+          color={dominantBucket?.color || COLORS.slate}
+        />
+        <KPICard
+          label="High-Risk Exposure"
+          value={formatNumber(highRiskExposure)}
+          subValue="61-90 and 90+ buckets"
+          icon={<TrendingDown size={14} />}
+          color={COLORS.warning}
+        />
+        <KPICard
+          label="Containment Rate"
+          value={rollForward.total_transitions ? percent(containmentRate) : "n/a"}
+          subValue={rollForward.total_transitions ? `${rollForward.roll_forward_count} roll-forwards in window` : "Needs DPD history"}
+          icon={<Target size={14} />}
+          color={containmentRate >= 70 ? COLORS.success : COLORS.warning}
+        />
+      </SimpleGrid>
+
       <Grid>
-        <Grid.Col span={{ base: 12, lg: 6 }}>
+        <Grid.Col span={{ base: 12, lg: 5 }}>
           <Card className="te-command-chart-card">
             <Group justify="space-between" mb="md">
               <Text size="sm" fw={600}>
-                Delinquency Bucket Distribution
+                Bucket Exposure
               </Text>
               <Badge variant="light" size="sm">
-                By DPD
+                Accounts
               </Badge>
             </Group>
-            <div style={{ height: 280 }}>
+            <div style={{ height: 240 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={bucketData} layout="vertical">
+                <BarChart data={bucketRows}>
                   <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
-                  <XAxis type="number" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
-                  <YAxis dataKey="bucket" type="category" tick={CHART_AXIS_TICK_SMALL} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} width={80} />
+                  <XAxis dataKey="bucket" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
+                  <YAxis tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
                   <RechartsTooltip
                     contentStyle={CHART_TOOLTIP_STYLE}
                     labelStyle={CHART_TOOLTIP_TEXT_STYLE}
                     itemStyle={CHART_TOOLTIP_TEXT_STYLE}
-                    formatter={(value, name) => [
-                      name === "count" ? formatNumber(Number(value)) : `₹${value}Cr`,
-                      name === "count" ? "Accounts" : "Amount",
-                    ]}
+                    formatter={(value) => [formatNumber(Number(value || 0)), "Accounts"]}
                   />
-                  <Bar dataKey="count" name="count" radius={[0, 4, 4, 0]}>
-                    {bucketData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
+                  <Bar dataKey="exposure" radius={[4, 4, 0, 0]}>
+                    {bucketRows.map((entry) => (
+                      <Cell key={entry.bucket} fill={entry.color} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -606,176 +889,99 @@ function DelinquencyRiskSection() {
           </Card>
         </Grid.Col>
 
-        <Grid.Col span={{ base: 12, lg: 6 }}>
+        <Grid.Col span={{ base: 12, lg: 7 }}>
           <Card className="te-command-chart-card">
             <Group justify="space-between" mb="md">
               <Text size="sm" fw={600}>
-                Portfolio at Risk (PAR)
+                PTP Quality by Bucket
               </Text>
               <Badge variant="light" size="sm">
-                vs Target
+                Actual commitments
               </Badge>
             </Group>
-            <Stack gap="lg" mt="md">
-              {parData.map((item) => (
-                <div key={item.metric}>
+            <Stack gap="md">
+              {bucketRows.map((item) => (
+                <div key={item.bucket}>
                   <Group justify="space-between" mb="xs">
-                    <Text size="sm" fw={500}>
-                      {item.metric}
-                    </Text>
-                    <Group gap="xs">
-                      <Text size="sm" fw={700} c={item.status === "healthy" ? "green" : "orange"}>
-                        {item.value}%
+                    <div>
+                      <Text size="sm" fw={500}>
+                        {item.bucket} DPD
                       </Text>
                       <Text size="xs" c="dimmed">
-                        / {item.target}% target
+                        {formatNumber(item.ptpCount)} commitments from {formatNumber(item.ptpTotal)} observed outcomes
                       </Text>
-                    </Group>
+                    </div>
+                    <Text size="sm" fw={700} style={{ color: item.color }}>
+                      {percent(item.ptpRate)}
+                    </Text>
                   </Group>
-                  <Progress.Root size="lg" radius="xl">
-                    <Progress.Section
-                      value={(item.value / item.target) * 100}
-                      color={item.status === "healthy" ? "green" : "orange"}
-                    />
-                  </Progress.Root>
+                  <Progress value={clamp(item.ptpRate)} color={item.color} radius="xl" size="md" />
                 </div>
               ))}
             </Stack>
           </Card>
         </Grid.Col>
 
-        <Grid.Col span={{ base: 12, lg: 7 }}>
+        <Grid.Col span={12}>
           <Card className="te-command-chart-card">
             <Group justify="space-between" mb="md">
               <Text size="sm" fw={600}>
                 Roll Rate Matrix
               </Text>
               <Badge variant="light" size="sm">
-                30-Day Transitions
+                {rollForward.window_days || 30} day transitions
               </Badge>
             </Group>
-            <ScrollArea>
-              <Table className="te-command-matrix-table">
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>From / To</Table.Th>
-                    <Table.Th style={{ textAlign: "center" }}>Stay/Cure</Table.Th>
-                    <Table.Th style={{ textAlign: "center" }}>→ 31-60</Table.Th>
-                    <Table.Th style={{ textAlign: "center" }}>→ 61-90</Table.Th>
-                    <Table.Th style={{ textAlign: "center" }}>→ NPA</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {rollRateData.map((row) => (
-                    <Table.Tr key={row.from}>
-                      <Table.Td fw={600}>{row.from}</Table.Td>
-                      <Table.Td
-                        style={{
-                          textAlign: "center",
-                          background: `rgba(34, 197, 94, ${row.to_30 / 100 * 0.3})`,
-                        }}
-                      >
-                        {row.to_30}%
-                      </Table.Td>
-                      <Table.Td
-                        style={{
-                          textAlign: "center",
-                          background: `rgba(234, 179, 8, ${row.to_60 / 100 * 0.4})`,
-                        }}
-                      >
-                        {row.to_60}%
-                      </Table.Td>
-                      <Table.Td
-                        style={{
-                          textAlign: "center",
-                          background: `rgba(249, 115, 22, ${row.to_90 / 100 * 0.4})`,
-                        }}
-                      >
-                        {row.to_90}%
-                      </Table.Td>
-                      <Table.Td
-                        style={{
-                          textAlign: "center",
-                          background: `rgba(239, 68, 68, ${row.to_npa / 100 * 0.5})`,
-                        }}
-                      >
-                        {row.to_npa}%
-                      </Table.Td>
+            {rollForward.total_transitions ? (
+              <ScrollArea>
+                <Table className="te-command-matrix-table">
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>From / To</Table.Th>
+                      {rollForward.buckets.map((bucket) => (
+                        <Table.Th key={bucket}>{bucket}</Table.Th>
+                      ))}
                     </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-          </Card>
-        </Grid.Col>
-
-        <Grid.Col span={{ base: 12, lg: 5 }}>
-          <Card className="te-command-chart-card">
-            <Group justify="space-between" mb="md">
-              <Text size="sm" fw={600}>
-                Geographic Risk Map
-              </Text>
-              <Badge variant="light" size="sm">
-                By Region
-              </Badge>
-            </Group>
-            <ScrollArea style={{ height: 240 }}>
-              <Stack gap="xs">
-                {regionRiskData.map((item) => (
-                  <Paper
-                    key={item.region}
-                    p="sm"
-                    radius="md"
-                    style={{
-                      background:
-                        item.risk === "high"
-                          ? COLORS.dangerLight
-                          : item.risk === "medium"
-                          ? COLORS.warningLight
-                          : COLORS.successLight,
-                      border: `1px solid ${
-                        item.risk === "high"
-                          ? "rgba(205, 63, 70, 0.2)"
-                          : item.risk === "medium"
-                          ? "rgba(184, 120, 32, 0.2)"
-                          : "rgba(31, 143, 90, 0.2)"
-                      }`,
-                    }}
-                  >
-                    <Group justify="space-between">
-                      <Group gap="xs">
-                        <MapPin
-                          size={14}
-                          color={
-                            item.risk === "high"
-                              ? COLORS.danger
-                              : item.risk === "medium"
-                              ? COLORS.warning
-                              : COLORS.success
-                          }
-                        />
-                        <Text size="sm" fw={500}>
-                          {item.region}
-                        </Text>
-                      </Group>
-                      <Group gap="md">
-                        <Text size="xs" c="dimmed">
-                          {formatNumber(item.accounts)} accounts
-                        </Text>
-                        <Badge
-                          size="sm"
-                          color={
-                            item.risk === "high" ? "red" : item.risk === "medium" ? "orange" : "green"
-                          }
-                        >
-                          {item.delinquency}% DQ
-                        </Badge>
-                      </Group>
-                    </Group>
-                  </Paper>
-                ))}
-              </Stack>
-            </ScrollArea>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {rollForward.buckets.map((fromBucket) => (
+                      <Table.Tr key={fromBucket}>
+                        <Table.Td fw={600}>{fromBucket}</Table.Td>
+                        {rollForward.buckets.map((toBucket) => {
+                          const value = Number(rollForward.matrix?.[fromBucket]?.[toBucket] || 0);
+                          const alpha = value > 0 ? Math.min(0.42, 0.08 + value / Math.max(1, rollForward.total_transitions)) : 0;
+                          const baseColor =
+                            toBucket === "0"
+                              ? "34, 197, 94"
+                              : toBucket === "1-30"
+                              ? "59, 130, 246"
+                              : toBucket === "31-60"
+                              ? "234, 179, 8"
+                              : toBucket === "61-90"
+                              ? "249, 115, 22"
+                              : "239, 68, 68";
+                          return (
+                            <Table.Td
+                              key={`${fromBucket}-${toBucket}`}
+                              style={{
+                                background: `rgba(${baseColor}, ${alpha})`,
+                              }}
+                            >
+                              {formatNumber(value)}
+                            </Table.Td>
+                          );
+                        })}
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+            ) : (
+              <EmptyStateCard
+                title="No DPD transition history yet"
+                description="Run the campaign long enough to accumulate DPD snapshots and the roll-rate matrix will populate here."
+              />
+            )}
           </Card>
         </Grid.Col>
       </Grid>
@@ -783,161 +989,119 @@ function DelinquencyRiskSection() {
   );
 }
 
-function RecoveryPerformanceSection() {
-  const recoveryMetrics = {
-    recoveryRate: 15.1,
-    collectionEfficiency: 78.4,
-    cureRate: 22.3,
-  };
-
+function RecoveryPerformanceSection({
+  metrics,
+  recovery,
+  agents,
+}: {
+  metrics: MetricsResponse;
+  recovery: RecoveryResponse;
+  agents: AgentMetric[];
+}) {
+  const totalRecovered = Number(recovery.total_recovered || 0);
+  const expectedRecovery = Number(metrics.expected_recovery_amount || 0);
+  const paymentsCaptured = recovery.reconciliation.length;
   const funnelData = [
-    { name: "Total Overdue", value: 101700, fill: COLORS.primary },
-    { name: "Contacted", value: 78500, fill: COLORS.info },
-    { name: "Promise to Pay", value: 42000, fill: COLORS.teal },
-    { name: "Actual Payment", value: 28500, fill: COLORS.success },
-    { name: "Fully Recovered", value: 15400, fill: "#16a34a" },
+    { label: "Assigned", value: Number(metrics.accounts_assigned || 0), color: COLORS.primary },
+    { label: "Contacted", value: Number(metrics.accounts_contacted || 0), color: COLORS.info },
+    { label: "PTP Captured", value: Number(metrics.ptp_count || 0), color: COLORS.teal },
+    { label: "Callbacks", value: Number(metrics.callback_count || 0), color: COLORS.warning },
+    { label: "Payments", value: paymentsCaptured, color: COLORS.success },
   ];
-
-  const channelData = [
-    { channel: "Digital Payments", amount: 1200, percentage: 42.8 },
-    { channel: "Call Center", amount: 850, percentage: 30.4 },
-    { channel: "Field Collection", amount: 520, percentage: 18.6 },
-    { channel: "Legal Recovery", amount: 230, percentage: 8.2 },
-  ];
-
-  const recoveryTrendData = [
-    { week: "W1", target: 650, actual: 580 },
-    { week: "W2", target: 680, actual: 720 },
-    { week: "W3", target: 700, actual: 695 },
-    { week: "W4", target: 720, actual: 805 },
-  ];
+  const topAgents = agents.slice(0, 5);
+  const recoveryProgress = expectedRecovery > 0 ? clamp((totalRecovered / expectedRecovery) * 100) : 0;
+  const followupDiscipline = clamp(Number(metrics.followup_discipline_rate_pct || 0));
+  const followupGap = Math.max(0, Number(metrics.followups_due_today || 0) - Number(metrics.followups_completed_today || 0));
 
   return (
     <Card className="te-command-section">
       <SectionHeader
         title="Recovery Performance"
-        subtitle="Measure effectiveness of recovery operations"
+        subtitle="Commitments, cash realization, and recovery conversion grounded in live campaign activity"
         icon={<Target size={20} />}
         badge="Performance"
         badgeColor="green"
       />
 
-      <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md" mb="lg">
-        <Card className="te-command-metric-card">
-          <Group justify="space-between" align="flex-start">
-            <div>
-              <Text size="xs" tt="uppercase" fw={700} c="dimmed">
-                Recovery Rate
-              </Text>
-              <Title order={2} c={COLORS.success} mt="xs">
-                {recoveryMetrics.recoveryRate}%
-              </Title>
-              <Text size="xs" c="dimmed" mt="xs">
-                Amount Recovered / Total Overdue
-              </Text>
-            </div>
-            <RingProgress
-              size={80}
-              thickness={8}
-              roundCaps
-              sections={[{ value: recoveryMetrics.recoveryRate, color: COLORS.success }]}
-              label={
-                <Text size="xs" ta="center" fw={700}>
-                  {recoveryMetrics.recoveryRate}%
-                </Text>
-              }
-            />
-          </Group>
-        </Card>
-
-        <Card className="te-command-metric-card">
-          <Group justify="space-between" align="flex-start">
-            <div>
-              <Text size="xs" tt="uppercase" fw={700} c="dimmed">
-                Collection Efficiency
-              </Text>
-              <Title order={2} c={COLORS.primary} mt="xs">
-                {recoveryMetrics.collectionEfficiency}%
-              </Title>
-              <Text size="xs" c="dimmed" mt="xs">
-                Collected / Total Collectible
-              </Text>
-            </div>
-            <RingProgress
-              size={80}
-              thickness={8}
-              roundCaps
-              sections={[{ value: recoveryMetrics.collectionEfficiency, color: COLORS.primary }]}
-              label={
-                <Text size="xs" ta="center" fw={700}>
-                  {recoveryMetrics.collectionEfficiency}%
-                </Text>
-              }
-            />
-          </Group>
-        </Card>
-
-        <Card className="te-command-metric-card">
-          <Group justify="space-between" align="flex-start">
-            <div>
-              <Text size="xs" tt="uppercase" fw={700} c="dimmed">
-                Cure Rate
-              </Text>
-              <Title order={2} c={COLORS.teal} mt="xs">
-                {recoveryMetrics.cureRate}%
-              </Title>
-              <Text size="xs" c="dimmed" mt="xs">
-                Delinquent → Current
-              </Text>
-            </div>
-            <RingProgress
-              size={80}
-              thickness={8}
-              roundCaps
-              sections={[{ value: recoveryMetrics.cureRate, color: COLORS.teal }]}
-              label={
-                <Text size="xs" ta="center" fw={700}>
-                  {recoveryMetrics.cureRate}%
-                </Text>
-              }
-            />
-          </Group>
-        </Card>
+      <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} spacing="md" mb="lg">
+        <KPICard
+          label="Recovery Rate"
+          value={percent(recovery.recovery_rate_pct)}
+          subValue="Recovered vs portfolio value"
+          icon={<TrendingUp size={14} />}
+          color={COLORS.success}
+        />
+        <KPICard
+          label="Recovered"
+          value={rupeesCompact(totalRecovered)}
+          subValue="Captured payments"
+          icon={<Wallet size={14} />}
+          color={COLORS.success}
+        />
+        <KPICard
+          label="Expected Recovery"
+          value={rupeesCompact(expectedRecovery)}
+          subValue="Open committed book"
+          icon={<PhoneCall size={14} />}
+          color={COLORS.teal}
+        />
+        <KPICard
+          label="PTP Captured"
+          value={formatNumber(Number(metrics.ptp_count || 0))}
+          subValue="Actual commitment count"
+          icon={<UserCheck size={14} />}
+          color={COLORS.primary}
+        />
+        <KPICard
+          label="Callbacks Logged"
+          value={formatNumber(Number(metrics.callback_count || 0))}
+          subValue={`${followupGap} still due today`}
+          icon={<Clock size={14} />}
+          color={followupGap > 0 ? COLORS.warning : COLORS.info}
+        />
+        <KPICard
+          label="Follow-up Discipline"
+          value={percent(metrics.followup_discipline_rate_pct)}
+          subValue={`${formatNumber(Number(metrics.followups_completed_today || 0))}/${formatNumber(Number(metrics.followups_due_today || 0))} done today`}
+          icon={<Target size={14} />}
+          color={followupDiscipline >= 80 ? COLORS.success : COLORS.warning}
+        />
       </SimpleGrid>
 
       <Grid>
-        <Grid.Col span={{ base: 12, lg: 6 }}>
+        <Grid.Col span={{ base: 12, lg: 5 }}>
           <Card className="te-command-chart-card">
             <Group justify="space-between" mb="md">
               <Text size="sm" fw={600}>
-                Recovery Funnel
+                Commitment to Cash Funnel
               </Text>
               <Badge variant="light" size="sm">
-                Conversion Flow
+                Campaign actuals
               </Badge>
             </Group>
             <Stack gap="sm">
               {funnelData.map((item, index) => {
-                const widthPercent = (item.value / funnelData[0].value) * 100;
-                const conversionRate =
-                  index > 0
+                const maxValue = Math.max(1, funnelData[0]?.value || 1);
+                const width = (item.value / maxValue) * 100;
+                const conversion =
+                  index > 0 && funnelData[index - 1].value > 0
                     ? ((item.value / funnelData[index - 1].value) * 100).toFixed(1)
-                    : "100";
+                    : "100.0";
                 return (
-                  <div key={item.name}>
-                    <Group justify="space-between" mb={4}>
-                      <Text size="xs" fw={500}>
-                        {item.name}
+                  <div key={item.label}>
+                    <Group justify="space-between" mb={6}>
+                      <Text size="sm" fw={500}>
+                        {item.label}
                       </Text>
                       <Group gap="xs">
-                        <Text size="xs" c="dimmed">
+                        <Text size="sm" fw={600}>
                           {formatNumber(item.value)}
                         </Text>
-                        {index > 0 && (
+                        {index > 0 ? (
                           <Badge size="xs" variant="light" color="blue">
-                            {conversionRate}%
+                            {conversion}%
                           </Badge>
-                        )}
+                        ) : null}
                       </Group>
                     </Group>
                     <div
@@ -945,17 +1109,16 @@ function RecoveryPerformanceSection() {
                         height: 28,
                         background: CHART_THEME.trackBg,
                         border: `1px solid ${CHART_THEME.subtleBorder}`,
-                        borderRadius: 6,
+                        borderRadius: 8,
                         overflow: "hidden",
                       }}
                     >
                       <div
                         style={{
-                          width: `${widthPercent}%`,
+                          width: `${width}%`,
                           height: "100%",
-                          background: item.fill,
-                          borderRadius: 6,
-                          transition: "width 500ms ease",
+                          background: item.color,
+                          borderRadius: 8,
                         }}
                       />
                     </div>
@@ -966,39 +1129,75 @@ function RecoveryPerformanceSection() {
           </Card>
         </Grid.Col>
 
-        <Grid.Col span={{ base: 12, lg: 6 }}>
+        <Grid.Col span={{ base: 12, lg: 7 }}>
           <Card className="te-command-chart-card">
             <Group justify="space-between" mb="md">
               <Text size="sm" fw={600}>
-                Recovery by Channel
+                Agent Recovery Conversion
               </Text>
               <Badge variant="light" size="sm">
-                ₹ in Cr
+                PTP + connect quality
               </Badge>
             </Group>
-            <div style={{ height: 260 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={channelData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
-                  <XAxis type="number" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
-                  <YAxis dataKey="channel" type="category" tick={CHART_AXIS_TICK_SMALL} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} width={110} />
-                  <RechartsTooltip
-                    contentStyle={CHART_TOOLTIP_STYLE}
-                    labelStyle={CHART_TOOLTIP_TEXT_STYLE}
-                    itemStyle={CHART_TOOLTIP_TEXT_STYLE}
-                    formatter={(value) => [`₹${value}Cr`, "Amount"]}
-                  />
-                  <Bar dataKey="amount" fill={COLORS.primary} radius={[0, 4, 4, 0]}>
-                    <LabelList
-                      dataKey="percentage"
-                      position="right"
-                      formatter={(v: number) => `${v}%`}
-                      style={{ fontSize: 11, fill: CHART_THEME.axisText }}
+            {topAgents.length ? (
+              <Grid>
+                <Grid.Col span={{ base: 12, md: 5 }}>
+                  <Stack align="center" justify="center" h="100%">
+                    <RingProgress
+                      size={160}
+                      thickness={16}
+                      roundCaps
+                      sections={[
+                        { value: recoveryProgress, color: COLORS.success },
+                        { value: Math.max(0, 100 - recoveryProgress), color: "rgba(100, 116, 139, 0.18)" },
+                      ]}
+                      label={
+                        <div style={{ textAlign: "center" }}>
+                          <Text size="xs" c="dimmed">
+                            Recovery vs expected
+                          </Text>
+                          <Title order={3}>{recoveryProgress.toFixed(0)}%</Title>
+                        </div>
+                      }
                     />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+                    <Text size="sm" c="dimmed" ta="center">
+                      {rupeesCompact(totalRecovered)} recovered against {rupeesCompact(expectedRecovery)} expected.
+                    </Text>
+                  </Stack>
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, md: 7 }}>
+                  <Stack gap="sm">
+                    {topAgents.map((agent) => (
+                      <Paper key={agent.display_name} p="sm" radius="md" style={CHART_SUBTLE_PANEL_STYLE}>
+                        <Group justify="space-between" align="center">
+                          <div>
+                            <Text size="sm" fw={600}>
+                              {agent.display_name}
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              {formatNumber(agent.total_calls)} calls, {formatDuration(agent.avg_handle_time_s)} average handle time
+                            </Text>
+                          </div>
+                          <Group gap="sm">
+                            <Badge variant="light" color="green">
+                              {percent(agent.ptp_conversion_pct)} PTP
+                            </Badge>
+                            <Badge variant="outline" color="blue">
+                              {percent(agent.connect_rate_pct)} connect
+                            </Badge>
+                          </Group>
+                        </Group>
+                      </Paper>
+                    ))}
+                  </Stack>
+                </Grid.Col>
+              </Grid>
+            ) : (
+              <EmptyStateCard
+                title="No agent recovery history yet"
+                description="Once voice or manual commitments are logged, the recovery conversion view will populate here."
+              />
+            )}
           </Card>
         </Grid.Col>
       </Grid>
@@ -1006,40 +1205,26 @@ function RecoveryPerformanceSection() {
   );
 }
 
-function CollectionsOperationsSection() {
-  const operationsData = {
-    totalAttempts: 485000,
-    contactRate: 64.2,
-    rpcRate: 48.5,
-    ptpGiven: 42000,
-    ptpRate: 32.8,
-    ptpFulfilled: 67.4,
-    ptpBroken: 18.2,
-    fieldVisitEffectiveness: 45.6,
-  };
-
-  const attemptBreakdown = [
-    { channel: "Phone", attempts: 285000, success: 68.2, color: COLORS.primary },
-    { channel: "WhatsApp", attempts: 125000, success: 72.4, color: COLORS.teal },
-    { channel: "SMS", attempts: 52000, success: 12.8, color: COLORS.info },
-    { channel: "Field Visit", attempts: 23000, success: 45.6, color: COLORS.purple },
-  ];
-
-  const ptpTrendData = [
-    { day: "Mon", given: 6200, fulfilled: 4100, broken: 1200 },
-    { day: "Tue", given: 6800, fulfilled: 4500, broken: 1100 },
-    { day: "Wed", given: 5900, fulfilled: 4000, broken: 1050 },
-    { day: "Thu", given: 7200, fulfilled: 4800, broken: 1300 },
-    { day: "Fri", given: 7500, fulfilled: 5100, broken: 1400 },
-    { day: "Sat", given: 4800, fulfilled: 3200, broken: 850 },
-    { day: "Sun", given: 3600, fulfilled: 2400, broken: 700 },
-  ];
+function CollectionsOperationsSection({
+  metrics,
+  queueRows,
+  agents,
+  sessions,
+}: {
+  metrics: MetricsResponse;
+  queueRows: Array<{ state: string; count: number; color: string }>;
+  agents: AgentMetric[];
+  sessions: SessionSnapshot[];
+}) {
+  const activeQueue = queueRows
+    .filter((item) => item.state !== "CLOSED")
+    .reduce((sum, item) => sum + item.count, 0);
 
   return (
     <Card className="te-command-section">
       <SectionHeader
         title="Collections Operations Monitoring"
-        subtitle="Monitor operational efficiency of collections teams"
+        subtitle="Queue control, live calling activity, and operator performance"
         icon={<PhoneCall size={20} />}
         badge="Operations"
         badgeColor="blue"
@@ -1047,34 +1232,31 @@ function CollectionsOperationsSection() {
 
       <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md" mb="lg">
         <KPICard
-          label="Total Attempts"
-          value={formatNumber(operationsData.totalAttempts)}
-          subValue="This month"
+          label="Active Queue"
+          value={formatNumber(activeQueue)}
+          subValue="Open work items"
+          icon={<Layers size={14} />}
+        />
+        <KPICard
+          label="Live Sessions"
+          value={formatNumber(sessions.length)}
+          subValue="Current websocket session snapshots"
           icon={<Phone size={14} />}
+          color={sessions.length ? COLORS.success : COLORS.slate}
         />
         <KPICard
-          label="Contact Rate"
-          value={percent(operationsData.contactRate)}
-          subValue="Successful contacts"
-          trend={3.2}
-          icon={<UserCheck size={14} />}
-          color={COLORS.success}
+          label="Escalations"
+          value={formatNumber(Number(metrics.escalations || 0))}
+          subValue="Campaign total"
+          icon={<AlertTriangle size={14} />}
+          color={Number(metrics.escalations || 0) > 0 ? COLORS.warning : COLORS.success}
         />
         <KPICard
-          label="RPC Rate"
-          value={percent(operationsData.rpcRate)}
-          subValue="Right party contact"
-          trend={1.8}
-          icon={<User size={14} />}
-          color={COLORS.teal}
-        />
-        <KPICard
-          label="Field Effectiveness"
-          value={percent(operationsData.fieldVisitEffectiveness)}
-          subValue="Payment per visit"
-          trend={5.4}
-          icon={<MapPin size={14} />}
-          color={COLORS.purple}
+          label="SLA Breaches"
+          value={formatNumber(Number(metrics.sla_breaches || 0))}
+          subValue="Open overdue task breaches"
+          icon={<Clock size={14} />}
+          color={Number(metrics.sla_breaches || 0) > 0 ? COLORS.danger : COLORS.success}
         />
       </SimpleGrid>
 
@@ -1083,243 +1265,27 @@ function CollectionsOperationsSection() {
           <Card className="te-command-chart-card">
             <Group justify="space-between" mb="md">
               <Text size="sm" fw={600}>
-                Contact Attempts by Channel
+                Queue by Task State
               </Text>
               <Badge variant="light" size="sm">
-                Success Rate
+                Live queue
               </Badge>
             </Group>
-            <Stack gap="md">
-              {attemptBreakdown.map((item) => (
-                <div key={item.channel}>
-                  <Group justify="space-between" mb="xs">
-                    <Group gap="xs">
-                      <div
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: 4,
-                          background: item.color,
-                        }}
-                      />
-                      <Text size="sm" fw={500}>
-                        {item.channel}
-                      </Text>
-                    </Group>
-                    <Group gap="md">
-                      <Text size="xs" c="dimmed">
-                        {formatNumber(item.attempts)}
-                      </Text>
-                      <Badge size="sm" variant="light" color="green">
-                        {item.success}%
-                      </Badge>
-                    </Group>
-                  </Group>
-                  <Progress value={item.success} color={item.color} size="sm" radius="xl" />
-                </div>
-              ))}
-            </Stack>
-          </Card>
-        </Grid.Col>
-
-        <Grid.Col span={{ base: 12, lg: 7 }}>
-          <Card className="te-command-chart-card">
-            <Group justify="space-between" mb="md">
-              <Text size="sm" fw={600}>
-                Promise to Pay Metrics
-              </Text>
-              <Group gap="xs">
-                <Badge variant="light" color="blue" size="sm">
-                  Given: {formatNumber(operationsData.ptpGiven)}
-                </Badge>
-                <Badge variant="light" color="green" size="sm">
-                  Rate: {operationsData.ptpRate}%
-                </Badge>
-              </Group>
-            </Group>
-            <div style={{ height: 240 }}>
+            <div style={{ height: 250 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={ptpTrendData}>
+                <BarChart data={queueRows}>
                   <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
-                  <XAxis dataKey="day" tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
+                  <XAxis dataKey="state" tick={CHART_AXIS_TICK_SMALL} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
                   <YAxis tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
                   <RechartsTooltip
                     contentStyle={CHART_TOOLTIP_STYLE}
                     labelStyle={CHART_TOOLTIP_TEXT_STYLE}
                     itemStyle={CHART_TOOLTIP_TEXT_STYLE}
-                  />
-                  <Legend />
-                  <Bar dataKey="given" name="PTP Given" fill={COLORS.primary} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="fulfilled" name="Fulfilled" fill={COLORS.success} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="broken" name="Broken" fill={COLORS.danger} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <SimpleGrid cols={3} mt="md">
-              <Paper p="sm" radius="md" style={{ ...CHART_SUBTLE_PANEL_STYLE, background: COLORS.primaryLight }}>
-                <Text size="xs" c="dimmed">
-                  PTP Rate
-                </Text>
-                <Text size="lg" fw={700} c={COLORS.primary}>
-                  {operationsData.ptpRate}%
-                </Text>
-              </Paper>
-              <Paper p="sm" radius="md" style={{ ...CHART_SUBTLE_PANEL_STYLE, background: COLORS.successLight }}>
-                <Text size="xs" c="dimmed">
-                  Fulfillment
-                </Text>
-                <Text size="lg" fw={700} c={COLORS.success}>
-                  {operationsData.ptpFulfilled}%
-                </Text>
-              </Paper>
-              <Paper p="sm" radius="md" style={{ ...CHART_SUBTLE_PANEL_STYLE, background: COLORS.dangerLight }}>
-                <Text size="xs" c="dimmed">
-                  Broken
-                </Text>
-                <Text size="lg" fw={700} c={COLORS.danger}>
-                  {operationsData.ptpBroken}%
-                </Text>
-              </Paper>
-            </SimpleGrid>
-          </Card>
-        </Grid.Col>
-      </Grid>
-    </Card>
-  );
-}
-
-function AIDecisionIntelligenceSection() {
-  const riskSegmentation = [
-    { segment: "Low Risk", count: 520000, percentage: 41.6, color: RISK_COLORS.low },
-    { segment: "Medium Risk", count: 380000, percentage: 30.4, color: RISK_COLORS.medium },
-    { segment: "High Risk", count: 250000, percentage: 20.0, color: RISK_COLORS.high },
-    { segment: "Severe Risk", count: 100000, percentage: 8.0, color: RISK_COLORS.severe },
-  ];
-
-  const recoveryProbability = [
-    { range: "80-100%", count: 125000, color: "#16a34a" },
-    { range: "60-80%", count: 185000, color: "#22c55e" },
-    { range: "40-60%", count: 220000, color: "#eab308" },
-    { range: "20-40%", count: 180000, color: "#f97316" },
-    { range: "0-20%", count: 140000, color: "#ef4444" },
-  ];
-
-  const aiStrategies = [
-    { strategy: "Call Tonight", cases: 45000, confidence: 87, icon: Phone },
-    { strategy: "Offer Settlement", cases: 32000, confidence: 82, icon: Scale },
-    { strategy: "Schedule Field Visit", cases: 28000, confidence: 79, icon: MapPin },
-    { strategy: "Send Reminder", cases: 65000, confidence: 91, icon: Send },
-    { strategy: "Escalate to Legal", cases: 12000, confidence: 74, icon: Landmark },
-  ];
-
-  const forecastData = [
-    { period: "Next 30 Days", amount: 4500, confidence: 85 },
-    { period: "Next 60 Days", amount: 8200, confidence: 78 },
-    { period: "Next 90 Days", amount: 11500, confidence: 72 },
-  ];
-
-  const intentData = [
-    { intent: "Willing to Pay", count: 285000, percentage: 34.2, color: COLORS.success },
-    { intent: "Avoiding Contact", count: 180000, percentage: 21.6, color: COLORS.warning },
-    { intent: "Financial Hardship", count: 245000, percentage: 29.4, color: COLORS.info },
-    { intent: "Disputing Loan", count: 123000, percentage: 14.8, color: COLORS.danger },
-  ];
-
-  return (
-    <Card className="te-command-section">
-      <SectionHeader
-        title="AI Decision Intelligence"
-        subtitle="Predictive insights and recommended actions powered by AI"
-        icon={<Brain size={20} />}
-        badge="AI Powered"
-        badgeColor="violet"
-      />
-
-      <Grid>
-        <Grid.Col span={{ base: 12, lg: 6 }}>
-          <Card className="te-command-chart-card">
-            <Group justify="space-between" mb="md">
-              <Text size="sm" fw={600}>
-                Borrower Risk Segmentation
-              </Text>
-              <Badge variant="light" color="violet" size="sm">
-                AI Scored
-              </Badge>
-            </Group>
-            <div style={{ height: 220 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={riskSegmentation}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={90}
-                    paddingAngle={2}
-                    dataKey="count"
-                  >
-                    {riskSegmentation.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip
-                    contentStyle={CHART_TOOLTIP_STYLE}
-                    labelStyle={CHART_TOOLTIP_TEXT_STYLE}
-                    itemStyle={CHART_TOOLTIP_TEXT_STYLE}
-                    formatter={(value) => [formatNumber(Number(value)), "Borrowers"]}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <SimpleGrid cols={4} mt="sm">
-              {riskSegmentation.map((item) => (
-                <div key={item.segment} style={{ textAlign: "center" }}>
-                  <div
-                    style={{
-                      width: 12,
-                      height: 12,
-                      borderRadius: 6,
-                      background: item.color,
-                      margin: "0 auto 4px",
-                    }}
-                  />
-                  <Text size="xs" c="dimmed">
-                    {item.segment}
-                  </Text>
-                  <Text size="sm" fw={600}>
-                    {item.percentage}%
-                  </Text>
-                </div>
-              ))}
-            </SimpleGrid>
-          </Card>
-        </Grid.Col>
-
-        <Grid.Col span={{ base: 12, lg: 6 }}>
-          <Card className="te-command-chart-card">
-            <Group justify="space-between" mb="md">
-              <Text size="sm" fw={600}>
-                Recovery Probability Distribution
-              </Text>
-              <Badge variant="light" color="violet" size="sm">
-                ML Model
-              </Badge>
-            </Group>
-            <div style={{ height: 220 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={recoveryProbability}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_THEME.grid} />
-                  <XAxis dataKey="range" tick={CHART_AXIS_TICK_SMALL} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
-                  <YAxis tick={CHART_AXIS_TICK} axisLine={CHART_AXIS_LINE} tickLine={CHART_AXIS_LINE} />
-                  <RechartsTooltip
-                    contentStyle={CHART_TOOLTIP_STYLE}
-                    labelStyle={CHART_TOOLTIP_TEXT_STYLE}
-                    itemStyle={CHART_TOOLTIP_TEXT_STYLE}
-                    formatter={(value) => [formatNumber(Number(value)), "Accounts"]}
+                    formatter={(value) => [formatNumber(Number(value || 0)), "Tasks"]}
                   />
                   <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                    {recoveryProbability.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    {queueRows.map((row) => (
+                      <Cell key={row.state} fill={row.color} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -1332,442 +1298,409 @@ function AIDecisionIntelligenceSection() {
           <Card className="te-command-chart-card">
             <Group justify="space-between" mb="md">
               <Text size="sm" fw={600}>
-                AI Recommended Collection Strategy
+                Live Session Monitor
               </Text>
-              <Badge variant="light" color="violet" size="sm">
-                Action Queue
+              <Badge variant="light" size="sm">
+                {sessions.length} active
               </Badge>
             </Group>
-            <Stack gap="sm">
-              {aiStrategies.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <Paper
-                    key={item.strategy}
-                    p="sm"
-                    radius="md"
-                    style={{
-                      background: COLORS.purpleLight,
-                      border: "1px solid rgba(124, 58, 237, 0.15)",
-                    }}
-                  >
-                    <Group justify="space-between">
-                      <Group gap="sm">
-                        <ThemeIcon size="md" variant="light" color="violet" radius="md">
-                          <Icon size={16} />
-                        </ThemeIcon>
-                        <div>
-                          <Text size="sm" fw={500}>
-                            {item.strategy}
-                          </Text>
-                          <Text size="xs" c="dimmed">
-                            {formatNumber(item.cases)} cases recommended
-                          </Text>
-                        </div>
+            {sessions.length ? (
+              <Stack gap="sm">
+                {sessions.slice(0, 6).map((session) => (
+                  <Paper key={session.session_id} p="sm" radius="md" style={CHART_SUBTLE_PANEL_STYLE}>
+                    <Group justify="space-between" align="flex-start">
+                      <div>
+                        <Text size="sm" fw={600}>
+                          {session.customer_name || session.customer_id || "Unidentified borrower"}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {session.session_id}
+                        </Text>
+                      </div>
+                      <Group gap="xs">
+                        {session.dpd_bucket ? (
+                          <Badge variant="light" color="blue">
+                            {session.dpd_bucket}
+                          </Badge>
+                        ) : null}
+                        {session.step || session.current_step ? (
+                          <Badge variant="outline" color="gray">
+                            {session.current_step || session.step}
+                          </Badge>
+                        ) : null}
                       </Group>
-                      <Badge variant="filled" color="violet" size="sm">
-                        {item.confidence}% confidence
-                      </Badge>
+                    </Group>
+                    <Group gap="lg" mt="sm">
+                      <Text size="xs" c="dimmed">
+                        Phone: {session.phone || "-"}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        Due: {rupees(Number(session.amount_due || session.due_amount || 0))}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        Disposition: {session.disposition || "live"}
+                      </Text>
                     </Group>
                   </Paper>
-                );
-              })}
-            </Stack>
+                ))}
+              </Stack>
+            ) : (
+              <EmptyStateCard
+                title="No live session snapshots"
+                description="Once the selected campaign is being worked in the calling desk, active sessions will appear here."
+              />
+            )}
           </Card>
         </Grid.Col>
 
-        <Grid.Col span={{ base: 12, lg: 5 }}>
-          <Stack gap="md">
-            <Card className="te-command-chart-card">
-              <Group justify="space-between" mb="md">
-                <Text size="sm" fw={600}>
-                  AI Recovery Forecast
-                </Text>
-                <Badge variant="light" color="violet" size="sm">
-                  ₹ in Cr
-                </Badge>
-              </Group>
-              <Stack gap="sm">
-                {forecastData.map((item) => (
-                  <Paper
-                    key={item.period}
-                    p="sm"
-                    radius="md"
-                    style={CHART_SUBTLE_PANEL_STYLE}
-                  >
-                    <Group justify="space-between">
-                      <div>
-                        <Text size="sm" fw={500}>
-                          {item.period}
-                        </Text>
-                        <Text size="xs" c="dimmed">
-                          {item.confidence}% confidence
-                        </Text>
-                      </div>
-                      <Title order={3} c={COLORS.purple}>
-                        ₹{item.amount}Cr
-                      </Title>
-                    </Group>
-                  </Paper>
-                ))}
-              </Stack>
-            </Card>
-
-            <Card className="te-command-chart-card">
-              <Group justify="space-between" mb="md">
-                <Text size="sm" fw={600}>
-                  Borrower Intent Detection
-                </Text>
-                <Badge variant="light" color="violet" size="sm">
-                  NLP Analysis
-                </Badge>
-              </Group>
-              <Stack gap="xs">
-                {intentData.map((item) => (
-                  <Group key={item.intent} justify="space-between">
-                    <Group gap="xs">
-                      <div
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: 4,
-                          background: item.color,
-                        }}
-                      />
-                      <Text size="sm">{item.intent}</Text>
-                    </Group>
-                    <Text size="sm" fw={600}>
-                      {item.percentage}%
-                    </Text>
-                  </Group>
-                ))}
-              </Stack>
-            </Card>
-          </Stack>
+        <Grid.Col span={12}>
+          <Card className="te-command-chart-card">
+            <Group justify="space-between" mb="md">
+              <Text size="sm" fw={600}>
+                Agent Leaderboard
+              </Text>
+              <Badge variant="light" size="sm">
+                Current campaign
+              </Badge>
+            </Group>
+            {agents.length ? (
+              <ScrollArea>
+                <Table>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Agent</Table.Th>
+                      <Table.Th>Calls</Table.Th>
+                      <Table.Th>Connect</Table.Th>
+                      <Table.Th>PTP</Table.Th>
+                      <Table.Th>Escalations</Table.Th>
+                      <Table.Th>Compliance</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {agents.slice(0, 6).map((agent) => (
+                      <Table.Tr key={agent.agent_id || agent.display_name}>
+                        <Table.Td>
+                          <Text fw={600}>{agent.display_name}</Text>
+                        </Table.Td>
+                        <Table.Td>{formatNumber(agent.total_calls)}</Table.Td>
+                        <Table.Td>{percent(agent.connect_rate_pct)}</Table.Td>
+                        <Table.Td>{percent(agent.ptp_conversion_pct)}</Table.Td>
+                        <Table.Td>{formatNumber(agent.escalations)}</Table.Td>
+                        <Table.Td>
+                          <Badge variant="light" color={agent.compliance_violations > 0 ? "red" : "green"}>
+                            {agent.compliance_violations > 0 ? `${agent.compliance_violations} issues` : "Clean"}
+                          </Badge>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+            ) : (
+              <EmptyStateCard
+                title="No agent metrics yet"
+                description="Once agents start working this campaign, the leaderboard will show connect, PTP, and compliance performance."
+              />
+            )}
+          </Card>
         </Grid.Col>
       </Grid>
     </Card>
   );
 }
 
-function ActionInterventionSection() {
-  const highPriorityCases = [
+function AIDecisionIntelligenceSection({
+  bucketRows,
+  metrics,
+  recovery,
+  rollForward,
+  agents,
+  recommendations,
+}: {
+  bucketRows: BucketMetric[];
+  metrics: MetricsResponse;
+  recovery: RecoveryResponse;
+  rollForward: RollForwardResponse;
+  agents: AgentMetric[];
+  recommendations: RecommendationTileProps[];
+}) {
+  const dominantBucket =
+    bucketRows
+      .slice()
+      .sort((left, right) => right.exposure - left.exposure)[0] ||
+    bucketRows[0];
+  const weakestBucket =
+    bucketRows
+      .slice()
+      .filter((item) => item.exposure > 0 || item.ptpTotal > 0)
+      .sort((left, right) => left.ptpRate - right.ptpRate || right.exposure - left.exposure)[0] ||
+    dominantBucket;
+  const recoveryGap = Math.max(0, Number(metrics.expected_recovery_amount || 0) - Number(recovery.total_recovered || 0));
+  const pressureScore = Math.round(
+    clamp(
+      Number(rollForward.roll_forward_pct || 0) * 1.8 +
+        Math.max(0, 75 - Number(metrics.followup_discipline_rate_pct || 0)) +
+        Math.min(20, Number(metrics.sla_breaches || 0) * 4) +
+        Math.min(18, Number(metrics.retries_pending || 0) * 3) +
+        Math.min(16, Number(metrics.ptp_miss_open_alerts || 0) * 4),
+    ),
+  );
+  const pressure = pressureLabel(pressureScore);
+  const bestOperator =
+    agents
+      .slice()
+      .sort((left, right) => right.ptp_conversion_pct - left.ptp_conversion_pct || right.total_calls - left.total_calls)[0] || null;
+  const signalTiles: SignalTileProps[] = [
     {
-      id: "LN-2024-001245",
-      name: "Rajesh Kumar",
-      amount: 850000,
-      dpd: 75,
-      probability: 82,
-      region: "Mumbai",
+      title: "Dominant exposure",
+      value: dominantBucket ? `${dominantBucket.bucket} DPD` : "No exposure",
+      detail: dominantBucket
+        ? `${formatNumber(dominantBucket.exposure)} accounts, ${dominantBucket.share.toFixed(1)}% of current delinquent exposure.`
+        : "No live bucket pressure is available yet.",
+      color: dominantBucket?.color || COLORS.slate,
+      icon: <Layers size={16} />,
     },
     {
-      id: "LN-2024-001892",
-      name: "Priya Sharma",
-      amount: 620000,
-      dpd: 68,
-      probability: 78,
-      region: "Delhi",
+      title: "Weakest commitment lane",
+      value: weakestBucket ? percent(weakestBucket.ptpRate) : "n/a",
+      detail: weakestBucket
+        ? `${weakestBucket.bucket} DPD is converting commitments least effectively right now.`
+        : "No commitment history is available yet.",
+      color: weakestBucket?.color || COLORS.slate,
+      icon: <TrendingDown size={16} />,
     },
     {
-      id: "LN-2024-002156",
-      name: "Amit Patel",
-      amount: 1200000,
-      dpd: 82,
-      probability: 75,
-      region: "Ahmedabad",
+      title: "Operating pressure",
+      value: `${pressureScore}/100`,
+      detail: pressure.detail,
+      color: pressure.color === "red" ? COLORS.danger : pressure.color === "orange" ? COLORS.warning : pressure.color === "green" ? COLORS.success : COLORS.primary,
+      icon: <Brain size={16} />,
     },
     {
-      id: "LN-2024-002489",
-      name: "Sunita Reddy",
-      amount: 480000,
-      dpd: 71,
-      probability: 85,
-      region: "Hyderabad",
-    },
-  ];
-
-  const immediateActions = [
-    { action: "Broken PTP Today", count: 1245, priority: "critical", icon: AlertTriangle },
-    { action: "Legal Notice Due", count: 328, priority: "high", icon: Scale },
-    { action: "High-Value Overdue", count: 567, priority: "high", icon: Wallet },
-    { action: "Callback Scheduled", count: 2890, priority: "medium", icon: Phone },
-  ];
-
-  const settlementRecommendations = [
-    { loanId: "LN-2024-003421", principal: 450000, recommended: 315000, savings: 30 },
-    { loanId: "LN-2024-003567", principal: 280000, recommended: 210000, savings: 25 },
-    { loanId: "LN-2024-003789", principal: 620000, recommended: 403000, savings: 35 },
-  ];
-
-  const aiAlerts = [
-    {
-      message: "PAR 60 increased 8% in Maharashtra region",
-      type: "warning",
-      time: "2 hours ago",
-    },
-    {
-      message: "Borrowers contacted after 7 PM show 40% higher payment conversion",
-      type: "insight",
-      time: "4 hours ago",
-    },
-    {
-      message: "Agents in Delhi recovered 3× more via field visits",
-      type: "success",
-      time: "6 hours ago",
-    },
-    {
-      message: "Settlement acceptance rate dropped 12% in Q4",
-      type: "warning",
-      time: "1 day ago",
+      title: "Recovery gap",
+      value: rupeesCompact(recoveryGap),
+      detail: recoveryGap > 0 ? "Expected commitments still exceed realized payments." : "Realized payments are in line with the current commitment book.",
+      color: recoveryGap > 0 ? COLORS.warning : COLORS.success,
+      icon: <Target size={16} />,
     },
   ];
 
   return (
     <Card className="te-command-section">
       <SectionHeader
+        title="AI Decision Intelligence"
+        subtitle="Recommendations derived from the actual campaign, queue, and recovery signals"
+        icon={<Brain size={20} />}
+        badge={pressure.label}
+        badgeColor={pressure.color}
+      />
+
+      <Grid>
+        <Grid.Col span={{ base: 12, lg: 5 }}>
+          <Card className="te-command-chart-card">
+            <Group justify="space-between" mb="md">
+              <Text size="sm" fw={600}>
+                Decision Signals
+              </Text>
+              <Badge variant="light" color="violet" size="sm">
+                Derived from live metrics
+              </Badge>
+            </Group>
+            <Stack gap="sm">
+              {signalTiles.map((item) => (
+                <SignalTile key={item.title} {...item} />
+              ))}
+            </Stack>
+          </Card>
+        </Grid.Col>
+
+        <Grid.Col span={{ base: 12, lg: 7 }}>
+          <Card className="te-command-chart-card">
+            <Group justify="space-between" mb="md">
+              <Text size="sm" fw={600}>
+                Recommended Actions
+              </Text>
+              <Badge variant="light" color="violet" size="sm">
+                Real queue drivers
+              </Badge>
+            </Group>
+            <Stack gap="sm">
+              {recommendations.map((item) => (
+                <RecommendationTile key={item.title} {...item} />
+              ))}
+            </Stack>
+            <SimpleGrid cols={{ base: 1, sm: 2 }} mt="md">
+              <Paper p="md" radius="md" style={CHART_SUBTLE_PANEL_STYLE}>
+                <Text size="xs" tt="uppercase" fw={700} c="dimmed">
+                  Pressure posture
+                </Text>
+                <Title order={3} mt={8}>
+                  {pressure.label}
+                </Title>
+                <Text size="sm" c="dimmed" mt={4}>
+                  Roll-forward, missed follow-up, and breach counts are combined into a single operating pressure score.
+                </Text>
+              </Paper>
+              <Paper p="md" radius="md" style={CHART_SUBTLE_PANEL_STYLE}>
+                <Text size="xs" tt="uppercase" fw={700} c="dimmed">
+                  Best operator
+                </Text>
+                <Title order={3} mt={8}>
+                  {bestOperator?.display_name || "No signal yet"}
+                </Title>
+                <Text size="sm" c="dimmed" mt={4}>
+                  {bestOperator
+                    ? `${percent(bestOperator.ptp_conversion_pct)} PTP conversion across ${formatNumber(bestOperator.total_calls)} calls.`
+                    : "Agent ranking will appear once the campaign has more operator history."}
+                </Text>
+              </Paper>
+            </SimpleGrid>
+          </Card>
+        </Grid.Col>
+      </Grid>
+    </Card>
+  );
+}
+
+function ActionInterventionSection({
+  tasks,
+  actions,
+}: {
+  tasks: TaskRow[];
+  actions: QueueAction[];
+}) {
+  return (
+    <Card className="te-command-section">
+      <SectionHeader
         title="Action & Intervention Panel"
-        subtitle="Immediate actions and AI-powered recommendations"
+        subtitle="Immediate account-level interventions from the live campaign queue"
         icon={<Zap size={20} />}
-        badge="Action Center"
+        badge="Action center"
         badgeColor="orange"
       />
 
       <Grid>
-        <Grid.Col span={{ base: 12, lg: 6 }}>
+        <Grid.Col span={{ base: 12, lg: 7 }}>
           <Card className="te-command-chart-card">
             <Group justify="space-between" mb="md">
               <Text size="sm" fw={600}>
-                High Priority Cases
+                High Priority Accounts
               </Text>
               <Badge variant="light" color="red" size="sm">
-                {highPriorityCases.length} Cases
+                SLA-first queue
               </Badge>
             </Group>
-            <ScrollArea style={{ height: 280 }}>
+            {tasks.length ? (
               <Stack gap="sm">
-                {highPriorityCases.map((item) => (
+                {tasks.map((task) => (
                   <Paper
-                    key={item.id}
+                    key={task.id}
                     p="sm"
                     radius="md"
                     style={{
                       background: "linear-gradient(135deg, rgba(239, 68, 68, 0.06), rgba(239, 68, 68, 0.02))",
-                      border: "1px solid rgba(239, 68, 68, 0.15)",
+                      border: "1px solid rgba(239, 68, 68, 0.12)",
                     }}
                   >
                     <Group justify="space-between" mb="xs">
-                      <Group gap="xs">
+                      <div>
                         <Text size="sm" fw={600}>
-                          {item.name}
+                          {task.customer_name || task.customer_id}
                         </Text>
-                        <Badge size="xs" variant="light">
-                          {item.id}
-                        </Badge>
+                        <Text size="xs" c="dimmed">
+                          {task.id}
+                        </Text>
+                      </div>
+                      <Group gap="xs">
+                        {task.state ? (
+                          <Badge variant="light" color={task.state === "ESCALATED" ? "red" : task.state === "CALLBACK" ? "orange" : "blue"}>
+                            {stateLabel(task.state)}
+                          </Badge>
+                        ) : null}
+                        {task.dpd != null ? (
+                          <Badge variant="outline" color={task.dpd >= 61 ? "red" : task.dpd >= 31 ? "orange" : "green"}>
+                            {task.dpd} DPD
+                          </Badge>
+                        ) : null}
                       </Group>
-                      <Badge color="green" size="sm">
-                        {item.probability}% recovery
-                      </Badge>
                     </Group>
-                    <Group justify="space-between">
-                      <Group gap="lg">
-                        <div>
-                          <Text size="xs" c="dimmed">
-                            Amount
-                          </Text>
-                          <Text size="sm" fw={600}>
-                            {rupees(item.amount)}
-                          </Text>
-                        </div>
-                        <div>
-                          <Text size="xs" c="dimmed">
-                            DPD
-                          </Text>
-                          <Text size="sm" fw={600} c="red">
-                            {item.dpd} days
-                          </Text>
-                        </div>
-                        <div>
-                          <Text size="xs" c="dimmed">
-                            Region
-                          </Text>
-                          <Text size="sm">{item.region}</Text>
-                        </div>
-                      </Group>
-                      <ActionIcon variant="light" color="blue" radius="md">
-                        <ArrowUpRight size={16} />
-                      </ActionIcon>
+                    <Group gap="lg">
+                      <Text size="xs" c="dimmed">
+                        Due: {rupees(Number(task.amount_due || 0))}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        Phone: {task.phone || "-"}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        Owner: {task.owner || "Unassigned"}
+                      </Text>
                     </Group>
                   </Paper>
                 ))}
               </Stack>
-            </ScrollArea>
+            ) : (
+              <EmptyStateCard
+                title="No priority tasks for this scope"
+                description="Adjust the task state or bucket filters, or wait for new campaign work to enter the queue."
+              />
+            )}
           </Card>
         </Grid.Col>
 
-        <Grid.Col span={{ base: 12, lg: 6 }}>
+        <Grid.Col span={{ base: 12, lg: 5 }}>
           <Card className="te-command-chart-card">
             <Group justify="space-between" mb="md">
               <Text size="sm" fw={600}>
                 Immediate Action Queue
               </Text>
               <Badge variant="light" color="orange" size="sm">
-                Today
+                Actual counts
               </Badge>
             </Group>
             <Stack gap="sm">
-              {immediateActions.map((item) => {
-                const Icon = item.icon;
-                const colorMap = {
-                  critical: { bg: COLORS.dangerLight, border: "rgba(205, 63, 70, 0.2)", text: COLORS.danger },
-                  high: { bg: COLORS.warningLight, border: "rgba(184, 120, 32, 0.2)", text: COLORS.warning },
-                  medium: { bg: COLORS.infoLight, border: "rgba(22, 130, 216, 0.2)", text: COLORS.info },
-                };
-                const colors = colorMap[item.priority as keyof typeof colorMap];
-                return (
-                  <Paper
-                    key={item.action}
-                    p="sm"
-                    radius="md"
-                    style={{
-                      background: colors.bg,
-                      border: `1px solid ${colors.border}`,
-                    }}
-                  >
-                    <Group justify="space-between">
-                      <Group gap="sm">
-                        <ThemeIcon
-                          size="md"
-                          variant="light"
-                          color={item.priority === "critical" ? "red" : item.priority === "high" ? "orange" : "blue"}
-                          radius="md"
-                        >
-                          <Icon size={16} />
-                        </ThemeIcon>
-                        <div>
-                          <Text size="sm" fw={500}>
-                            {item.action}
-                          </Text>
-                          <Text size="xs" c="dimmed">
-                            Requires immediate attention
-                          </Text>
-                        </div>
-                      </Group>
-                      <Badge
-                        size="lg"
-                        variant="filled"
-                        color={item.priority === "critical" ? "red" : item.priority === "high" ? "orange" : "blue"}
-                      >
-                        {formatNumber(item.count)}
-                      </Badge>
-                    </Group>
-                  </Paper>
-                );
-              })}
-            </Stack>
-          </Card>
-        </Grid.Col>
-
-        <Grid.Col span={{ base: 12, lg: 6 }}>
-          <Card className="te-command-chart-card">
-            <Group justify="space-between" mb="md">
-              <Text size="sm" fw={600}>
-                Settlement Recommendations
-              </Text>
-              <Badge variant="light" color="teal" size="sm">
-                AI Suggested
-              </Badge>
-            </Group>
-            <ScrollArea>
-              <Table>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Loan ID</Table.Th>
-                    <Table.Th>Principal</Table.Th>
-                    <Table.Th>Recommended</Table.Th>
-                    <Table.Th>Savings</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {settlementRecommendations.map((item) => (
-                    <Table.Tr key={item.loanId}>
-                      <Table.Td>
-                        <Text size="sm" fw={500}>
-                          {item.loanId}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>{rupees(item.principal)}</Table.Td>
-                      <Table.Td>
-                        <Text fw={600} c={COLORS.teal}>
-                          {rupees(item.recommended)}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Badge color="green" variant="light">
-                          {item.savings}% off
-                        </Badge>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-          </Card>
-        </Grid.Col>
-
-        <Grid.Col span={{ base: 12, lg: 6 }}>
-          <Card className="te-command-chart-card">
-            <Group justify="space-between" mb="md">
-              <Text size="sm" fw={600}>
-                AI Alerts & Intelligence
-              </Text>
-              <Badge variant="light" color="violet" size="sm">
-                Real-time
-              </Badge>
-            </Group>
-            <Stack gap="sm">
-              {aiAlerts.map((alert, index) => (
+              {actions.map((item) => (
                 <Paper
-                  key={index}
+                  key={item.title}
                   p="sm"
                   radius="md"
                   style={{
                     background:
-                      alert.type === "warning"
+                      item.color === COLORS.danger
+                        ? COLORS.dangerLight
+                        : item.color === COLORS.warning
                         ? COLORS.warningLight
-                        : alert.type === "success"
+                        : item.color === COLORS.success
                         ? COLORS.successLight
-                        : COLORS.purpleLight,
-                    border: `1px solid ${
-                      alert.type === "warning"
-                        ? "rgba(184, 120, 32, 0.2)"
-                        : alert.type === "success"
-                        ? "rgba(31, 143, 90, 0.2)"
-                        : "rgba(124, 58, 237, 0.15)"
-                    }`,
+                        : COLORS.primaryLight,
+                    border: `1px solid ${item.color === COLORS.danger ? "rgba(205, 63, 70, 0.18)" : item.color === COLORS.warning ? "rgba(184, 120, 32, 0.18)" : "rgba(18, 93, 255, 0.18)"}`,
                   }}
                 >
                   <Group justify="space-between" align="flex-start">
                     <Group gap="sm" align="flex-start">
                       <ThemeIcon
-                        size="sm"
+                        size="md"
                         variant="light"
-                        color={alert.type === "warning" ? "orange" : alert.type === "success" ? "green" : "violet"}
+                        color={item.color === COLORS.danger ? "red" : item.color === COLORS.warning ? "orange" : item.color === COLORS.success ? "green" : "blue"}
                         radius="md"
-                        mt={2}
                       >
-                        {alert.type === "warning" ? (
-                          <AlertTriangle size={14} />
-                        ) : alert.type === "success" ? (
-                          <TrendingUp size={14} />
-                        ) : (
-                          <Brain size={14} />
-                        )}
+                        {item.icon}
                       </ThemeIcon>
-                      <Text size="sm">{alert.message}</Text>
+                      <div>
+                        <Text size="sm" fw={500}>
+                          {item.title}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {item.detail}
+                        </Text>
+                      </div>
                     </Group>
-                    <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
-                      {alert.time}
-                    </Text>
+                    <Badge
+                      size="lg"
+                      variant="filled"
+                      color={item.color === COLORS.danger ? "red" : item.color === COLORS.warning ? "orange" : item.color === COLORS.success ? "green" : "blue"}
+                    >
+                      {formatNumber(item.count)}
+                    </Badge>
                   </Group>
                 </Paper>
               ))}
@@ -1781,19 +1714,273 @@ function ActionInterventionSection() {
 
 export function CommandCenterPage() {
   const [dateRange, setDateRange] = useState("last_30");
-  const [region, setRegion] = useState("");
-  const [portfolio, setPortfolio] = useState("");
+  const [campaignId, setCampaignId] = useState("");
+  const [taskState, setTaskState] = useState("");
   const [bucket, setBucket] = useState("");
+
+  const days = daysFromRange(dateRange);
+
+  const campaigns = useQuery({
+    queryKey: ["command_center_campaigns"],
+    queryFn: () => apiFetch<{ rows: CampaignRow[] }>("/api/campaigns"),
+    refetchInterval: LIVE_REFRESH_MS,
+  });
+
+  useEffect(() => {
+    if (!campaignId && campaigns.data?.rows?.length) {
+      setCampaignId(campaigns.data.rows[0].campaign_id);
+    }
+  }, [campaignId, campaigns.data]);
+
+  const queriesEnabled = Boolean(campaignId);
+
+  const metrics = useQuery({
+    queryKey: ["command_center_metrics", campaignId],
+    enabled: queriesEnabled,
+    queryFn: () => apiFetch<MetricsResponse>(`/api/metrics${toQuery({ campaign_id: campaignId })}`),
+    refetchInterval: LIVE_REFRESH_MS,
+  });
+  const build = useQuery({
+    queryKey: ["command_center_build_info"],
+    queryFn: () => apiFetch<BuildInfo>("/api/system/build_info"),
+  });
+  const rollForward = useQuery({
+    queryKey: ["command_center_roll_forward", campaignId, days],
+    enabled: queriesEnabled,
+    queryFn: () => apiFetch<RollForwardResponse>(`/api/metrics/roll-forward${toQuery({ campaign_id: campaignId, days })}`),
+    refetchInterval: LIVE_REFRESH_MS,
+  });
+  const recovery = useQuery({
+    queryKey: ["command_center_recovery", campaignId, days],
+    enabled: queriesEnabled,
+    queryFn: () => apiFetch<RecoveryResponse>(`/api/metrics/recovery${toQuery({ campaign_id: campaignId, days })}`),
+    refetchInterval: LIVE_REFRESH_MS,
+  });
+  const agents = useQuery({
+    queryKey: ["command_center_agents", campaignId],
+    enabled: queriesEnabled,
+    queryFn: () => apiFetch<{ agents: AgentMetric[] }>(`/api/metrics/agents${toQuery({ campaign_id: campaignId })}`),
+    refetchInterval: LIVE_REFRESH_MS,
+  });
+  const taskSummary = useQuery({
+    queryKey: ["command_center_task_summary", campaignId],
+    enabled: queriesEnabled,
+    queryFn: () => apiFetch<Record<string, number>>(`/api/tasks/summary${toQuery({ campaign_id: campaignId })}`),
+    refetchInterval: LIVE_REFRESH_MS,
+  });
+  const sessions = useQuery({
+    queryKey: ["command_center_sessions", campaignId, bucket],
+    enabled: queriesEnabled,
+    queryFn: () => apiFetch<{ sessions: SessionSnapshot[] }>(`/api/sessions${toQuery({ campaign_id: campaignId, bucket })}`),
+    refetchInterval: LIVE_REFRESH_MS,
+  });
+  const tasks = useQuery({
+    queryKey: ["command_center_tasks", campaignId, taskState, bucket],
+    enabled: queriesEnabled,
+    queryFn: () =>
+      apiFetch<ApiListResponse<TaskRow>>(
+        `/api/tasks${toQuery({ campaign_id: campaignId, state: taskState, dpd_bucket: bucket, sort: "sla_asc", page: 1, page_size: 6 })}`
+      ),
+    refetchInterval: LIVE_REFRESH_MS,
+  });
+
+  const selectedCampaign = useMemo(
+    () => (campaigns.data?.rows || []).find((row) => row.campaign_id === campaignId) || null,
+    [campaignId, campaigns.data],
+  );
+
+  const campaignOptions = useMemo(
+    () => (campaigns.data?.rows || []).map((row) => ({ value: row.campaign_id, label: `${row.name || row.campaign_id} (${row.campaign_id})` })),
+    [campaigns.data],
+  );
+
+  const essentialLoading =
+    campaigns.isLoading ||
+    (!campaignId && Boolean(campaigns.data?.rows?.length)) ||
+    (queriesEnabled &&
+      (metrics.isLoading ||
+        rollForward.isLoading ||
+        recovery.isLoading ||
+        agents.isLoading ||
+        taskSummary.isLoading ||
+        sessions.isLoading ||
+        tasks.isLoading));
+
+  const blockingError =
+    campaigns.error ||
+    metrics.error ||
+    rollForward.error ||
+    recovery.error ||
+    agents.error ||
+    taskSummary.error ||
+    sessions.error ||
+    tasks.error;
+
+  if (campaigns.isLoading || (!campaignId && Boolean(campaigns.data?.rows?.length))) {
+    return (
+      <Group justify="center" py="xl">
+        <Loader />
+      </Group>
+    );
+  }
+
+  if (!campaigns.data?.rows?.length) {
+    return (
+      <Stack gap="md" className="te-command-center">
+        <ModuleHeader
+          title="AI Collections Command Center"
+          subtitle="Campaign-level control room for collections, recovery, and intervention"
+          badge="Mission Control"
+        />
+        <EmptyStateCard
+          title="No campaigns available"
+          description="Create or launch a campaign first. The AI Command Center now reads directly from live campaign metrics instead of seeded demo values."
+        />
+      </Stack>
+    );
+  }
+
+  if (essentialLoading) {
+    return (
+      <Group justify="center" py="xl">
+        <Loader />
+      </Group>
+    );
+  }
+
+  if (
+    blockingError ||
+    !selectedCampaign ||
+    !metrics.data ||
+    !rollForward.data ||
+    !recovery.data ||
+    !agents.data ||
+    !taskSummary.data ||
+    !sessions.data ||
+    !tasks.data
+  ) {
+    return (
+      <Stack gap="md" className="te-command-center">
+        <ModuleHeader
+          title="AI Collections Command Center"
+          subtitle="Campaign-level control room for collections, recovery, and intervention"
+          badge="Mission Control"
+        />
+        <Card className="te-command-section">
+          <Text c="red" fw={600}>
+            Unable to load campaign-backed command center metrics.
+          </Text>
+          <Text size="sm" c="dimmed" mt="xs">
+            {blockingError instanceof Error ? blockingError.message : "The selected campaign could not be resolved."}
+          </Text>
+        </Card>
+      </Stack>
+    );
+  }
+
+  const m = metrics.data;
+  const queueRows = TASK_STATE_ORDER.map((state) => ({
+    state,
+    count: Number(taskSummary.data[state] ?? m.queue_snapshot?.[state] ?? 0),
+    color: STATE_COLORS[state],
+  }));
+  const bucketRows: BucketMetric[] = ["1-30", "31-60", "61-90", "90+"].map((bucketName) => {
+    const exposure = Number(m.bucket_heatmap?.[bucketName] || 0);
+    const total = Number(m.ptp_rate_by_bucket?.[bucketName]?.total || 0);
+    const ptpCount = Number(m.ptp_rate_by_bucket?.[bucketName]?.ptp || 0);
+    return {
+      bucket: bucketName,
+      exposure,
+      share: 0,
+      ptpRate: Number(m.ptp_rate_by_bucket?.[bucketName]?.rate || 0),
+      ptpCount,
+      ptpTotal: total,
+      color: BUCKET_COLORS[bucketName],
+    };
+  });
+  const totalBucketExposure = bucketRows.reduce((sum, item) => sum + item.exposure, 0);
+  bucketRows.forEach((item) => {
+    item.share = totalBucketExposure > 0 ? (item.exposure / totalBucketExposure) * 100 : 0;
+  });
+
+  const recommendationCandidates = [
+    {
+      rawCount: Number(taskSummary.data.CALLBACK || 0),
+      title: "Clear overdue callback queue",
+      countLabel: `${formatNumber(Number(taskSummary.data.CALLBACK || 0))} open`,
+      detail: "Callback work is still open in the campaign and is slowing closure discipline.",
+      color: COLORS.warning,
+      icon: <PhoneCall size={16} />,
+    },
+    {
+      rawCount: Number(m.bucket_heatmap?.["31-60"] || 0),
+      title: "Stabilize the 31-60 bucket",
+      countLabel: `${formatNumber(Number(m.bucket_heatmap?.["31-60"] || 0))} accounts`,
+      detail: "This mid-bucket lane carries the largest recoverable exposure and usually drives the next roll-forward spike.",
+      color: COLORS.primary,
+      icon: <Layers size={16} />,
+    },
+    {
+      rawCount: Number(m.sla_breaches || 0),
+      title: "Close SLA breach inventory",
+      countLabel: `${formatNumber(Number(m.sla_breaches || 0))} breaches`,
+      detail: "Open SLA breaches are active service-level failures and should not sit behind normal queue work.",
+      color: COLORS.danger,
+      icon: <Clock size={16} />,
+    },
+    {
+      rawCount: Number(m.retries_pending || 0),
+      title: "Work retry-scheduled accounts",
+      countLabel: `${formatNumber(Number(m.retries_pending || 0))} retries`,
+      detail: "Retry-scheduled borrowers are already in the campaign and need fresh contact attempts to avoid stalling the book.",
+      color: COLORS.teal,
+      icon: <RefreshCw size={16} />,
+    },
+  ];
+  const recommendationRows: RecommendationTileProps[] = recommendationCandidates
+    .filter((item) => item.rawCount > 0)
+    .map(({ rawCount: _rawCount, ...item }) => item);
+
+  const actions: QueueAction[] = [
+    {
+      title: "SLA breaches",
+      count: Number(m.sla_breaches || 0),
+      detail: "Tasks already outside their service threshold.",
+      color: COLORS.danger,
+      icon: <Clock size={16} />,
+    },
+    {
+      title: "Callback queue",
+      count: Number(taskSummary.data.CALLBACK || 0),
+      detail: "Borrowers waiting for a promised follow-up.",
+      color: COLORS.warning,
+      icon: <PhoneCall size={16} />,
+    },
+    {
+      title: "Retry-scheduled",
+      count: Number(m.retries_pending || 0),
+      detail: "Accounts paused for another contact attempt.",
+      color: COLORS.primary,
+      icon: <RefreshCw size={16} />,
+    },
+    {
+      title: "PTP misses",
+      count: Number(m.ptp_miss_open_alerts || 0),
+      detail: "Open alerts where commitments are already slipping.",
+      color: COLORS.success,
+      icon: <Target size={16} />,
+    },
+  ].filter((item) => item.count > 0);
 
   return (
     <Stack gap="md" className="te-command-center">
       <ModuleHeader
         title="AI Collections Command Center"
-        subtitle="Central operational intelligence for collections management, risk monitoring, and AI-powered recovery insights"
+        subtitle="Campaign-level collections intelligence grounded in actual queue, recovery, and session metrics"
         badge="Mission Control"
         action={
           <Group gap="sm">
-            <Menu shadow="md" width={200}>
+            <Menu shadow="md" width={220}>
               <Menu.Target>
                 <Button variant="light" leftSection={<Download size={16} />} rightSection={<ChevronDown size={14} />}>
                   Export
@@ -1803,12 +1990,13 @@ export function CommandCenterPage() {
                 <Menu.Label>Export Options</Menu.Label>
                 <Menu.Item leftSection={<FileSpreadsheet size={14} />}>Export to Excel</Menu.Item>
                 <Menu.Item leftSection={<Download size={14} />}>Export to PDF</Menu.Item>
-                <Menu.Divider />
-                <Menu.Item leftSection={<Calendar size={14} />}>Schedule Report</Menu.Item>
               </Menu.Dropdown>
             </Menu>
             <Badge variant="filled" color="green" size="lg">
-              Live Data
+              {selectedCampaign.name || selectedCampaign.campaign_id}
+            </Badge>
+            <Badge variant="outline" color="blue" size="lg">
+              Build {build.data?.static_token || "-"}
             </Badge>
           </Group>
         }
@@ -1817,20 +2005,40 @@ export function CommandCenterPage() {
       <GlobalFilters
         dateRange={dateRange}
         setDateRange={setDateRange}
-        region={region}
-        setRegion={setRegion}
-        portfolio={portfolio}
-        setPortfolio={setPortfolio}
+        campaignId={campaignId}
+        setCampaignId={setCampaignId}
+        campaignOptions={campaignOptions}
+        taskState={taskState}
+        setTaskState={setTaskState}
         bucket={bucket}
         setBucket={setBucket}
       />
 
-      <PortfolioHealthSection />
-      <DelinquencyRiskSection />
-      <RecoveryPerformanceSection />
-      <CollectionsOperationsSection />
-      <AIDecisionIntelligenceSection />
-      <ActionInterventionSection />
+      <PortfolioHealthSection metrics={m} recovery={recovery.data} queueRows={queueRows} selectedCampaign={selectedCampaign} />
+      <DelinquencyRiskSection bucketRows={bucketRows} rollForward={rollForward.data} />
+      <RecoveryPerformanceSection metrics={m} recovery={recovery.data} agents={agents.data.agents} />
+      <CollectionsOperationsSection metrics={m} queueRows={queueRows} agents={agents.data.agents} sessions={sessions.data.sessions} />
+      <AIDecisionIntelligenceSection
+        bucketRows={bucketRows}
+        metrics={m}
+        recovery={recovery.data}
+        rollForward={rollForward.data}
+        agents={agents.data.agents}
+        recommendations={
+          recommendationRows.length
+            ? recommendationRows
+            : [
+                {
+                  title: "Campaign is within current guardrails",
+                  countLabel: "Stable",
+                  detail: "No major exception queue is open right now. Continue monitoring live sessions and fresh movement signals.",
+                  color: COLORS.success,
+                  icon: <Brain size={16} />,
+                },
+              ]
+        }
+      />
+      <ActionInterventionSection tasks={tasks.data.rows} actions={actions.length ? actions : [{ title: "No immediate action pressure", count: 0, detail: "The current filtered queue does not contain open intervention backlogs.", color: COLORS.success, icon: <Zap size={16} /> }]} />
     </Stack>
   );
 }

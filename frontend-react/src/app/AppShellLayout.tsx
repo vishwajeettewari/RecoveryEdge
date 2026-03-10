@@ -42,7 +42,7 @@ function toTitle(slug: string): string {
 export function AppShellLayout() {
   const [opened, { toggle }] = useDisclosure(false);
   const { user, role, permissions, logout } = useAuth();
-  const { setColorScheme } = useMantineColorScheme();
+  const { setColorScheme } = useMantineColorScheme({ keepTransitions: false });
   const computedColorScheme = useComputedColorScheme("light");
   const isDark = computedColorScheme === "dark";
   const location = useLocation();

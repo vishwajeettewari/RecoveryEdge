@@ -1,5 +1,106 @@
 # Current Task
 
+## Calling Console Transcript Visibility
+
+- [x] Inspect the current calling-console transcript layout and identify why the live transcript region is visually collapsing.
+- [x] Increase the live transcript panel footprint and transcript readability without breaking the rest of the calling console layout.
+- [x] Run focused frontend verification and document the result in the review section below.
+
+### Calling Console Transcript Visibility Notes
+
+- The current calling console keeps the transcript inside a flexible panel with no guaranteed minimum footprint, so the transcript area can collapse behind the rest of the middle-column controls.
+- The fix should improve transcript usability in both the active borrower calling console and the no-task voice test desk, since both surfaces share the same transcript panel pattern.
+
+## Calling Console Transcript Visibility Review
+
+- Updated `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/features/calling/CallingConsolePage.tsx` so both transcript surfaces now use explicit transcript panel modifiers for the no-task voice test desk and the active-call console.
+- Updated `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/styles.css` to give the transcript panel a guaranteed larger minimum height, add a minimum scroll viewport inside the transcript body, and increase transcript copy readability with better line-height and wrapping behavior.
+- The result is a visibly larger live transcript area in both calling modes without changing the surrounding workflow or controls.
+- Verified with:
+  - `npm test -- --run src/features/calling/CallingConsolePage.test.tsx`
+  - `npm run build`
+- Verification note:
+  - the production build still emits the existing Vite chunk-size warning for the main bundle, but the build completes successfully.
+
+## AI Command Center Campaign Metrics Wiring
+
+- [x] Audit the current AI Command Center sections and map each seeded metric or chart to an existing campaign-backed endpoint or derived dataset.
+- [x] Replace the seeded dashboard constants in `frontend-react/src/features/command-center/CommandCenterPage.tsx` with live campaign/task/session/recovery/roll-forward data.
+- [x] Keep the page aligned to the existing shell and filter UX while making the primary scope an actual campaign instead of a fake portfolio seed.
+- [x] Run focused frontend verification and document the results in the review section below.
+
+### AI Command Center Campaign Metrics Wiring Notes
+
+- The current page is still a demo composition: `PortfolioHealthSection`, `DelinquencyRiskSection`, `RecoveryPerformanceSection`, `CollectionsOperationsSection`, `AIDecisionIntelligenceSection`, and `ActionInterventionSection` each define hard-coded arrays and totals inside `CommandCenterPage.tsx`.
+- The backend already exposes the live signals needed for this surface: `/api/campaigns`, `/api/metrics`, `/api/metrics/recovery`, `/api/metrics/roll-forward`, `/api/metrics/agents`, `/api/tasks/summary`, and `/api/sessions`.
+
+## AI Command Center Campaign Metrics Wiring Review
+
+- Replaced the seeded `frontend-react/src/features/command-center/CommandCenterPage.tsx` demo dashboard with a campaign-scoped control room that now loads its state from `/api/campaigns`, `/api/metrics`, `/api/metrics/recovery`, `/api/metrics/roll-forward`, `/api/metrics/agents`, `/api/tasks/summary`, `/api/sessions`, and `/api/tasks`.
+- The filter bar now scopes the page to a real campaign plus live task-state and DPD-bucket filters, instead of exposing fake region and portfolio selectors that were not connected to data.
+- Rebuilt the six command-center sections so they render actual campaign KPIs, bucket exposure, roll-rate movement, recovery funnel/progress, agent leaderboard, live session monitor, derived recommendations, and high-priority account actions from real queue data.
+- Removed the seeded “AI strategy” and fake borrower/task content from the command center. The page now derives recommendations from live callback backlog, bucket concentration, SLA breaches, and retry pressure instead of shipping static demo arrays.
+- Replaced the old static regression in `frontend-react/src/features/command-center/CommandCenterPage.test.tsx` with an API-backed render test that verifies real campaign data is shown and seeded demo content such as `Call Tonight` and `Rajesh Kumar` no longer appears.
+- Verified with:
+  - `npm test -- --run src/features/command-center/CommandCenterPage.test.tsx`
+  - `npm run build`
+- Verification note:
+  - the production build still emits the existing Vite chunk-size warning for the main bundle, but the build completes successfully.
+
+## Global Theme Flicker Stabilization
+
+- [x] Trace the light/dark flicker reported on interactive controls and confirm whether the root cause is theme-state churn, shared component state styling, or both.
+- [x] Harden the global frontend color-scheme wiring so light/dark mode resolves deterministically and does not reapply unexpectedly during unrelated UI actions.
+- [x] Normalize shared interactive component states so buttons, action icons, menus, and disabled/loading controls keep the active theme consistently across the shell.
+- [x] Run focused frontend verification for the theme flicker fix and document the results in the review section below.
+
+### Global Theme Flicker Stabilization Notes
+
+- Mantine's stock local-storage manager accepts `auto`, while the current boot script only handles explicit `light` or `dark`. That leaves room for the shell and the boot script to resolve the same stored value differently.
+- Shared interactive states are still under-themed globally. `filled` buttons are customized, but `light`, `subtle`, `default`, disabled, loading, and action-icon/menu states still rely on Mantine defaults, which can visually look like the app is hopping between dark and light surfaces.
+
+## Global Theme Flicker Stabilization Review
+
+- Added an explicit color-scheme manager in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/theme/colorScheme.ts` and switched `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/main.tsx` to use it instead of Mantine's permissive local-storage manager. The app now persists only explicit `light` or `dark` values and rejects `auto` fallback behavior.
+- Updated the early boot script in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/index.html` so the root `data-mantine-color-scheme` attribute is seeded from the same explicit storage rule as the running app. That removes the boot/runtime mismatch that could re-resolve the scheme differently during later interactions.
+- Tightened the shell toggle in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/app/AppShellLayout.tsx` to keep transition suppression consistent during deliberate theme changes.
+- Extended `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/styles.css` with shared light/dark tokens for button, action-icon, dropdown, disabled, and loading states, and rewired the global Mantine selectors so `light`, `subtle`, `outline`, `default`, disabled, and loading controls stay on the active shell theme instead of falling back to library defaults.
+- Added regression coverage in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/theme/colorScheme.test.ts` to lock the explicit storage behavior, alongside the existing calling and command-center frontend regressions.
+- Verified with:
+  - `npm test -- --run src/theme/colorScheme.test.ts src/features/calling/CallingConsolePage.test.tsx src/features/command-center/CommandCenterPage.test.tsx`
+  - `npm run build`
+- Verification note:
+  - the production build still emits the existing Vite chunk-size warning for the main bundle, but the build completes successfully.
+
+## Calling Console Voice Recovery
+
+- [x] Trace the broken `Start Call`, `Check Mic`, and phone-bridge test paths using the frontend logic plus the backend log evidence.
+- [x] Fix the calling console so browser voice start fails cleanly on missing config, the worklet path resolves under `/app`, and phone-bridge sessions map to live timeline/transcript capture.
+- [x] Restore the no-task voice test desk so transcript and session telemetry remain visible for direct phone testing.
+- [x] Run focused verification for the recovered calling console flow and document the results in the review section below.
+
+### Calling Console Voice Recovery Notes
+
+- Browser voice startup is failing in two stages: the worklet loader still points at root-relative `/worklets/...` paths even though the app is served from `/app`, and `startCall()` flips `callLive` before websocket/audio startup has actually succeeded.
+- Direct phone bridge testing lost its transcript/metrics desk because the empty-state path now returns early and hides the richer transcript/timeline panels.
+- Phone-bridge calls create a synthetic `tel-agent-*` session id in `/api/telephony/agent_call`, but that id is not passed into the Twilio media websocket session, so the frontend cannot follow the live telephony timeline.
+- Dropping a new `.env` into the repo does not currently refresh the in-memory `ActionRouter`; telephony endpoints keep using the old Twilio config until process restart.
+
+## Calling Console Voice Recovery Review
+
+- Fixed runtime telephony config reload in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/web_app.py` so updated `.env` values are applied to the in-memory `ActionRouter` without requiring a process restart before `Call Number` or Twilio media sessions use them.
+- Fixed phone-bridge session continuity by appending the generated `tel-agent-*` session id to the Twilio media websocket URL, passing it through `ActionRouter.place_agent_stream_call(...)`, and constructing `WebCallSession` with that requested session id in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/web_app.py`, `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/actions.py`, and `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/web_session.py`.
+- Fixed browser voice startup in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/features/calling/CallingConsolePage.tsx` by resolving audio worklets through the Vite `/app` base path, delaying the `callLive` flip until websocket plus mic setup succeed, and adding explicit loading states for `Start Call` and `Check Mic`.
+- Restored the no-task test desk in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/features/calling/CallingConsolePage.tsx` so direct phone testing now keeps transcript capture, timeline events, active session id, and last-activity telemetry visible even without an assigned borrower task.
+- Added focused regression coverage in `/Users/vishwajeet/AI_Collections_Agent_Sarvam_V1__merge_test/frontend-react/src/features/calling/CallingConsolePage.test.tsx` for the restored no-task direct phone bridge desk and retained the command-center theme regression in the same verification pass.
+- Verified with:
+  - `npm test -- --run src/features/calling/CallingConsolePage.test.tsx src/features/command-center/CommandCenterPage.test.tsx`
+  - `npm run build`
+  - `python3 -m py_compile web_app.py web_session.py actions.py`
+- Verification note:
+  - the production build still emits the pre-existing Vite chunk-size warning for the main bundle, but the build completes successfully.
+  - live Twilio dialing and live Sarvam speech still require the running app to have reachable public telephony websocket infrastructure and valid external provider credentials at runtime; this review verified the repo wiring and regression coverage, not an outbound carrier call from this shell.
+
 ## AI Command Center Theme Alignment
 
 - [x] Audit the merged AI Command Center page for hard-coded light-only surfaces, chart chrome, and data-label styles that ignore the shell theme.
