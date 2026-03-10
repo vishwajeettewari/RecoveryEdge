@@ -139,7 +139,14 @@ export function OverviewPage() {
   }
 
   if (!metrics.data) {
-    return <Text c="red">Unable to load dashboard metrics.</Text>;
+    return (
+      <Stack>
+        <Text c="red">Unable to load dashboard metrics.</Text>
+        <Text size="sm" c="dimmed">
+          Status: {metrics.status} | Error: {metrics.error?.message || "none"} | isFetching: {String(metrics.isFetching)}
+        </Text>
+      </Stack>
+    );
   }
 
   const m = metrics.data;
@@ -158,7 +165,7 @@ export function OverviewPage() {
     amount: Number(recovery.data?.amounts?.[index] || 0),
   }));
   const queueRows = Object.entries(m.queue_snapshot || {}).map(([state, count]) => ({
-    state: state.replaceAll("_", " "),
+    state: state.split("_").join(" "),
     count: Number(count || 0),
   }));
   const matrixBuckets = rollForward.data?.buckets || [];

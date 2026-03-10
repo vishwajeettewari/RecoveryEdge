@@ -846,3 +846,182 @@ a:hover {
     scroll-behavior: auto !important;
   }
 }
+
+/* ===== AI Collections Command Center Styles ===== */
+
+.te-command-center {
+  max-width: 1680px;
+  margin: 0 auto;
+}
+
+.te-command-filter-bar {
+  background:
+    radial-gradient(480px 180px at 0% 0%, rgba(18, 93, 255, 0.08), transparent 56%),
+    radial-gradient(380px 160px at 100% 0%, rgba(10, 176, 139, 0.06), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.92));
+  border: 1px solid rgba(99, 118, 156, 0.18);
+  box-shadow: 0 12px 32px rgba(15, 24, 42, 0.06);
+}
+
+.te-command-section {
+  border-radius: 20px;
+  border: 1px solid rgba(99, 118, 156, 0.16);
+  background:
+    radial-gradient(600px 240px at 0% 0%, rgba(18, 93, 255, 0.06), transparent 52%),
+    radial-gradient(500px 200px at 100% 100%, rgba(10, 176, 139, 0.04), transparent 54%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.94));
+  box-shadow: 0 16px 40px rgba(15, 24, 42, 0.08);
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.te-command-section::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #125dff, #0ab08b);
+  opacity: 0.6;
+}
+
+.te-command-kpi {
+  border-radius: 16px;
+  border: 1px solid rgba(99, 118, 156, 0.16);
+  background:
+    radial-gradient(280px 120px at 0% 0%, rgba(18, 93, 255, 0.08), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.92));
+  box-shadow: 0 8px 24px rgba(15, 24, 42, 0.06);
+  padding: 16px;
+  transition: transform 180ms ease, box-shadow 200ms ease;
+}
+
+.te-command-kpi:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 32px rgba(15, 24, 42, 0.1);
+}
+
+.te-command-chart-card {
+  border-radius: 14px;
+  border: 1px solid rgba(99, 118, 156, 0.14);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(252, 253, 255, 0.92));
+  box-shadow: 0 6px 20px rgba(15, 24, 42, 0.05);
+  padding: 18px;
+}
+
+.te-command-metric-card {
+  border-radius: 14px;
+  border: 1px solid rgba(99, 118, 156, 0.14);
+  background:
+    radial-gradient(240px 100px at 100% 0%, rgba(18, 93, 255, 0.06), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(252, 253, 255, 0.94));
+  box-shadow: 0 6px 20px rgba(15, 24, 42, 0.05);
+  padding: 18px;
+}
+
+.te-command-matrix-table {
+  font-size: 0.85rem;
+}
+
+.te-command-matrix-table th,
+.te-command-matrix-table td {
+  padding: 10px 14px;
+  text-align: center;
+}
+
+.te-command-matrix-table th {
+  background: rgba(244, 248, 255, 0.9);
+  font-weight: 700;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #556074;
+}
+
+.te-command-matrix-table td {
+  font-weight: 600;
+  transition: background 200ms ease;
+}
+
+.te-command-matrix-table tr:hover td {
+  filter: brightness(0.98);
+}
+
+/* Command Center Recharts Customizations */
+.te-command-center .recharts-cartesian-grid-horizontal line,
+.te-command-center .recharts-cartesian-grid-vertical line {
+  stroke: rgba(0, 0, 0, 0.06);
+}
+
+.te-command-center .recharts-tooltip-wrapper {
+  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.12));
+}
+
+.te-command-center .recharts-legend-item-text {
+  color: #4f5d73 !important;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.te-command-center .recharts-bar-rectangle {
+  transition: opacity 200ms ease;
+}
+
+.te-command-center .recharts-bar-rectangle:hover {
+  opacity: 0.85;
+}
+
+/* Command Center Responsive */
+@media (max-width: 1280px) {
+  .te-command-section {
+    padding: 20px;
+  }
+  
+  .te-command-kpi {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 960px) {
+  .te-command-center {
+    padding: 0 8px;
+  }
+  
+  .te-command-section {
+    padding: 16px;
+    border-radius: 16px;
+  }
+  
+  .te-command-section::before {
+    height: 2px;
+  }
+  
+  .te-command-kpi {
+    padding: 12px;
+    border-radius: 12px;
+  }
+  
+  .te-command-chart-card,
+  .te-command-metric-card {
+    padding: 14px;
+    border-radius: 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .te-command-filter-bar {
+    padding: 12px;
+  }
+  
+  .te-command-section {
+    padding: 14px;
+  }
+  
+  .te-command-matrix-table th,
+  .te-command-matrix-table td {
+    padding: 8px 10px;
+    font-size: 0.75rem;
+  }
+}
